@@ -26,6 +26,7 @@ export interface ServerConfig {
   skillsEnabled: boolean;
   skillPaths: string[];
   devspaceSkillsDir: string;
+  localAgents: boolean;
   agentDir: string;
   logging: LoggingConfig;
 }
@@ -237,6 +238,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     skillsEnabled: env.DEVSPACE_SKILLS === undefined ? true : parseBoolean(env.DEVSPACE_SKILLS),
     skillPaths: parsePathList(env.DEVSPACE_SKILL_PATHS),
     devspaceSkillsDir: devspaceSkillsDir(env),
+    localAgents:
+      env.DEVSPACE_LOCAL_AGENTS === undefined
+        ? files.config.localAgents === true
+        : parseBoolean(env.DEVSPACE_LOCAL_AGENTS),
     agentDir: resolve(expandHomePath(env.DEVSPACE_AGENT_DIR ?? files.config.agentDir ?? defaultAgentDir())),
     logging: parseLoggingConfig(env),
   };

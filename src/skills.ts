@@ -38,7 +38,9 @@ export function effectiveSkillPaths(config: ServerConfig, cwd: string): string[]
     resolve(cwd, ".agents", "skills"),
     config.devspaceSkillsDir,
     join(config.agentDir, "skills"),
-    hasLocalAgentDelegationSkill(config.devspaceSkillsDir) ? undefined : bundledSkills,
+    config.localAgents && !hasLocalAgentDelegationSkill(config.devspaceSkillsDir)
+      ? bundledSkills
+      : undefined,
   ];
   const defaultPaths = defaultPathCandidates.filter(
     (path): path is string => path !== undefined && existsSync(path),
@@ -61,12 +63,19 @@ function resolveSkillPath(path: string, cwd: string): string {
 export function loadWorkspaceSkills(config: ServerConfig, cwd: string): LoadedSkills {
   if (!config.skillsEnabled) return { skills: [], diagnostics: [] };
 
-  return loadSkills({
+  const result = loadSkills({
     cwd,
     agentDir: config.agentDir,
     skillPaths: effectiveSkillPaths(config, cwd),
     includeDefaults: false,
   });
+
+  if (config.localAgents) return result;
+
+  return {
+    skills: result.skills.filter((skill) => skill.name !== "local-agent-delegation"),
+    diagnostics: result.diagnostics,
+  };
 }
 
 export function resolveSkillReadPath(

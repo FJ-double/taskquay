@@ -160,10 +160,24 @@ try {
   assert.equal(loaded.skills.some((skill) => skill.name === "claude-project-skill"), true);
   assert.equal(loaded.skills.some((skill) => skill.name === "project-skill"), false);
   assert.equal(loaded.skills.some((skill) => skill.name === "devspace-local-skill"), true);
-  assert.equal(loaded.skills.some((skill) => skill.name === "local-agent-delegation"), true);
+  assert.equal(loaded.skills.some((skill) => skill.name === "local-agent-delegation"), false);
   assert.equal(loaded.skills.filter((skill) => skill.name === "duplicate-skill").length, 1);
   assert.equal(loaded.skills.some((skill) => skill.name === "hidden-skill"), true);
   assert.equal(loaded.diagnostics.some((diagnostic) => diagnostic.type === "collision"), true);
+
+  const experimentalConfig = loadConfig({
+    DEVSPACE_ALLOWED_ROOTS: projectRoot,
+    DEVSPACE_AGENT_DIR: agentDir,
+    DEVSPACE_LOCAL_AGENTS: "1",
+    DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
+    PORT: "1",
+  });
+  assert.equal(
+    loadWorkspaceSkills(experimentalConfig, projectRoot).skills.some(
+      (skill) => skill.name === "local-agent-delegation",
+    ),
+    true,
+  );
 
   const duplicateConfig = loadConfig({
     DEVSPACE_ALLOWED_ROOTS: projectRoot,

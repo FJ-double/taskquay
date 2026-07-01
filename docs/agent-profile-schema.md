@@ -4,16 +4,9 @@ DevSpace local agent profiles are user-owned markdown files with YAML front matt
 They describe how a local coding-agent CLI can be used as a worker under ChatGPT
 supervision.
 
-Profiles are intended to live in:
-
-```text
-~/.devspace/agents/*.md
-```
-
 The packaged files in `examples/agents/` are starter templates only. DevSpace does
-not automatically activate them, copy them into `~/.devspace/agents`, or run their
-commands. Users should copy, review, and edit a template before treating it as an
-active local worker definition.
+not currently parse, load, activate, or run local agent profile definitions. A
+future profile loader can define the user-owned directory for active profiles.
 
 ## Minimal shape
 
@@ -339,7 +332,7 @@ The body is model-facing guidance. Keep it practical and concise.
 
 The current examples do not add:
 
-- `.devspace/agents` parsing.
+- local agent profile parsing.
 - automatic activation of packaged examples.
 - `devspace agents init`.
 - generated available-agent catalogs.

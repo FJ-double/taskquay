@@ -201,13 +201,13 @@ DevSpace looks in standard Agent Skills locations:
 
 It also checks compatibility and custom paths:
 
-- the bundled `local-agent-delegation` skill, unless `~/.devspace/skills/local-agent-delegation/SKILL.md` exists
+- the bundled `local-agent-delegation` skill when `DEVSPACE_LOCAL_AGENTS=1`, unless `~/.devspace/skills/local-agent-delegation/SKILL.md` exists
 - `DEVSPACE_AGENT_DIR/skills`, defaulting to `~/.codex/skills`
 - additional paths from `DEVSPACE_SKILL_PATHS`
 
-Packaged local-agent examples under `examples/agents/` are templates only. Copy
-and review a profile before using it from `~/.devspace/agents/`; repo-provided or
-packaged examples should not become runnable worker definitions silently.
+Packaged local-agent examples under `examples/agents/` are inert templates only.
+DevSpace does not currently parse, load, activate, or run local agent profile
+definitions.
 
 Legacy project paths such as `.pi/skills` can be added through `DEVSPACE_SKILL_PATHS` when needed.
 

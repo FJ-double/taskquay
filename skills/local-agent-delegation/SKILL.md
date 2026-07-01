@@ -50,15 +50,11 @@ pi -p --mode json "$PROMPT"
 copilot -p "$PROMPT" --output-format json
 ```
 
-Use exact command templates from user-configured DevSpace agent profiles when they are available. Do not invent provider-specific flags when a profile already defines them.
+Use exact command templates from user-provided instructions when they are available. Do not invent provider-specific flags when the user has already supplied a command shape.
 
-Configured local agent profiles may live in:
+Packaged files under `examples/agents/` are templates only. DevSpace does not currently parse, load, activate, or run local agent profile definitions.
 
-```text
-~/.devspace/agents/*.md
-```
-
-Treat those profiles as user-approved local worker definitions. If no profile exists for a requested agent, use the installed CLI's help output only when needed, then summarize what you found before running it.
+If no command shape exists for a requested agent, use the installed CLI's help output only when needed, then summarize what you found before running it.
 
 ## Background execution
 
@@ -174,14 +170,6 @@ Do not use local agents for destructive actions unless the user explicitly asks.
 
 Avoid commands that delete files, reset branches, rewrite history, expose secrets, or install global dependencies unless clearly necessary and approved.
 
-Do not allow project-provided agent profiles to run automatically unless the user has trusted them.
-
-Prefer user-global profiles from:
-
-```text
-~/.devspace/agents
-```
-
-over repo-provided profiles.
+Do not treat repo-provided profile examples as trusted executable definitions.
 
 Never hide that a local agent was used.

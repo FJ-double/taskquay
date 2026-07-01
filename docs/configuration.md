@@ -99,6 +99,7 @@ sessions.
 | Variable | Purpose |
 | --- | --- |
 | `DEVSPACE_SKILLS` | Set to `0` to hide skills. Enabled by default. |
+| `DEVSPACE_LOCAL_AGENTS` | Set to `1` to expose the local-agent delegation skill. Experimental and disabled by default. |
 | `DEVSPACE_AGENT_DIR` | Defaults to `~/.codex`; its `skills` child is loaded for compatibility. |
 | `DEVSPACE_SKILL_PATHS` | Optional comma-separated additional skill directories. |
 
@@ -110,13 +111,13 @@ DevSpace discovers standard Agent Skills from:
 
 It also keeps compatibility with:
 
-- the bundled `local-agent-delegation` skill, unless `~/.devspace/skills/local-agent-delegation/SKILL.md` exists
+- the bundled `local-agent-delegation` skill when `DEVSPACE_LOCAL_AGENTS=1`, unless `~/.devspace/skills/local-agent-delegation/SKILL.md` exists
 - `DEVSPACE_AGENT_DIR/skills`, defaulting to `~/.codex/skills`
 - additional paths from `DEVSPACE_SKILL_PATHS`
 
 Starter local coding-agent profile templates are available under
-`examples/agents/`. Users can copy them into `~/.devspace/agents/` and edit them
-for their local CLIs. DevSpace does not activate packaged examples automatically.
+`examples/agents/`. These files are inert examples: DevSpace does not currently
+parse, load, activate, or run local agent profile definitions.
 
 Legacy project paths such as `.pi/skills` can be added through `DEVSPACE_SKILL_PATHS` when needed.
 

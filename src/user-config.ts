@@ -18,6 +18,7 @@ export interface DevspaceUserConfig {
   stateDir?: string;
   worktreeRoot?: string;
   agentDir?: string;
+  localAgents?: boolean;
 }
 
 export interface DevspaceAuthConfig {
