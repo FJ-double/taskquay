@@ -141,6 +141,11 @@ and shell tools. The aggregate `show_changes` tool is not exposed by default.
 Use `DEVSPACE_WIDGETS=off` to disable widget UI, or `DEVSPACE_WIDGETS=changes`
 to expose the aggregate show-changes flow.
 
+When `show_changes` is exposed, models should call it exactly once after the
+final file modification in any turn that changes files. The tool only requires
+the `workspaceId`; DevSpace automatically compares against the last shown
+checkpoint and advances that checkpoint after rendering the aggregate diff.
+
 ## Shell Use
 
 The shell tool is for commands that belong in a terminal:
