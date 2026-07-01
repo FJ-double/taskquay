@@ -24,6 +24,7 @@ actions:
       - -p
       - --output-format
       - stream-json
+      - --verbose
       - "{prompt}"
     background: true
     output: stream-json
@@ -37,6 +38,7 @@ actions:
       - -p
       - --output-format
       - stream-json
+      - --verbose
       - "{prompt}"
 
   list:

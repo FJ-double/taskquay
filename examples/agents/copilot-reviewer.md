@@ -21,17 +21,21 @@ actions:
   start:
     command: copilot
     args:
+      - --model
+      - auto
       - -p
       - "{prompt}"
       - --output-format
       - json
     background: true
-    output: json
+    output: jsonl
 
   followup:
     strategy: resume_command
     command: copilot
     args:
+      - --model
+      - auto
       - -p
       - "{prompt}"
       - --resume

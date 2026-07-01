@@ -26,7 +26,7 @@ actions:
       - json
       - "{prompt}"
     background: true
-    output: json
+    output: jsonl
 
   followup:
     strategy: resume_command

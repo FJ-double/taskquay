@@ -24,6 +24,7 @@ actions:
       - -p
       - --output-format
       - stream-json
+      - --trust
       - "{prompt}"
     background: true
     output: stream-json
