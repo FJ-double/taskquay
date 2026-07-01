@@ -31,8 +31,10 @@ try {
   await mkdir(join(projectClaudeSkills, "claude-project-skill"), { recursive: true });
   await mkdir(join(projectRoot, ".pi", "skills", "project-skill"), { recursive: true });
   await mkdir(join(agentDir, "skills", "global-skill"), { recursive: true });
+  await mkdir(join(agentDir, "skills", "local-agent-delegation"), { recursive: true });
   await mkdir(join(explicitSkills, "duplicate"), { recursive: true });
   await mkdir(join(explicitSkills, "disabled"), { recursive: true });
+  await mkdir(join(explicitSkills, "local-agent-delegation"), { recursive: true });
   await mkdir(join(devspaceSkills, "devspace-local-skill"), { recursive: true });
 
   await writeFile(
@@ -124,6 +126,28 @@ try {
     ].join("\n"),
   );
   await writeFile(
+    join(agentDir, "skills", "local-agent-delegation", "SKILL.md"),
+    [
+      "---",
+      "name: local-agent-delegation",
+      "description: Hidden local agent skill winner.",
+      "---",
+      "",
+      "# Local Agent Delegation",
+    ].join("\n"),
+  );
+  await writeFile(
+    join(explicitSkills, "local-agent-delegation", "SKILL.md"),
+    [
+      "---",
+      "name: local-agent-delegation",
+      "description: Hidden local agent skill loser.",
+      "---",
+      "",
+      "# Local Agent Delegation Duplicate",
+    ].join("\n"),
+  );
+  await writeFile(
     join(explicitSkills, "disabled", "SKILL.md"),
     [
       "---",
@@ -164,6 +188,12 @@ try {
   assert.equal(loaded.skills.filter((skill) => skill.name === "duplicate-skill").length, 1);
   assert.equal(loaded.skills.some((skill) => skill.name === "hidden-skill"), true);
   assert.equal(loaded.diagnostics.some((diagnostic) => diagnostic.type === "collision"), true);
+  assert.equal(
+    loaded.diagnostics.some(
+      (diagnostic) => diagnostic.collision?.name === "local-agent-delegation",
+    ),
+    false,
+  );
 
   const experimentalConfig = loadConfig({
     DEVSPACE_ALLOWED_ROOTS: projectRoot,

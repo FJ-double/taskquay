@@ -21,7 +21,8 @@ export interface SkillReadResolution {
   isSkillFile: boolean;
 }
 
-const LOCAL_AGENT_DELEGATION_SKILL = join("local-agent-delegation", "SKILL.md");
+const LOCAL_AGENT_DELEGATION_NAME = "local-agent-delegation";
+const LOCAL_AGENT_DELEGATION_SKILL = join(LOCAL_AGENT_DELEGATION_NAME, "SKILL.md");
 
 function bundledSkillsDir(): string {
   return fileURLToPath(new URL("../skills", import.meta.url));
@@ -73,8 +74,11 @@ export function loadWorkspaceSkills(config: ServerConfig, cwd: string): LoadedSk
   if (config.localAgents) return result;
 
   return {
-    skills: result.skills.filter((skill) => skill.name !== "local-agent-delegation"),
-    diagnostics: result.diagnostics,
+    skills: result.skills.filter((skill) => skill.name !== LOCAL_AGENT_DELEGATION_NAME),
+    diagnostics: result.diagnostics.filter((diagnostic) => {
+      const collision = diagnostic.collision;
+      return !(collision?.resourceType === "skill" && collision.name === LOCAL_AGENT_DELEGATION_NAME);
+    }),
   };
 }
 
