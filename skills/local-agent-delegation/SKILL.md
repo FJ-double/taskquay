@@ -50,6 +50,8 @@ pi -p --mode json "$PROMPT"
 copilot -p "$PROMPT" --output-format json
 ```
 
+These examples are illustrative. Real implementations should pass workspace and prompt values as separate argv entries without a shell, not concatenate untrusted prompt text into a shell command string.
+
 Use exact command templates from user-provided instructions when they are available. Do not invent provider-specific flags when the user has already supplied a command shape.
 
 Packaged files under `examples/agents/` are templates only. DevSpace does not currently parse, load, activate, or run local agent profile definitions.
