@@ -103,6 +103,14 @@ export function ensureDevspaceDefaultSkills(env: NodeJS.ProcessEnv = process.env
   return [targetPath];
 }
 
+export function resolveLocalAgentsFlag(
+  config: Pick<DevspaceUserConfig, "localAgents">,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean | undefined {
+  if (env.DEVSPACE_LOCAL_AGENTS === undefined) return config.localAgents;
+  return ["1", "true", "yes", "on"].includes(env.DEVSPACE_LOCAL_AGENTS.toLowerCase());
+}
+
 function readJsonFile<T>(filePath: string): T {
   try {
     return JSON.parse(readFileSync(filePath, "utf8")) as T;

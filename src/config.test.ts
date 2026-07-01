@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "./config.js";
-import { ensureDevspaceDefaultSkills } from "./user-config.js";
+import { ensureDevspaceDefaultSkills, resolveLocalAgentsFlag } from "./user-config.js";
 
 const emptyConfigDir = mkdtempSync(join(tmpdir(), "devspace-empty-config-test-"));
 const baseEnv = {
@@ -34,6 +34,10 @@ assert.equal(
   loadConfig({ ...baseEnv, DEVSPACE_LOCAL_AGENTS: "1" }).localAgents,
   true,
 );
+assert.equal(resolveLocalAgentsFlag({}, {}), undefined);
+assert.equal(resolveLocalAgentsFlag({ localAgents: true }, {}), true);
+assert.equal(resolveLocalAgentsFlag({ localAgents: true }, { DEVSPACE_LOCAL_AGENTS: "0" }), false);
+assert.equal(resolveLocalAgentsFlag({}, { DEVSPACE_LOCAL_AGENTS: "1" }), true);
 
 const seededConfigDir = mkdtempSync(join(tmpdir(), "devspace-seeded-skills-test-"));
 const seededSkillPaths = ensureDevspaceDefaultSkills({ DEVSPACE_CONFIG_DIR: seededConfigDir });

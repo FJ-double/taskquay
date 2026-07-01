@@ -10,6 +10,7 @@ import {
   ensureDevspaceDefaultSkills,
   generateOwnerToken,
   loadDevspaceFiles,
+  resolveLocalAgentsFlag,
   writeDevspaceAuth,
   writeDevspaceConfig,
   type DevspaceUserConfig,
@@ -134,7 +135,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       port,
       allowedRoots,
       publicBaseUrl,
-      localAgents: files.config.localAgents,
+      localAgents: resolveLocalAgentsFlag(files.config),
     };
     const auth = {
       ownerToken: files.auth.ownerToken ?? generateOwnerToken(),
