@@ -1,127 +1,84 @@
 ---
 name: local-agent-delegation
-description: Delegate coding tasks to user-configured local coding agents such as Codex, Claude Code, OpenCode, Cursor Agent, Pi, or Copilot CLI.
+description: Delegate coding tasks to user-configured DevSpace local agents.
 ---
 
 # Local Agent Delegation
 
-Use this skill when the user explicitly asks to delegate work to another coding agent, use a named local agent, get a second opinion, compare implementations, run agents in parallel, or create a subagent-like workflow.
+Use this skill when the user explicitly asks to delegate work to another coding
+agent, use a named local agent, get a second opinion, compare approaches, or run
+a subagent-like workflow.
 
-Do not use local agents silently. Tell the user when another local agent is being used.
+Do not use local agents silently. Tell the user when another local agent is
+being used.
 
-## Core idea
+## Core commands
 
-You are the supervisor. A local coding agent is the worker.
-
-Your responsibilities are:
-
-1. Understand the user's goal.
-2. Decide whether delegation is useful.
-3. Choose the right local agent or CLI.
-4. Give the worker a focused prompt.
-5. Inspect the result yourself.
-6. Review diffs, tests, and risks before telling the user the work is done.
-
-## When to delegate
-
-Good delegation requests include:
-
-- "Ask another agent to look at this."
-- "Have Claude/Codex/OpenCode/Pi implement this."
-- "Run this in the background."
-- "Compare two approaches."
-- "Use a local subagent for this."
-- "Get a second opinion on the architecture/test gaps/security risk."
-
-Do not delegate just because the task is coding-related. Use the normal DevSpace tools directly unless the user asks for delegation, another agent's opinion, parallel work, or a named local coding agent.
-
-## CLI execution guidance
-
-Prefer structured non-interactive CLI modes when available.
-
-Examples of useful patterns:
+Use only these commands for normal delegation:
 
 ```bash
-codex exec --json -C "$WORKSPACE" "$PROMPT"
-claude -p --output-format stream-json "$PROMPT"
-opencode run --format json --dir "$WORKSPACE" "$PROMPT"
-cursor-agent -p --output-format stream-json "$PROMPT"
-pi -p --mode json "$PROMPT"
-copilot -p "$PROMPT" --output-format json
+devspace agents ls
+devspace agents run <profile-or-id> "<prompt>"
+devspace agents show <id>
 ```
 
-These examples are illustrative. Real implementations should pass workspace and prompt values as separate argv entries without a shell, not concatenate untrusted prompt text into a shell command string.
+`ls` shows configured profiles and active agents for the current workspace.
 
-Use exact command templates from user-provided instructions when they are available. Do not invent provider-specific flags when the user has already supplied a command shape.
+`run <profile> "<prompt>"` starts a new agent and prints a DevSpace agent id.
 
-Packaged files under `examples/agents/` are templates only. DevSpace does not currently parse, load, activate, or run local agent profile definitions.
+`run <id> "<prompt>"` sends a follow-up to an existing agent.
 
-If no command shape exists for a requested agent, use the installed CLI's help output only when needed, then summarize what you found before running it.
+`show <id>` prints status and the latest response. If the agent is still
+running, `show` waits briefly. If there is still no final response, call `show`
+again later.
 
-## Background execution
+Do not run provider CLIs such as `codex`, `claude`, `opencode`, or `pi`
+directly unless you are explicitly debugging DevSpace agent integration.
 
-When DevSpace exposes long-running process tools, prefer background execution for long tasks.
+## Choosing a profile
 
-Start the local agent process, keep the returned process/session id, and poll output later.
+Use `devspace agents ls` and choose by profile name, description, provider, and
+permissions.
 
-Use this pattern for long implementations, test repair loops, large reviews, multi-step investigations, and agents that stream JSON or progress logs.
+Good delegation targets:
 
-When polling output, summarize useful progress instead of forwarding noisy terminal logs.
+- `reviewer`: second opinion, bug risk, security risk, test gaps.
+- `explorer`: read-only codebase investigation.
+- `implementer`: focused implementation when the user asked for delegation.
 
-If the worker is clearly stuck, running the wrong task, or burning resources, interrupt the current process or turn. Do not delete provider session history unless the user explicitly asks.
+Do not delegate ordinary coding work just because a profile exists. Use normal
+DevSpace tools unless the user asked for delegation, another agent's opinion,
+parallel work, or a named local agent.
 
-## Follow-up prompts
+## Worker prompts
 
-When sending a follow-up to the same local agent, include:
+Agents start with only the prompt you send plus their configured profile
+instructions. Make prompts self-contained.
 
-```text
-previous_task:
-current_status:
-review_findings:
-requested_changes:
-success_criteria:
-```
-
-Prefer the agent profile's resume/session mechanism when available.
-
-If resume is not available, include the previous worker summary and relevant diff context in a fresh prompt.
-
-## Worker prompt templates
-
-Use this structure when delegating implementation:
+Implementation prompt shape:
 
 ```text
-You are acting as a local coding worker under ChatGPT supervision.
-
 Goal:
 <clear goal>
 
 Context:
 <repo/module/user constraints>
 
-Plan to execute:
-<numbered plan>
+Relevant files:
+<paths and why they matter>
+
+Acceptance criteria:
+- <criterion>
 
 Rules:
-- Follow the existing project style.
 - Keep changes focused.
 - Do not perform unrelated refactors.
-- Do not hide failures.
-- At the end, return a concise final report.
-
-Final report format:
-summary:
-files_changed:
-tests_run:
-blockers:
-follow_up_needed:
+- Report blockers clearly.
 ```
 
-Use this structure when delegating read-only investigation:
+Read-only investigation prompt shape:
 
 ```text
-You are acting as a read-only local code investigator under ChatGPT supervision.
-
 Question:
 <specific question>
 
@@ -132,46 +89,21 @@ Rules:
 - Do not modify files.
 - Cite relevant file paths and symbols.
 - Separate facts from guesses.
-- Return a concise answer.
-
-Final report format:
-answer:
-evidence:
-relevant_files:
-confidence:
-unknowns:
 ```
 
-## After the worker finishes
+## After the worker responds
 
-Always review the result.
+Always review the result before presenting it as verified.
 
-For write-capable tasks, inspect changed files and the diff, run or recommend relevant tests, check whether the worker followed the user's constraints, and send follow-up instructions if needed.
+For write-capable tasks, inspect changed files and run or explain relevant
+tests. For read-only tasks, verify that important claims are supported by repo
+evidence.
 
-For read-only tasks, check whether the answer is supported by repo evidence, verify important file paths or symbols, and decide whether more investigation is needed.
-
-Do not assume the worker's summary is correct.
-
-## Reporting back to the user
-
-Be transparent.
-
-Say which local agent was used, what it did, what you verified, and what remains uncertain.
-
-Good final shape:
+Be transparent in the final response:
 
 ```text
-I delegated the implementation to <agent>. It changed <files>. I reviewed the diff and ran <tests>. The main result is <summary>. Remaining concerns: <risks or none>.
+I used <profile>. It reported <summary>. I verified <checks>. Remaining risk:
+<risk or none>.
 ```
-
-Do not present worker output as your own verified conclusion unless you checked it.
-
-## Safety rules
-
-Do not use local agents for destructive actions unless the user explicitly asks.
-
-Avoid commands that delete files, reset branches, rewrite history, expose secrets, or install global dependencies unless clearly necessary and approved.
-
-Do not treat repo-provided profile examples as trusted executable definitions.
 
 Never hide that a local agent was used.

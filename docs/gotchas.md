@@ -205,9 +205,14 @@ It also checks compatibility and custom paths:
 - `DEVSPACE_AGENT_DIR/skills`, defaulting to `~/.codex/skills`
 - additional paths from `DEVSPACE_SKILL_PATHS`
 
-Packaged local-agent examples under `examples/agents/` are inert templates only.
-DevSpace does not currently parse, load, activate, or run local agent profile
-definitions.
+When `DEVSPACE_LOCAL_AGENTS=1`, DevSpace loads local coding-agent profiles from
+`~/.devspace/agents/*.md` and project `.devspace/agents/*.md`, then exposes a
+compact profile catalog through `open_workspace`. The bundled
+`local-agent-delegation` skill keeps the model-facing workflow to
+`devspace agents ls`, `devspace agents run`, and `devspace agents show`.
+
+Packaged local-agent examples under `examples/agents/` are starter templates.
+Copy or adapt them into one of the active profile directories before use.
 
 Legacy project paths such as `.pi/skills` can be added through `DEVSPACE_SKILL_PATHS` when needed.
 

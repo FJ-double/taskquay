@@ -99,7 +99,7 @@ sessions.
 | Variable | Purpose |
 | --- | --- |
 | `DEVSPACE_SKILLS` | Set to `0` to hide skills. Enabled by default. |
-| `DEVSPACE_LOCAL_AGENTS` | Set to `1` to expose the local-agent delegation skill. Experimental and disabled by default. |
+| `DEVSPACE_LOCAL_AGENTS` | Set to `1` to expose local agent profiles and the local-agent delegation skill. Experimental and disabled by default. |
 | `DEVSPACE_AGENT_DIR` | Defaults to `~/.codex`; its `skills` child is loaded for compatibility. |
 | `DEVSPACE_SKILL_PATHS` | Optional comma-separated additional skill directories. |
 
@@ -115,9 +115,21 @@ It also keeps compatibility with:
 - `DEVSPACE_AGENT_DIR/skills`, defaulting to `~/.codex/skills`
 - additional paths from `DEVSPACE_SKILL_PATHS`
 
-Starter local coding-agent profile templates are available under
-`examples/agents/`. These files are inert examples: DevSpace does not currently
-parse, load, activate, or run local agent profile definitions.
+When local agents are enabled, DevSpace discovers local coding-agent profiles
+from:
+
+- `~/.devspace/agents/*.md`
+- project `.devspace/agents/*.md`
+
+`open_workspace` returns a compact catalog containing profile names,
+descriptions, providers, modes, models, and permissions so the host model can
+choose an agent without reading provider-specific launch details. The
+`local-agent-delegation` skill teaches the model to use only the minimal
+`devspace agents ls`, `devspace agents run`, and `devspace agents show`
+workflow.
+
+Starter profile templates are available under `examples/agents/`. Copy or adapt
+them into one of the active profile directories before use.
 
 Legacy project paths such as `.pi/skills` can be added through `DEVSPACE_SKILL_PATHS` when needed.
 
