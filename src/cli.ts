@@ -1,11 +1,23 @@
 #!/usr/bin/env node
 import { createRequire } from "node:module";
 import { stdin as input, stdout as output } from "node:process";
-import { resolve } from "node:path";
+import { spawn } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import * as prompts from "@clack/prompts";
 import { getShellConfig } from "@earendil-works/pi-coding-agent";
 import { satisfies } from "semver";
 import { loadConfig } from "./config.js";
+import { loadLocalAgentProfiles, type LocalAgentProfile } from "./local-agent-profiles.js";
+import { createLocalAgentStore, type LocalAgentRecord } from "./local-agent-store.js";
+import {
+  createCodexSdkLocalAgentRuntime,
+  type LocalAgentRunResult,
+  type LocalAgentWriteMode,
+} from "./local-agent-runtime.js";
 import {
   ensureDevspaceDefaultSkills,
   generateOwnerToken,
@@ -17,7 +29,7 @@ import {
 } from "./user-config.js";
 import { expandHomePath } from "./roots.js";
 
-type Command = "serve" | "init" | "doctor" | "config" | "help" | "version";
+type Command = "serve" | "init" | "doctor" | "config" | "agents" | "help" | "version";
 const require = createRequire(import.meta.url);
 const SUPPORTED_NODE_RANGE = ">=20.12 <27";
 
@@ -41,6 +53,9 @@ async function main(argv: string[]): Promise<void> {
     case "config":
       runConfigCommand(args);
       return;
+    case "agents":
+      await runAgentsCommand(args);
+      return;
     case "help":
       printHelp();
       return;
@@ -52,7 +67,7 @@ async function main(argv: string[]): Promise<void> {
 
 function normalizeCommand(command: string | undefined): Command {
   if (!command || command === "serve" || command === "start") return "serve";
-  if (command === "init" || command === "doctor" || command === "config") return command;
+  if (command === "init" || command === "doctor" || command === "config" || command === "agents") return command;
   if (command === "help" || command === "--help" || command === "-h") return "help";
   if (command === "version" || command === "--version" || command === "-v") return "version";
   throw new Error(`Unknown command: ${command}`);
@@ -273,10 +288,244 @@ function printHelp(): void {
       "  devspace doctor          Show config, runtime, and native dependency status",
       "  devspace config get      Print persisted config",
       "  devspace config set publicBaseUrl <url|null>",
+      "  devspace agents ls       List local agent profiles and sessions",
+      "  devspace agents run <profile-or-id> <prompt>",
+      "  devspace agents show <id>",
       "  devspace -v, --version   Print the installed version",
       "",
       "For temporary tunnels:",
       "  DEVSPACE_PUBLIC_BASE_URL=https://example.trycloudflare.com devspace serve",
+    ].join("\n"),
+  );
+}
+
+async function runAgentsCommand(args: string[]): Promise<void> {
+  const [subcommand, ...rest] = args;
+  switch (subcommand) {
+    case "ls":
+    case "list":
+      await runAgentsList();
+      return;
+    case "run":
+      await runAgentsRun(rest);
+      return;
+    case "show":
+      await runAgentsShow(rest);
+      return;
+    case "__worker":
+      await runAgentsWorker(rest);
+      return;
+    case undefined:
+    case "help":
+    case "--help":
+    case "-h":
+      printAgentsHelp();
+      return;
+    default:
+      throw new Error(`Unknown agents command: ${subcommand}`);
+  }
+}
+
+async function runAgentsList(): Promise<void> {
+  const config = loadConfig();
+  const workspaceRoot = resolveCurrentWorkspaceRoot();
+  const profiles = await loadLocalAgentProfiles(config, workspaceRoot);
+  const store = createLocalAgentStore(config);
+  const agents = store.list(workspaceRoot);
+
+  if (profiles.length === 0 && agents.length === 0) {
+    console.log("No local agents configured for this workspace.");
+    return;
+  }
+
+  for (const profile of profiles) {
+    const model = profile.model ? ` ${profile.model}` : "";
+    const mode = profile.mode ? ` ${profile.mode}` : "";
+    console.log(`profile ${profile.name} ${profile.provider}${model}${mode} - ${profile.description}`);
+  }
+
+  for (const agent of agents) {
+    console.log(formatAgentLine(agent));
+  }
+}
+
+async function runAgentsRun(args: string[]): Promise<void> {
+  const [target, ...promptParts] = args;
+  const prompt = promptParts.join(" ").trim();
+  if (!target || !prompt) {
+    throw new Error('Usage: devspace agents run <profile-or-id> "<prompt>"');
+  }
+
+  const config = loadConfig();
+  const workspaceRoot = resolveCurrentWorkspaceRoot();
+  const store = createLocalAgentStore(config);
+  const existing = store.get(target);
+  const promptFile = writeAgentPromptFile(prompt);
+
+  if (existing) {
+    store.update(existing.id, { status: "starting", error: undefined });
+    spawnAgentWorker(existing.id, promptFile);
+    console.log(formatAgentLine({ ...existing, status: "running" }));
+    return;
+  }
+
+  const profiles = await loadLocalAgentProfiles(config, workspaceRoot);
+  const profile = profiles.find((candidate) => candidate.name === target);
+  if (!profile) {
+    throw new Error(`Unknown local agent profile or id: ${target}`);
+  }
+
+  const record = store.create({
+    workspaceId: process.env.DEVSPACE_WORKSPACE_ID,
+    workspaceRoot,
+    profileName: profile.name,
+    provider: profile.provider,
+    model: profile.model,
+    mode: profile.mode,
+    backend: "auto",
+  });
+
+  spawnAgentWorker(record.id, promptFile);
+  console.log(formatAgentLine({ ...record, status: "running" }));
+}
+
+async function runAgentsShow(args: string[]): Promise<void> {
+  const [id] = args;
+  if (!id) throw new Error("Usage: devspace agents show <id>");
+
+  const config = loadConfig();
+  const store = createLocalAgentStore(config);
+  let record = store.get(id);
+  if (!record) throw new Error(`Unknown local agent id: ${id}`);
+
+  const deadline = Date.now() + 15_000;
+  while ((record.status === "starting" || record.status === "running") && Date.now() < deadline) {
+    await sleep(500);
+    record = store.get(id) ?? record;
+  }
+
+  console.log(formatAgentLine(record));
+  if (record.latestResponse) {
+    console.log(record.latestResponse);
+    return;
+  }
+  if (record.error) {
+    console.log(record.error);
+    return;
+  }
+  if (record.status === "starting" || record.status === "running") {
+    console.log(`No final response yet. Call \`devspace agents show ${record.id}\` again later.`);
+  }
+}
+
+async function runAgentsWorker(args: string[]): Promise<void> {
+  const [id, promptFileFlag, promptFile] = args;
+  if (!id || promptFileFlag !== "--prompt-file" || !promptFile) {
+    throw new Error("Usage: devspace agents __worker <id> --prompt-file <path>");
+  }
+
+  const config = loadConfig();
+  const store = createLocalAgentStore(config);
+  const record = store.get(id);
+  if (!record) throw new Error(`Unknown local agent id: ${id}`);
+
+  store.update(record.id, { status: "running", error: undefined });
+  try {
+    const profiles = await loadLocalAgentProfiles(config, record.workspaceRoot);
+    const profile = profiles.find((candidate) => candidate.name === record.profileName);
+    if (!profile) throw new Error(`Local agent profile not found: ${record.profileName}`);
+
+    const prompt = await readFile(promptFile, "utf8");
+    const result = await runLocalAgentProfile(profile, record, prompt);
+    store.update(record.id, {
+      backend: result.backend,
+      providerSessionId: result.providerSessionId ?? undefined,
+      status: "idle",
+      latestResponse: result.finalResponse,
+      error: undefined,
+    });
+  } catch (error) {
+    store.update(record.id, {
+      status: "error",
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function runLocalAgentProfile(
+  profile: LocalAgentProfile,
+  record: LocalAgentRecord,
+  prompt: string,
+): Promise<LocalAgentRunResult> {
+  if (profile.provider !== "codex") {
+    throw new Error(`Provider '${profile.provider}' is not wired yet. Supported provider: codex.`);
+  }
+
+  const runtime = await createCodexSdkLocalAgentRuntime();
+  const body = profile.body.trim();
+  const fullPrompt = body ? `${body}\n\nTask:\n${prompt}` : prompt;
+  return runtime.run({
+    prompt: fullPrompt,
+    workspace: record.workspaceRoot,
+    providerSessionId: record.providerSessionId,
+    writeMode: writeModeForProfile(profile),
+    model: profile.model,
+  });
+}
+
+function writeModeForProfile(profile: LocalAgentProfile): LocalAgentWriteMode {
+  if (profile.permissions?.edit === "allow") return "allowed";
+  return "read_only";
+}
+
+function spawnAgentWorker(agentId: string, promptFile: string): void {
+  const child = spawn(process.execPath, [
+    fileURLToPath(import.meta.url),
+    "agents",
+    "__worker",
+    agentId,
+    "--prompt-file",
+    promptFile,
+  ], {
+    detached: true,
+    stdio: "ignore",
+    env: process.env,
+  });
+  child.unref();
+}
+
+function writeAgentPromptFile(prompt: string): string {
+  const directory = mkdtempSync(join(tmpdir(), "devspace-agent-prompt-"));
+  const filePath = join(directory, "prompt.txt");
+  writeFileSync(filePath, prompt, { mode: 0o600 });
+  return filePath;
+}
+
+function resolveCurrentWorkspaceRoot(): string {
+  return resolve(process.env.DEVSPACE_WORKSPACE_ROOT || process.cwd());
+}
+
+function formatAgentLine(agent: Pick<
+  LocalAgentRecord,
+  "id" | "status" | "profileName" | "provider" | "model"
+>): string {
+  const model = agent.model ? ` ${agent.model}` : "";
+  return `${agent.id} ${agent.status} ${agent.profileName} ${agent.provider}${model}`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+}
+
+function printAgentsHelp(): void {
+  console.log(
+    [
+      "DevSpace agents",
+      "",
+      "Usage:",
+      "  devspace agents ls",
+      "  devspace agents run <profile-or-id> <prompt>",
+      "  devspace agents show <id>",
     ].join("\n"),
   );
 }

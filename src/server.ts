@@ -572,6 +572,7 @@ function registerCodexProcessTools(
         workspaceId,
         command: cmd,
         cwd,
+        workspaceRoot: workspace.root,
         tty,
         columns,
         rows,

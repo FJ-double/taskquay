@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
   version: string;
@@ -13,4 +15,43 @@ for (const flag of ["-v", "--version"]) {
   }).trim();
 
   assert.equal(output, packageJson.version);
+}
+
+const root = mkdtempSync(join(tmpdir(), "devspace-cli-agents-test-"));
+try {
+  const configDir = join(root, ".devspace");
+  const projectRoot = join(root, "project");
+  mkdirSync(join(configDir, "agents"), { recursive: true });
+  mkdirSync(projectRoot, { recursive: true });
+  writeFileSync(
+    join(configDir, "agents", "reviewer.md"),
+    [
+      "---",
+      "name: reviewer",
+      "description: Read-only reviewer.",
+      "provider: codex",
+      "model: gpt-5.4",
+      "---",
+      "",
+      "Review only.",
+      "",
+    ].join("\n"),
+  );
+
+  const output = execFileSync("node", ["--import", "tsx", "src/cli.ts", "agents", "ls"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      DEVSPACE_CONFIG_DIR: configDir,
+      DEVSPACE_ALLOWED_ROOTS: projectRoot,
+      DEVSPACE_WORKSPACE_ROOT: projectRoot,
+      DEVSPACE_LOCAL_AGENTS: "1",
+      DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
+    },
+  });
+
+  assert.match(output, /profile reviewer codex gpt-5\.4 - Read-only reviewer\./);
+} finally {
+  rmSync(root, { recursive: true, force: true });
 }
