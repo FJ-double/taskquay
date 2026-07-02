@@ -18,7 +18,7 @@ export interface LocalAgentRunInput {
 }
 
 export interface LocalAgentRunResult {
-  provider: "codex";
+  provider: string;
   backend: LocalAgentBackend;
   providerSessionId: string | null;
   finalResponse: string;
@@ -26,7 +26,7 @@ export interface LocalAgentRunResult {
 }
 
 export interface LocalAgentRuntime {
-  readonly provider: "codex";
+  readonly provider: string;
   readonly backend: LocalAgentBackend;
   run(input: LocalAgentRunInput): Promise<LocalAgentRunResult>;
 }

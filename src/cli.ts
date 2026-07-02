@@ -382,7 +382,7 @@ async function runAgentsRun(args: string[]): Promise<void> {
     provider: profile.provider,
     model: profile.model,
     mode: profile.mode,
-    backend: "auto",
+    backend: profile.backend ?? "auto",
   });
 
   spawnAgentWorker(record.id, promptFile);
@@ -457,7 +457,12 @@ async function runLocalAgentProfile(
   record: LocalAgentRecord,
   prompt: string,
 ): Promise<LocalAgentRunResult> {
+  if (profile.backend === "cli") {
+    return runCliLocalAgentProfile(profile, record, prompt);
+  }
+
   if (profile.provider !== "codex") {
+    if (profile.command) return runCliLocalAgentProfile(profile, record, prompt);
     throw new Error(`Provider '${profile.provider}' is not wired yet. Supported provider: codex.`);
   }
 
@@ -470,6 +475,57 @@ async function runLocalAgentProfile(
     providerSessionId: record.providerSessionId,
     writeMode: writeModeForProfile(profile),
     model: profile.model,
+  });
+}
+
+async function runCliLocalAgentProfile(
+  profile: LocalAgentProfile,
+  record: LocalAgentRecord,
+  prompt: string,
+): Promise<LocalAgentRunResult> {
+  if (!profile.command) {
+    throw new Error(`CLI local agent profile '${profile.name}' is missing command.`);
+  }
+
+  const body = profile.body.trim();
+  const fullPrompt = body ? `${body}\n\nTask:\n${prompt}` : prompt;
+  const finalResponse = await runPromptCommand(profile.command, fullPrompt, record.workspaceRoot);
+  return {
+    provider: profile.provider,
+    backend: "cli",
+    providerSessionId: record.providerSessionId ?? null,
+    finalResponse,
+    items: [],
+  };
+}
+
+function runPromptCommand(command: string, prompt: string, cwd: string): Promise<string> {
+  return new Promise((resolveCommand, rejectCommand) => {
+    const child = spawn(command, {
+      cwd,
+      env: process.env,
+      shell: true,
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (data: Buffer) => {
+      stdout += data.toString("utf8");
+    });
+    child.stderr.on("data", (data: Buffer) => {
+      stderr += data.toString("utf8");
+    });
+    child.on("error", rejectCommand);
+    child.on("close", (code) => {
+      if (code && code !== 0) {
+        rejectCommand(new Error(stderr.trim() || `CLI local agent exited with code ${code}`));
+        return;
+      }
+      resolveCommand((stdout.trim() || stderr.trim()).trim());
+    });
+    child.stdin.end(prompt);
   });
 }
 

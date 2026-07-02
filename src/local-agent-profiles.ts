@@ -4,11 +4,14 @@ import { basename, join, resolve } from "node:path";
 import type { ServerConfig } from "./config.js";
 
 export type AgentPermissionValue = "allow" | "ask" | "deny";
+export type LocalAgentProfileBackend = "auto" | "codex-sdk" | "cli" | "acp";
 
 export interface LocalAgentProfile {
   name: string;
   description: string;
   provider: string;
+  backend?: LocalAgentProfileBackend;
+  command?: string;
   model?: string;
   mode?: string;
   permissions?: Record<string, AgentPermissionValue>;
@@ -33,6 +36,7 @@ interface ParsedFrontmatter {
 
 const FRONTMATTER_DELIMITER = "---";
 const PERMISSION_VALUES = new Set<AgentPermissionValue>(["allow", "ask", "deny"]);
+const BACKENDS = new Set<LocalAgentProfileBackend>(["auto", "codex-sdk", "cli", "acp"]);
 
 export async function loadLocalAgentProfiles(
   config: ServerConfig,
@@ -187,6 +191,8 @@ function profileFromFrontmatter(
     name,
     description,
     provider,
+    backend: readBackend(frontmatter, filePath),
+    command: readString(frontmatter, "command"),
     model: readString(frontmatter, "model"),
     mode: readString(frontmatter, "mode"),
     permissions: readPermissions(frontmatter.permissions, filePath),
@@ -194,6 +200,18 @@ function profileFromFrontmatter(
     body,
     disabled: frontmatter.disabled === true,
   };
+}
+
+function readBackend(
+  frontmatter: Record<string, unknown>,
+  filePath: string,
+): LocalAgentProfileBackend | undefined {
+  const backend = readString(frontmatter, "backend");
+  if (!backend) return undefined;
+  if (!BACKENDS.has(backend as LocalAgentProfileBackend)) {
+    throw new Error(`Local agent profile backend must be auto, codex-sdk, cli, or acp: ${filePath}`);
+  }
+  return backend as LocalAgentProfileBackend;
 }
 
 function readString(frontmatter: Record<string, unknown>, key: string): string | undefined {
