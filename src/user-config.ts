@@ -51,6 +51,10 @@ export function devspaceSkillsDir(env: NodeJS.ProcessEnv = process.env): string 
   return join(devspaceConfigDir(env), "skills");
 }
 
+export function devspaceAgentsDir(env: NodeJS.ProcessEnv = process.env): string {
+  return join(devspaceConfigDir(env), "agents");
+}
+
 export function loadDevspaceFiles(env: NodeJS.ProcessEnv = process.env): DevspaceFiles {
   const dir = devspaceConfigDir(env);
   const configPath = join(dir, "config.json");

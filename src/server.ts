@@ -41,6 +41,7 @@ import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { formatPathForPrompt } from "./skills.js";
 import { createWorkspaceStore } from "./workspace-store.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
+import { summarizeLocalAgentProfile } from "./local-agent-profiles.js";
 
 type Transport = StreamableHTTPServerTransport;
 const WORKSPACE_APP_URI = "ui://devspace/workspace-app.html";
@@ -228,6 +229,15 @@ const workspaceSkillOutputSchema = z.object({
 const workspaceAgentsFileOutputSchema = z.object({
   path: z.string(),
   content: z.string(),
+});
+
+const workspaceLocalAgentOutputSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  provider: z.string(),
+  model: z.string().optional(),
+  mode: z.string().optional(),
+  permissions: z.record(z.string(), z.enum(["allow", "ask", "deny"])).optional(),
 });
 
 const workspaceAvailableAgentsFileOutputSchema = z.object({
@@ -745,6 +755,7 @@ function createMcpServer(
         agentsFiles: z.array(workspaceAgentsFileOutputSchema),
         availableAgentsFiles: z.array(workspaceAvailableAgentsFileOutputSchema),
         skills: z.array(workspaceSkillOutputSchema),
+        agents: z.array(workspaceLocalAgentOutputSchema),
         skillDiagnostics: z.array(z.unknown()),
         instruction: z.string(),
       },
@@ -767,6 +778,7 @@ function createMcpServer(
           description: skill.description,
           path: formatPathForPrompt(skill.filePath),
         }));
+      const visibleAgents = workspace.agentProfiles.map(summarizeLocalAgentProfile);
       const loadedAgentsFiles = agentsFiles.map((file) => ({
         path: formatAgentsPath(file.path, workspace.root),
         content: file.content,
@@ -793,6 +805,9 @@ function createMcpServer(
             visibleSkills.length > 0
               ? `Available skills: ${visibleSkills.map((skill) => skill.name).join(", ")}`
               : undefined,
+            visibleAgents.length > 0
+              ? `Available local agents: ${visibleAgents.map((agent) => agent.name).join(", ")}`
+              : undefined,
             instruction,
           ].filter(Boolean).join("\n"),
         },
@@ -817,6 +832,7 @@ function createMcpServer(
               agentsFiles: loadedAgentsFiles.length,
               availableAgentsFiles: availableAgentsFileOutputs.length,
               skills: visibleSkills.length,
+              agents: visibleAgents.length,
               skillDiagnostics: workspace.skillDiagnostics.length,
             },
           },
@@ -830,6 +846,7 @@ function createMcpServer(
           agentsFiles: loadedAgentsFiles,
           availableAgentsFiles: availableAgentsFileOutputs,
           skills: visibleSkills,
+          agents: visibleAgents,
           skillDiagnostics: workspace.skillDiagnostics,
           instruction,
         },
