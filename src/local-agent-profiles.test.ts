@@ -59,7 +59,7 @@ try {
   const enabledConfig = loadConfig({
     DEVSPACE_CONFIG_DIR: configDir,
     DEVSPACE_ALLOWED_ROOTS: workspaceRoot,
-    DEVSPACE_LOCAL_AGENTS: "1",
+    DEVSPACE_SUBAGENTS: "1",
     DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
   });
   const profiles = await loadLocalAgentProfiles(enabledConfig, workspaceRoot);
@@ -98,7 +98,7 @@ try {
   const disabledConfig = loadConfig({
     DEVSPACE_CONFIG_DIR: configDir,
     DEVSPACE_ALLOWED_ROOTS: workspaceRoot,
-    DEVSPACE_LOCAL_AGENTS: "0",
+    DEVSPACE_SUBAGENTS: "0",
     DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
   });
   assert.deepEqual(await loadLocalAgentProfiles(disabledConfig, workspaceRoot), []);

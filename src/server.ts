@@ -805,7 +805,7 @@ function createMcpServer(
               ? `Available skills: ${visibleSkills.map((skill) => skill.name).join(", ")}`
               : undefined,
             visibleAgents.length > 0
-              ? `Available local agents: ${visibleAgents.map((agent) => agent.name).join(", ")}`
+              ? `Available subagents: ${visibleAgents.map((agent) => agent.name).join(", ")}`
               : undefined,
             instruction,
           ].filter(Boolean).join("\n"),

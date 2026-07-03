@@ -80,7 +80,7 @@ export class LocalAgentStore {
       }),
     }));
 
-    if (!updated) throw new Error(`Unknown local agent id: ${id}`);
+    if (!updated) throw new Error(`Unknown subagent id: ${id}`);
     return updated;
   }
 

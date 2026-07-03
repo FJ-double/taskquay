@@ -1,15 +1,15 @@
 ---
-name: local-agent-delegation
-description: Delegate coding tasks to user-configured DevSpace local agents.
+name: subagent-delegation
+description: Delegate coding tasks to user-configured DevSpace subagents.
 ---
 
-# Local Agent Delegation
+# Subagent Delegation
 
 Use this skill when the user explicitly asks to delegate work to another coding
-agent, use a named local agent, get a second opinion, compare approaches, or run
+agent, use a named subagent, get a second opinion, compare approaches, or run
 a subagent-like workflow.
 
-Do not use local agents silently. Tell the user when another local agent is
+Do not use subagents silently. Tell the user when another subagent is
 being used.
 
 ## Core commands
@@ -49,7 +49,7 @@ Good delegation targets:
 
 Do not delegate ordinary coding work just because a profile exists. Use normal
 DevSpace tools unless the user asked for delegation, another agent's opinion,
-parallel work, or a named local agent.
+parallel work, or a named subagent.
 
 ## Worker prompts
 
@@ -107,4 +107,4 @@ I used <profile>. It reported <summary>. I verified <checks>. Remaining risk:
 <risk or none>.
 ```
 
-Never hide that a local agent was used.
+Never hide that a subagent was used.

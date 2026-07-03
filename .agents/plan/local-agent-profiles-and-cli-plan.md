@@ -1,8 +1,8 @@
-# Local agent profiles and DevSpace agent CLI plan
+# Subagent profiles and DevSpace agent CLI plan
 
 ## Decision
 
-Local agent profiles describe roles over built-in coding-agent providers.
+Subagent profiles describe roles over built-in coding-agent providers.
 DevSpace owns provider invocation and lifecycle. Custom CLI-backed agents,
 provider action objects, and model-visible backend details are out of scope for
 v1.
@@ -82,7 +82,7 @@ details stay outside the default model context.
 
 ## Non-goals
 
-- Custom or arbitrary local agent commands.
+- Custom or arbitrary subagent commands.
 - Provider-specific action DSLs.
 - Exposing raw provider transcripts by default.
 - Tracking changed files or tests from provider output.

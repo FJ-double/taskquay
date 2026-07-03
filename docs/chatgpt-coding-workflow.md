@@ -87,11 +87,11 @@ DevSpace discovers standard Agent Skills from:
 
 It also keeps compatibility with:
 
-- the bundled `local-agent-delegation` skill when `DEVSPACE_LOCAL_AGENTS=1`, unless `~/.devspace/skills/local-agent-delegation/SKILL.md` exists
+- the bundled `subagent-delegation` skill when `DEVSPACE_SUBAGENTS=1`, unless `~/.devspace/skills/subagent-delegation/SKILL.md` exists
 - `DEVSPACE_AGENT_DIR/skills`, defaulting to `~/.codex/skills`
 - additional paths from `DEVSPACE_SKILL_PATHS`
 
-When local agents are enabled, DevSpace discovers local coding-agent profiles
+When Subagents are enabled, DevSpace discovers agent profiles
 from `~/.devspace/agents/*.md` and project `.devspace/agents/*.md`.
 `open_workspace` exposes a compact catalog with profile names, descriptions,
 providers, and optional models so the model can choose a configured agent
@@ -112,8 +112,8 @@ Skill paths may be outside the workspace. DevSpace only permits reading:
 - files under a skill directory after that skill's `SKILL.md` has been read
 
 Set `DEVSPACE_SKILLS=0` to hide skills from workspace output. Set
-`DEVSPACE_LOCAL_AGENTS=1` to expose the experimental local agent catalog and
-`local-agent-delegation` skill. That skill teaches the minimal
+`DEVSPACE_SUBAGENTS=1` to expose the experimental subagent catalog and
+`subagent-delegation` skill. That skill teaches the minimal
 `devspace agents ls`, `devspace agents run`, and `devspace agents show`
 workflow.
 

@@ -49,7 +49,7 @@ try {
       DEVSPACE_ALLOWED_ROOTS: projectRoot,
       DEVSPACE_STATE_DIR: stateDir,
       DEVSPACE_WORKSPACE_ROOT: projectRoot,
-      DEVSPACE_LOCAL_AGENTS: "1",
+      DEVSPACE_SUBAGENTS: "1",
       DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
     },
   });
@@ -60,9 +60,9 @@ try {
     DEVSPACE_CONFIG_DIR: configDir,
     DEVSPACE_ALLOWED_ROOTS: projectRoot,
     DEVSPACE_STATE_DIR: stateDir,
-    DEVSPACE_LOCAL_AGENTS: "1",
+    DEVSPACE_SUBAGENTS: "1",
     DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
-  }).localAgents, true);
+  }).subagents, true);
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

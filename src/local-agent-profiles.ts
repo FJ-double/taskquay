@@ -41,7 +41,7 @@ export async function loadLocalAgentProfiles(
   config: ServerConfig,
   workspaceRoot: string,
 ): Promise<LocalAgentProfile[]> {
-  if (!config.localAgents) return [];
+  if (!config.subagents) return [];
 
   const profileDirs = [
     config.devspaceAgentsDir,
@@ -99,14 +99,14 @@ function parseFrontmatter(content: string, filePath: string): ParsedFrontmatter 
   const normalized = content.replace(/^\uFEFF/, "");
   const lines = normalized.split(/\r?\n/);
   if (lines[0]?.trim() !== FRONTMATTER_DELIMITER) {
-    throw new Error(`Local agent profile is missing frontmatter: ${filePath}`);
+    throw new Error(`Subagent profile is missing frontmatter: ${filePath}`);
   }
 
   const endIndex = lines.findIndex(
     (line, index) => index > 0 && line.trim() === FRONTMATTER_DELIMITER,
   );
   if (endIndex === -1) {
-    throw new Error(`Local agent profile frontmatter is not closed: ${filePath}`);
+    throw new Error(`Subagent profile frontmatter is not closed: ${filePath}`);
   }
 
   return {
@@ -178,7 +178,7 @@ function profileFromFrontmatter(
   const description = readString(frontmatter, "description");
   const provider = readProvider(frontmatter, filePath);
   if (!description) {
-    throw new Error(`Local agent profile is missing description: ${filePath}`);
+    throw new Error(`Subagent profile is missing description: ${filePath}`);
   }
 
   return {
@@ -195,11 +195,11 @@ function profileFromFrontmatter(
 function readProvider(frontmatter: Record<string, unknown>, filePath: string): LocalAgentProvider {
   const provider = readString(frontmatter, "provider");
   if (!provider) {
-    throw new Error(`Local agent profile is missing provider: ${filePath}`);
+    throw new Error(`Subagent profile is missing provider: ${filePath}`);
   }
   if (!PROVIDERS.has(provider as LocalAgentProvider)) {
     throw new Error(
-      `Local agent profile provider must be codex, claude, opencode, pi, cursor, or copilot: ${filePath}`,
+      `Subagent profile provider must be codex, claude, opencode, pi, cursor, or copilot: ${filePath}`,
     );
   }
   return provider as LocalAgentProvider;

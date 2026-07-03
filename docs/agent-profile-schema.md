@@ -1,6 +1,6 @@
-# Local agent profile schema
+# Subagent profile schema
 
-DevSpace local agent profiles are user-owned markdown files with YAML
+DevSpace agent profiles are user-owned markdown files with YAML
 frontmatter. They describe roles such as reviewer, explorer, or implementer.
 DevSpace owns provider invocation.
 
@@ -108,7 +108,7 @@ Recommended body content:
 
 ## Model-facing workflow
 
-The local-agent skill teaches only:
+The Subagent skill teaches only:
 
 ```bash
 devspace agents ls

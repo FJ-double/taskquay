@@ -19,7 +19,7 @@ import {
   ensureDevspaceDefaultSkills,
   generateOwnerToken,
   loadDevspaceFiles,
-  resolveLocalAgentsFlag,
+  resolveSubagentsFlag,
   writeDevspaceAuth,
   writeDevspaceConfig,
   type DevspaceUserConfig,
@@ -147,7 +147,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       port,
       allowedRoots,
       publicBaseUrl,
-      localAgents: resolveLocalAgentsFlag(files.config),
+      subagents: resolveSubagentsFlag(files.config),
     };
     const auth = {
       ownerToken: files.auth.ownerToken ?? generateOwnerToken(),
@@ -155,7 +155,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
 
     const configPath = writeDevspaceConfig(config);
     const authPath = writeDevspaceAuth(auth);
-    const seededSkillPaths = config.localAgents ? ensureDevspaceDefaultSkills() : [];
+    const seededSkillPaths = config.subagents ? ensureDevspaceDefaultSkills() : [];
 
     const lines = [
       `Config: ${configPath}`,
@@ -285,7 +285,7 @@ function printHelp(): void {
       "  devspace doctor          Show config, runtime, and native dependency status",
       "  devspace config get      Print persisted config",
       "  devspace config set publicBaseUrl <url|null>",
-      "  devspace agents ls       List local agent profiles and sessions",
+      "  devspace agents ls       List agent profiles and sessions",
       "  devspace agents run <profile-or-id> <prompt>",
       "  devspace agents show <id>",
       "  devspace -v, --version   Print the installed version",
@@ -331,7 +331,7 @@ async function runAgentsList(): Promise<void> {
   const agents = store.list(workspaceRoot);
 
   if (profiles.length === 0 && agents.length === 0) {
-    console.log("No local agents configured for this workspace.");
+    console.log("No subagents configured for this workspace.");
     return;
   }
 
@@ -368,7 +368,7 @@ async function runAgentsRun(args: string[]): Promise<void> {
   const profiles = await loadLocalAgentProfiles(config, workspaceRoot);
   const profile = profiles.find((candidate) => candidate.name === target);
   if (!profile) {
-    throw new Error(`Unknown local agent profile or id: ${target}`);
+    throw new Error(`Unknown subagent profile or id: ${target}`);
   }
 
   const record = store.create({
@@ -390,7 +390,7 @@ async function runAgentsShow(args: string[]): Promise<void> {
   const config = loadConfig();
   const store = createLocalAgentStore(config);
   let record = store.get(id);
-  if (!record) throw new Error(`Unknown local agent id: ${id}`);
+  if (!record) throw new Error(`Unknown subagent id: ${id}`);
 
   const deadline = Date.now() + 15_000;
   while ((record.status === "starting" || record.status === "running") && Date.now() < deadline) {
@@ -421,13 +421,13 @@ async function runAgentsWorker(args: string[]): Promise<void> {
   const config = loadConfig();
   const store = createLocalAgentStore(config);
   const record = store.get(id);
-  if (!record) throw new Error(`Unknown local agent id: ${id}`);
+  if (!record) throw new Error(`Unknown subagent id: ${id}`);
 
   store.update(record.id, { status: "running", error: undefined });
   try {
     const profiles = await loadLocalAgentProfiles(config, record.workspaceRoot);
     const profile = profiles.find((candidate) => candidate.name === record.profileName);
-    if (!profile) throw new Error(`Local agent profile not found: ${record.profileName}`);
+    if (!profile) throw new Error(`Subagent profile not found: ${record.profileName}`);
 
     const prompt = await readFile(promptFile, "utf8");
     const result = await runLocalAgentProfile(profile, record, prompt);
