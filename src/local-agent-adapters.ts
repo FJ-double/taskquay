@@ -280,6 +280,10 @@ function parseOpencodeModel(model: string): { providerID: string; modelID: strin
   };
 }
 
+export function extractLocalAgentResponseText(value: unknown): string {
+  return extractText(value);
+}
+
 function assertPipedChild(child: ReturnType<typeof spawn>): asserts child is ChildProcessWithoutNullStreams {
   if (!child.stdin || !child.stdout || !child.stderr) {
     throw new Error("Agent process did not expose stdio pipes.");
@@ -293,13 +297,44 @@ function extractText(value: unknown): string {
     return value.map(extractText).filter(Boolean).join("\n").trim();
   }
   const record = value as Record<string, unknown>;
+  if (isToolLikeRecord(record)) return "";
   if (typeof record.text === "string") return record.text;
   if (typeof record.content === "string") return record.content;
   if (typeof record.result === "string") return record.result;
   if (Array.isArray(record.parts)) return extractText(record.parts);
-  if (Array.isArray(record.messages)) return extractText(record.messages.at(-1));
+  if (Array.isArray(record.messages)) return extractText(lastAssistantLikeMessage(record.messages));
   if (Array.isArray(record.data)) return extractText(record.data);
-  return JSON.stringify(value);
+  return "";
+}
+
+function lastAssistantLikeMessage(messages: unknown[]): unknown {
+  const candidates = messages.filter((message) => {
+    if (!message || typeof message !== "object" || Array.isArray(message)) return true;
+    const record = message as Record<string, unknown>;
+    if (isToolLikeRecord(record)) return false;
+    const role = typeof record.role === "string" ? record.role : "";
+    if (role) return role === "assistant";
+    const type = typeof record.type === "string" ? record.type : "";
+    return !type || type === "assistant" || type === "message" || type === "result";
+  });
+  return candidates.at(-1);
+}
+
+function isToolLikeRecord(record: Record<string, unknown>): boolean {
+  const role = typeof record.role === "string" ? record.role.toLowerCase() : "";
+  if (role === "tool" || role === "function") return true;
+
+  const type = typeof record.type === "string" ? record.type.toLowerCase() : "";
+  if (type.includes("tool") || type.includes("function_call")) return true;
+
+  return (
+    "toolCallId" in record ||
+    "tool_call_id" in record ||
+    "toolCalls" in record ||
+    "tool_calls" in record ||
+    "functionCall" in record ||
+    "function_call" in record
+  );
 }
 
 function errorMessage(error: unknown): string {
