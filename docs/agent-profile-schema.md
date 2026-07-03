@@ -1,8 +1,8 @@
 # Local agent profile schema
 
 DevSpace local agent profiles are user-owned markdown files with YAML
-frontmatter. They describe *roles* such as reviewer, explorer, or implementer.
-Provider configuration describes how DevSpace talks to the underlying harness.
+frontmatter. They describe roles such as reviewer, explorer, or implementer.
+DevSpace owns provider invocation.
 
 Profiles are discovered from:
 
@@ -19,12 +19,7 @@ schema: devspace-agent/v1
 name: reviewer
 description: Read-only reviewer for bugs, security risks, and missing tests.
 provider: codex
-backend: auto
 model: gpt-5.4
-mode: review
-permissions:
-  edit: deny
-  bash: deny
 disabled: false
 ---
 
@@ -51,7 +46,8 @@ Stable profile identifier shown to the model and accepted by:
 devspace agents run <name> "<prompt>"
 ```
 
-Use lowercase kebab-case names.
+Use lowercase kebab-case names. If omitted, DevSpace uses the filename without
+`.md`.
 
 ### `description`
 
@@ -60,49 +56,26 @@ Required short purpose. This is exposed by `open_workspace` and
 
 ### `provider`
 
-Required local agent family or provider id.
-
-Examples:
+Required built-in provider id:
 
 ```yaml
 provider: codex
 provider: claude
 provider: opencode
-provider: cursor
 provider: pi
+provider: cursor
 provider: copilot
 ```
 
-### `backend`
+Unsupported or custom providers are rejected. DevSpace maps providers to their
+native integration:
 
-Optional execution backend.
-
-```yaml
-backend: auto
-backend: codex-sdk
-backend: acp
-backend: cli
-```
-
-`auto` is the normal value. DevSpace resolves the best available adapter for
-the provider. CLI fallback profiles can set `backend: cli` and provide
-`command`.
-
-Current support is intentionally narrow: Codex profiles use the Codex SDK, and
-other providers should include a `command` until their ACP or SDK adapters are
-wired.
-
-### `command`
-
-Optional command string for `backend: cli` fallback profiles. DevSpace passes
-the full worker prompt on stdin and captures stdout as the response.
-
-```yaml
-backend: cli
-command: "my-agent run --no-color"
-```
-
-Prefer built-in provider adapters or ACP when available.
+- `codex`: Codex SDK
+- `claude`: Claude Code SDK
+- `opencode`: OpenCode SDK
+- `pi`: Pi RPC mode
+- `cursor`: ACP
+- `copilot`: ACP
 
 ### `model`
 
@@ -112,29 +85,6 @@ Optional provider model id or alias.
 model: gpt-5.4
 model: sonnet
 ```
-
-### `mode`
-
-Optional provider or role mode label.
-
-```yaml
-mode: review
-mode: implement
-```
-
-### `permissions`
-
-Optional model-facing permission hints.
-
-```yaml
-permissions:
-  edit: deny
-  bash: deny
-```
-
-Supported values are `allow`, `ask`, and `deny`. DevSpace exposes these hints in
-the compact agent catalog. Provider adapters may also map them to native sandbox
-or approval settings.
 
 ### `disabled`
 
@@ -152,7 +102,7 @@ profile. It is not included in `open_workspace` by default.
 Recommended body content:
 
 - When to use this profile.
-- What the worker must not do.
+- Whether the worker should act read-only or may make changes.
 - Output format.
 - Review or testing expectations.
 
@@ -173,12 +123,7 @@ devspace agents show <id>
   "name": "reviewer",
   "description": "Read-only reviewer for bugs, security risks, and missing tests.",
   "provider": "codex",
-  "model": "gpt-5.4",
-  "mode": "review",
-  "permissions": {
-    "edit": "deny",
-    "bash": "deny"
-  }
+  "model": "gpt-5.4"
 }
 ```
 
@@ -187,8 +132,9 @@ profile.
 
 ## Current non-goals
 
+- Custom or arbitrary CLI-backed agents.
 - Inferring changed files, tests, or diffs from worker output.
 - Exposing raw provider transcripts by default.
 - Teaching the model provider-specific CLIs.
-- First-class MCP agent tools. Future tools should wrap the same runtime used by
-  `devspace agents`.
+- First-class MCP agent tools. Future tools should wrap the same provider
+  adapter registry used by `devspace agents`.

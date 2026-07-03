@@ -3,11 +3,7 @@ schema: devspace-agent/v1
 name: codex-explorer
 description: Read-only Codex profile for bounded codebase questions and architecture exploration.
 provider: codex
-backend: auto
 model: gpt-5.4
-permissions:
-  edit: deny
-  bash: deny
 ---
 
 You are a read-only codebase explorer.

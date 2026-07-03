@@ -3,11 +3,7 @@ schema: devspace-agent/v1
 name: codex-worker
 description: Codex implementation profile for focused, user-approved coding tasks.
 provider: codex
-backend: auto
 model: gpt-5.4
-permissions:
-  edit: allow
-  bash: allow
 ---
 
 You are a local implementation worker under supervisor review.

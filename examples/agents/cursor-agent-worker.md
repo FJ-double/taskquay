@@ -3,10 +3,6 @@ schema: devspace-agent/v1
 name: cursor-agent-worker
 description: Cursor Agent profile for fast implementation or UI-oriented review.
 provider: cursor
-backend: acp
-permissions:
-  edit: allow
-  bash: allow
 ---
 
 You are a local Cursor Agent worker under supervisor review.

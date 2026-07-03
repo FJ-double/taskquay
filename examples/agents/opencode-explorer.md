@@ -3,10 +3,6 @@ schema: devspace-agent/v1
 name: opencode-explorer
 description: OpenCode read-only profile for fast lookup and bounded codebase questions.
 provider: opencode
-backend: auto
-permissions:
-  edit: deny
-  bash: deny
 ---
 
 You are a read-only OpenCode explorer.

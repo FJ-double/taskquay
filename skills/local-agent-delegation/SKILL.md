@@ -32,13 +32,14 @@ devspace agents show <id>
 running, `show` waits briefly. If there is still no final response, call `show`
 again later.
 
-Do not run provider CLIs such as `codex`, `claude`, `opencode`, or `pi`
-directly unless you are explicitly debugging DevSpace agent integration.
+Do not run provider CLIs such as `codex`, `claude`, `opencode`, `pi`,
+`cursor-agent`, or `copilot` directly unless you are explicitly debugging
+DevSpace agent integration.
 
 ## Choosing a profile
 
 Use `devspace agents ls` and choose by profile name, description, provider, and
-permissions.
+model when present.
 
 Good delegation targets:
 

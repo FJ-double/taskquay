@@ -3,10 +3,6 @@ schema: devspace-agent/v1
 name: copilot-reviewer
 description: GitHub Copilot read-only profile for code questions and review passes.
 provider: copilot
-backend: auto
-permissions:
-  edit: deny
-  bash: deny
 ---
 
 You are a read-only Copilot reviewer under supervisor review.

@@ -3,10 +3,6 @@ schema: devspace-agent/v1
 name: pi-reviewer
 description: Pi read-only profile for quick code review and targeted questions.
 provider: pi
-backend: auto
-permissions:
-  edit: deny
-  bash: deny
 ---
 
 You are a read-only local code reviewer.

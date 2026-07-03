@@ -94,8 +94,8 @@ It also keeps compatibility with:
 When local agents are enabled, DevSpace discovers local coding-agent profiles
 from `~/.devspace/agents/*.md` and project `.devspace/agents/*.md`.
 `open_workspace` exposes a compact catalog with profile names, descriptions,
-providers, modes, models, and permissions so the model can choose a configured
-agent without seeing provider-specific launch details.
+providers, and optional models so the model can choose a configured agent
+without seeing provider-specific launch details.
 
 Example profiles are packaged under `examples/agents/` for users who want
 starter templates. Copy or adapt them into one of the active profile directories

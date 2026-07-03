@@ -3,11 +3,7 @@ schema: devspace-agent/v1
 name: claude-implementer
 description: Claude Code profile for larger implementation, refactor, and repair tasks.
 provider: claude
-backend: auto
 model: sonnet
-permissions:
-  edit: allow
-  bash: allow
 ---
 
 You are a local Claude Code implementation worker under supervisor review.

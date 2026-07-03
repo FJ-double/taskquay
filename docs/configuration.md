@@ -122,8 +122,8 @@ from:
 - project `.devspace/agents/*.md`
 
 `open_workspace` returns a compact catalog containing profile names,
-descriptions, providers, modes, models, and permissions so the host model can
-choose an agent without reading provider-specific launch details. The
+descriptions, providers, and optional models so the host model can choose an
+agent without reading provider-specific launch details. The
 `local-agent-delegation` skill teaches the model to use only the minimal
 `devspace agents ls`, `devspace agents run`, and `devspace agents show`
 workflow.
