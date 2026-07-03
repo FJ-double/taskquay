@@ -236,8 +236,6 @@ const workspaceLocalAgentOutputSchema = z.object({
   description: z.string(),
   provider: z.string(),
   model: z.string().optional(),
-  mode: z.string().optional(),
-  permissions: z.record(z.string(), z.enum(["allow", "ask", "deny"])).optional(),
 });
 
 const workspaceAvailableAgentsFileOutputSchema = z.object({

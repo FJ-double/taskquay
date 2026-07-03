@@ -3,18 +3,13 @@ import { readdir, readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import type { ServerConfig } from "./config.js";
 
-export type AgentPermissionValue = "allow" | "ask" | "deny";
-export type LocalAgentProfileBackend = "auto" | "codex-sdk" | "cli" | "acp";
+export type LocalAgentProvider = "codex" | "claude" | "opencode" | "pi" | "cursor" | "copilot";
 
 export interface LocalAgentProfile {
   name: string;
   description: string;
-  provider: string;
-  backend?: LocalAgentProfileBackend;
-  command?: string;
+  provider: LocalAgentProvider;
   model?: string;
-  mode?: string;
-  permissions?: Record<string, AgentPermissionValue>;
   filePath: string;
   body: string;
   disabled: boolean;
@@ -23,10 +18,8 @@ export interface LocalAgentProfile {
 export interface LocalAgentProfileSummary {
   name: string;
   description: string;
-  provider: string;
+  provider: LocalAgentProvider;
   model?: string;
-  mode?: string;
-  permissions?: Record<string, AgentPermissionValue>;
 }
 
 interface ParsedFrontmatter {
@@ -35,8 +28,14 @@ interface ParsedFrontmatter {
 }
 
 const FRONTMATTER_DELIMITER = "---";
-const PERMISSION_VALUES = new Set<AgentPermissionValue>(["allow", "ask", "deny"]);
-const BACKENDS = new Set<LocalAgentProfileBackend>(["auto", "codex-sdk", "cli", "acp"]);
+const PROVIDERS = new Set<LocalAgentProvider>([
+  "codex",
+  "claude",
+  "opencode",
+  "pi",
+  "cursor",
+  "copilot",
+]);
 
 export async function loadLocalAgentProfiles(
   config: ServerConfig,
@@ -69,8 +68,6 @@ export function summarizeLocalAgentProfile(
     description: profile.description,
     provider: profile.provider,
     model: profile.model,
-    mode: profile.mode,
-    permissions: profile.permissions,
   };
 }
 
@@ -179,39 +176,33 @@ function profileFromFrontmatter(
 ): LocalAgentProfile {
   const name = readString(frontmatter, "name") ?? basename(filePath, ".md");
   const description = readString(frontmatter, "description");
-  const provider = readString(frontmatter, "provider");
+  const provider = readProvider(frontmatter, filePath);
   if (!description) {
     throw new Error(`Local agent profile is missing description: ${filePath}`);
-  }
-  if (!provider) {
-    throw new Error(`Local agent profile is missing provider: ${filePath}`);
   }
 
   return {
     name,
     description,
     provider,
-    backend: readBackend(frontmatter, filePath),
-    command: readString(frontmatter, "command"),
     model: readString(frontmatter, "model"),
-    mode: readString(frontmatter, "mode"),
-    permissions: readPermissions(frontmatter.permissions, filePath),
     filePath,
     body,
     disabled: frontmatter.disabled === true,
   };
 }
 
-function readBackend(
-  frontmatter: Record<string, unknown>,
-  filePath: string,
-): LocalAgentProfileBackend | undefined {
-  const backend = readString(frontmatter, "backend");
-  if (!backend) return undefined;
-  if (!BACKENDS.has(backend as LocalAgentProfileBackend)) {
-    throw new Error(`Local agent profile backend must be auto, codex-sdk, cli, or acp: ${filePath}`);
+function readProvider(frontmatter: Record<string, unknown>, filePath: string): LocalAgentProvider {
+  const provider = readString(frontmatter, "provider");
+  if (!provider) {
+    throw new Error(`Local agent profile is missing provider: ${filePath}`);
   }
-  return backend as LocalAgentProfileBackend;
+  if (!PROVIDERS.has(provider as LocalAgentProvider)) {
+    throw new Error(
+      `Local agent profile provider must be codex, claude, opencode, pi, cursor, or copilot: ${filePath}`,
+    );
+  }
+  return provider as LocalAgentProvider;
 }
 
 function readString(frontmatter: Record<string, unknown>, key: string): string | undefined {
@@ -219,26 +210,4 @@ function readString(frontmatter: Record<string, unknown>, key: string): string |
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed || undefined;
-}
-
-function readPermissions(
-  value: unknown,
-  filePath: string,
-): Record<string, AgentPermissionValue> | undefined {
-  if (value === undefined) return undefined;
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`Local agent profile permissions must be a map: ${filePath}`);
-  }
-
-  const permissions: Record<string, AgentPermissionValue> = {};
-  for (const [key, rawPermission] of Object.entries(value)) {
-    if (!PERMISSION_VALUES.has(rawPermission as AgentPermissionValue)) {
-      throw new Error(
-        `Local agent profile permission '${key}' must be allow, ask, or deny: ${filePath}`,
-      );
-    }
-    permissions[key] = rawPermission as AgentPermissionValue;
-  }
-
-  return Object.keys(permissions).length > 0 ? permissions : undefined;
 }

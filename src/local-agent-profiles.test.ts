@@ -21,9 +21,6 @@ try {
       "description: Global reviewer.",
       "provider: codex",
       "model: gpt-5.4",
-      "permissions:",
-      "  edit: deny",
-      "  bash: deny",
       "---",
       "",
       "Global body.",
@@ -37,9 +34,7 @@ try {
       "name: reviewer",
       "description: Project reviewer.",
       "provider: claude",
-      "mode: review",
-      "permissions:",
-      "  edit: deny",
+      "model: sonnet",
       "---",
       "",
       "Project body.",
@@ -73,16 +68,32 @@ try {
   assert.equal(profiles[0]?.name, "reviewer");
   assert.equal(profiles[0]?.description, "Project reviewer.");
   assert.equal(profiles[0]?.provider, "claude");
-  assert.equal(profiles[0]?.mode, "review");
+  assert.equal(profiles[0]?.model, "sonnet");
   assert.equal(profiles[0]?.body, "Project body.");
   assert.deepEqual(summarizeLocalAgentProfile(profiles[0]!), {
     name: "reviewer",
     description: "Project reviewer.",
     provider: "claude",
-    model: undefined,
-    mode: "review",
-    permissions: { edit: "deny" },
+    model: "sonnet",
   });
+
+  await writeFile(
+    join(workspaceRoot, ".devspace", "agents", "custom.md"),
+    [
+      "---",
+      "name: custom",
+      "description: Unsupported custom agent.",
+      "provider: custom",
+      "---",
+      "",
+      "Custom body.",
+      "",
+    ].join("\n"),
+  );
+  await assert.rejects(
+    () => loadLocalAgentProfiles(enabledConfig, workspaceRoot),
+    /provider must be codex, claude, opencode, pi, cursor, or copilot/,
+  );
 
   const disabledConfig = loadConfig({
     DEVSPACE_CONFIG_DIR: configDir,

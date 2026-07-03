@@ -6,7 +6,6 @@ import type {
   ThreadOptions,
 } from "@openai/codex-sdk";
 
-export type LocalAgentBackend = "cli" | "codex-sdk" | "acp";
 export type LocalAgentWriteMode = "read_only" | "allowed" | "full_access";
 
 export interface LocalAgentRunInput {
@@ -19,7 +18,6 @@ export interface LocalAgentRunInput {
 
 export interface LocalAgentRunResult {
   provider: string;
-  backend: LocalAgentBackend;
   providerSessionId: string | null;
   finalResponse: string;
   items: unknown[];
@@ -27,7 +25,6 @@ export interface LocalAgentRunResult {
 
 export interface LocalAgentRuntime {
   readonly provider: string;
-  readonly backend: LocalAgentBackend;
   run(input: LocalAgentRunInput): Promise<LocalAgentRunResult>;
 }
 
@@ -66,7 +63,6 @@ function threadOptionsFor(input: LocalAgentRunInput): ThreadOptions {
 
 export class CodexSdkLocalAgentRuntime implements LocalAgentRuntime {
   readonly provider = "codex" as const;
-  readonly backend = "codex-sdk" as const;
   private readonly codex: CodexClientLike;
 
   constructor(codex: CodexClientLike) {
@@ -82,7 +78,6 @@ export class CodexSdkLocalAgentRuntime implements LocalAgentRuntime {
 
     return {
       provider: this.provider,
-      backend: this.backend,
       providerSessionId: thread.id,
       finalResponse: turn.finalResponse,
       items: turn.items,

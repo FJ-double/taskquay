@@ -4,7 +4,6 @@ import { dirname, join, resolve } from "node:path";
 import type { ServerConfig } from "./config.js";
 
 export type LocalAgentStatus = "starting" | "running" | "idle" | "error" | "stopped";
-export type LocalAgentBackendName = "auto" | "codex-sdk" | "cli" | "acp";
 
 export interface LocalAgentRecord {
   id: string;
@@ -13,8 +12,6 @@ export interface LocalAgentRecord {
   profileName: string;
   provider: string;
   model?: string;
-  mode?: string;
-  backend: LocalAgentBackendName;
   providerSessionId?: string;
   status: LocalAgentStatus;
   latestResponse?: string;
@@ -29,8 +26,6 @@ export interface CreateLocalAgentRecordInput {
   profileName: string;
   provider: string;
   model?: string;
-  mode?: string;
-  backend?: LocalAgentBackendName;
 }
 
 interface LocalAgentStoreData {
@@ -57,8 +52,6 @@ export class LocalAgentStore {
       profileName: input.profileName,
       provider: input.provider,
       model: input.model,
-      mode: input.mode,
-      backend: input.backend ?? "auto",
       status: "starting",
       createdAt: now,
       updatedAt: now,

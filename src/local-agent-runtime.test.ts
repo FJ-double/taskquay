@@ -47,7 +47,6 @@ const readOnly = await runtime.run({
 });
 
 assert.equal(readOnly.provider, "codex");
-assert.equal(readOnly.backend, "codex-sdk");
 assert.equal(readOnly.providerSessionId, "new-thread");
 assert.equal(readOnly.finalResponse, "response:inspect only");
 assert.deepEqual(codex.startThreadInstance.prompts, ["inspect only"]);
@@ -95,4 +94,3 @@ assert.deepEqual(codex.resumed, [
 
 const created = await createCodexSdkLocalAgentRuntime(undefined, () => new FakeCodex());
 assert.equal(created.provider, "codex");
-assert.equal(created.backend, "codex-sdk");
