@@ -100,7 +100,7 @@ class OpencodeLocalAgentAdapter implements LocalAgentAdapter {
         ...(input.model ? { model: parseOpencodeModel(input.model) } : {}),
         parts: [{ type: "text", text: input.prompt }],
       }, { throwOnError: true });
-      const finalResponse = extractText(promptResult);
+      const finalResponse = extractOpenCodeFinalResponse(promptResult);
       return {
         provider: this.provider,
         providerSessionId: sessionId,
@@ -188,7 +188,7 @@ class PiRpcLocalAgentAdapter implements LocalAgentAdapter {
       return {
         provider: this.provider,
         providerSessionId: input.providerSessionId ?? null,
-        finalResponse: extractText(messages),
+        finalResponse: extractPiFinalResponse(messages),
         items: [messages],
       };
     } finally {
@@ -240,7 +240,7 @@ class JsonLineRpc {
       if (!pending) continue;
       this.pending.delete(id);
       if (message.error) {
-        pending.reject(new Error(extractText(message.error)));
+        pending.reject(new Error(errorMessage(message.error)));
       } else {
         pending.resolve(message.result ?? message);
       }
@@ -281,7 +281,7 @@ function parseOpencodeModel(model: string): { providerID: string; modelID: strin
 }
 
 export function extractLocalAgentResponseText(value: unknown): string {
-  return extractText(value);
+  return extractOpenCodeFinalResponse(value) || extractPiFinalResponse(value);
 }
 
 function assertPipedChild(child: ReturnType<typeof spawn>): asserts child is ChildProcessWithoutNullStreams {
@@ -290,51 +290,95 @@ function assertPipedChild(child: ReturnType<typeof spawn>): asserts child is Chi
   }
 }
 
-function extractText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (!value || typeof value !== "object") return String(value ?? "");
-  if (Array.isArray(value)) {
-    return value.map(extractText).filter(Boolean).join("\n").trim();
+export function extractOpenCodeFinalResponse(value: unknown): string {
+  const root = unwrapProviderPayload(value);
+  const messages = Array.isArray(root) ? root : readArray(root, "messages");
+  if (messages) return extractLastOpenCodeAssistantMessageText(messages);
+  return extractOpenCodeAssistantMessageText(root);
+}
+
+export function extractPiFinalResponse(value: unknown): string {
+  const root = unwrapProviderPayload(value);
+  const messages = Array.isArray(root) ? root : readArray(root, "messages");
+  if (!messages) return "";
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = asRecord(messages[index]);
+    if (!message || message.role !== "assistant") continue;
+    const text = extractPiAssistantMessageText(message);
+    if (text) return text;
   }
-  const record = value as Record<string, unknown>;
-  if (isToolLikeRecord(record)) return "";
-  if (typeof record.text === "string") return record.text;
-  if (typeof record.content === "string") return record.content;
-  if (typeof record.result === "string") return record.result;
-  if (Array.isArray(record.parts)) return extractText(record.parts);
-  if (Array.isArray(record.messages)) return extractText(lastAssistantLikeMessage(record.messages));
-  if (Array.isArray(record.data)) return extractText(record.data);
   return "";
 }
 
-function lastAssistantLikeMessage(messages: unknown[]): unknown {
-  const candidates = messages.filter((message) => {
-    if (!message || typeof message !== "object" || Array.isArray(message)) return true;
-    const record = message as Record<string, unknown>;
-    if (isToolLikeRecord(record)) return false;
-    const role = typeof record.role === "string" ? record.role : "";
-    if (role) return role === "assistant";
-    const type = typeof record.type === "string" ? record.type : "";
-    return !type || type === "assistant" || type === "message" || type === "result";
-  });
-  return candidates.at(-1);
+function extractLastOpenCodeAssistantMessageText(messages: unknown[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = asRecord(messages[index]);
+    if (!message) continue;
+    const info = asRecord(message.info);
+    const role = typeof info?.role === "string" ? info.role : message.role;
+    if (role !== "assistant") continue;
+    const text = extractOpenCodeAssistantMessageText(message);
+    if (text) return text;
+  }
+  return "";
 }
 
-function isToolLikeRecord(record: Record<string, unknown>): boolean {
-  const role = typeof record.role === "string" ? record.role.toLowerCase() : "";
-  if (role === "tool" || role === "function") return true;
+function extractOpenCodeAssistantMessageText(value: unknown): string {
+  const message = asRecord(value);
+  if (!message) return "";
 
-  const type = typeof record.type === "string" ? record.type.toLowerCase() : "";
-  if (type.includes("tool") || type.includes("function_call")) return true;
+  const parts = readArray(message, "parts");
+  if (parts) {
+    const text = parts
+      .map((part) => {
+        const partRecord = asRecord(part);
+        if (!partRecord || partRecord.type !== "text") return "";
+        return typeof partRecord.text === "string" ? partRecord.text : "";
+      })
+      .filter(Boolean)
+      .join("");
+    if (text.trim()) return text.trim();
+  }
 
-  return (
-    "toolCallId" in record ||
-    "tool_call_id" in record ||
-    "toolCalls" in record ||
-    "tool_calls" in record ||
-    "functionCall" in record ||
-    "function_call" in record
-  );
+  const info = asRecord(message.info) ?? message;
+  return stringifyStructuredAssistantMessage(info.structured);
+}
+
+function extractPiAssistantMessageText(message: Record<string, unknown>): string {
+  const content = message.content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      const partRecord = asRecord(part);
+      if (!partRecord || partRecord.type !== "text") return "";
+      return typeof partRecord.text === "string" ? partRecord.text : "";
+    })
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
+}
+
+function stringifyStructuredAssistantMessage(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string") return value.trim();
+  return JSON.stringify(value);
+}
+
+function unwrapProviderPayload(value: unknown): unknown {
+  const record = asRecord(value);
+  if (!record) return value;
+  return record.data ?? record.result ?? value;
+}
+
+function readArray(record: unknown, key: string): unknown[] | undefined {
+  const value = asRecord(record)?.[key];
+  return Array.isArray(value) ? value : undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
 }
 
 function errorMessage(error: unknown): string {

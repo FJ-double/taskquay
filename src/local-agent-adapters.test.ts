@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import {
   createLocalAgentAdapter,
-  extractLocalAgentResponseText,
+  extractOpenCodeFinalResponse,
+  extractPiFinalResponse,
 } from "./local-agent-adapters.js";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
 
@@ -21,58 +22,98 @@ for (const provider of providers) {
 }
 
 assert.equal(
-  extractLocalAgentResponseText({
-    messages: [
-      { role: "assistant", content: "I will inspect the code." },
-      { role: "tool", content: "rg -n secret src" },
-      { role: "assistant", content: "Final review only." },
-    ],
-  }),
-  "Final review only.",
-);
-
-assert.equal(
-  extractLocalAgentResponseText({
-    messages: [
-      { type: "assistant", text: "Earlier draft." },
+  extractOpenCodeFinalResponse({
+    data: [
       {
-        type: "tool_call",
-        name: "bash",
-        arguments: { command: "npm test" },
+        info: { id: "msg_user", role: "user" },
+        parts: [{ type: "text", text: "Review the change." }],
       },
       {
-        type: "tool_result",
-        content: "full command output",
+        info: { id: "msg_assistant", role: "assistant" },
+        parts: [
+          { type: "reasoning", text: "thinking" },
+          { type: "tool", tool: "grep", input: { pattern: "secret" }, output: "src/foo.ts" },
+          { type: "text", text: "Final OpenCode response." },
+        ],
       },
-      { type: "result", result: "Final answer." },
     ],
   }),
-  "Final answer.",
+  "Final OpenCode response.",
 );
 
 assert.equal(
-  extractLocalAgentResponseText({
-    parts: [
-      { type: "text", text: "Visible final text." },
-      { type: "tool_use", name: "read", input: { path: "src/foo.ts" } },
-      { tool_call_id: "call_1", content: "hidden tool result" },
-    ],
+  extractOpenCodeFinalResponse({
+    data: {
+      info: {
+        id: "msg_structured",
+        role: "assistant",
+        structured: { summary: "structured answer" },
+      },
+      parts: [{ type: "reasoning", text: "thinking" }],
+    },
   }),
-  "Visible final text.",
+  '{"summary":"structured answer"}',
 );
 
 assert.equal(
-  extractLocalAgentResponseText({
-    type: "tool_call",
-    name: "bash",
-    arguments: { command: "cat src/secret.ts" },
+  extractOpenCodeFinalResponse({
+    data: {
+      info: { id: "msg_tool_only", role: "assistant" },
+      parts: [
+        { type: "reasoning", text: "thinking" },
+        { type: "tool", tool: "bash", input: { command: "cat src/secret.ts" }, output: "secret" },
+      ],
+    },
   }),
   "",
 );
 
 assert.equal(
-  extractLocalAgentResponseText({
-    unexpected: { nested: "raw provider event" },
+  extractPiFinalResponse({
+    messages: [
+      { role: "user", content: "Review the change." },
+      {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "thinking" },
+          { type: "toolCall", id: "tool-1", name: "read", arguments: { path: "src/foo.ts" } },
+          { type: "text", text: "Final Pi response." },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "tool-1",
+        toolName: "read",
+        content: [{ type: "text", text: "tool output" }],
+      },
+    ],
+  }),
+  "Final Pi response.",
+);
+
+assert.equal(
+  extractPiFinalResponse({
+    messages: [
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "first part" },
+          { type: "toolCall", id: "tool-1", name: "bash", arguments: { command: "npm test" } },
+          { type: "text", text: "second part" },
+        ],
+      },
+    ],
+  }),
+  "first part\n\nsecond part",
+);
+
+assert.equal(
+  extractPiFinalResponse({
+    messages: [
+      { role: "assistant", content: [{ type: "toolCall", id: "tool-1", name: "bash", arguments: {} }] },
+      { role: "toolResult", toolCallId: "tool-1", toolName: "bash", content: "secret output" },
+      { role: "bashExecution", command: "cat src/secret.ts", output: "secret output", timestamp: 1 },
+    ],
   }),
   "",
 );
