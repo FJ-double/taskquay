@@ -51,8 +51,8 @@ Use lowercase kebab-case names. If omitted, DevSpace uses the filename without
 
 ### `description`
 
-Required short purpose. This is exposed by `open_workspace` and
-`devspace agents ls` so the supervising model can choose the right profile.
+Required short purpose. This is exposed by `open_workspace` so the supervising
+model can choose the right profile.
 
 ### `provider`
 
@@ -126,6 +126,9 @@ devspace agents show <id>
   "model": "gpt-5.4"
 }
 ```
+
+`devspace agents ls` lists existing subagent sessions for the current workspace;
+it does not list profile definitions.
 
 The full profile body stays out of the model context until DevSpace launches the
 profile.

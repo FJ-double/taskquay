@@ -285,7 +285,7 @@ function printHelp(): void {
       "  devspace doctor          Show config, runtime, and native dependency status",
       "  devspace config get      Print persisted config",
       "  devspace config set publicBaseUrl <url|null>",
-      "  devspace agents ls       List agent profiles and sessions",
+      "  devspace agents ls       List subagent sessions",
       "  devspace agents run <profile-or-id> <prompt>",
       "  devspace agents show <id>",
       "  devspace -v, --version   Print the installed version",
@@ -325,19 +325,12 @@ async function runAgentsCommand(args: string[]): Promise<void> {
 
 async function runAgentsList(): Promise<void> {
   const config = loadConfig();
-  const workspaceRoot = resolveCurrentWorkspaceRoot();
-  const profiles = await loadLocalAgentProfiles(config, workspaceRoot);
   const store = createLocalAgentStore(config);
-  const agents = store.list(workspaceRoot);
+  const agents = store.list(resolveCurrentWorkspaceScope());
 
-  if (profiles.length === 0 && agents.length === 0) {
-    console.log("No subagents configured for this workspace.");
+  if (agents.length === 0) {
+    console.log("No subagent sessions found for this workspace.");
     return;
-  }
-
-  for (const profile of profiles) {
-    const model = profile.model ? ` ${profile.model}` : "";
-    console.log(`profile ${profile.name} ${profile.provider}${model} - ${profile.description}`);
   }
 
   for (const agent of agents) {
@@ -486,6 +479,13 @@ function writeAgentPromptFile(prompt: string): string {
 
 function resolveCurrentWorkspaceRoot(): string {
   return resolve(process.env.DEVSPACE_WORKSPACE_ROOT || process.cwd());
+}
+
+function resolveCurrentWorkspaceScope(): { workspaceId?: string; workspaceRoot: string } {
+  return {
+    workspaceId: process.env.DEVSPACE_WORKSPACE_ID,
+    workspaceRoot: resolveCurrentWorkspaceRoot(),
+  };
 }
 
 function formatAgentLine(agent: Pick<

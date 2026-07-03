@@ -30,10 +30,12 @@ try {
   assert.equal(updated.status, "idle");
   assert.equal(store.get("thread_123")?.id, created.id);
   assert.deepEqual(
-    store.list(join(root, "project")).map((agent) => agent.latestResponse),
+    store.list({ workspaceRoot: join(root, "project") }).map((agent) => agent.latestResponse),
     ["done"],
   );
-  assert.deepEqual(store.list(join(root, "other")), []);
+  assert.deepEqual(store.list({ workspaceId: "ws_1" }).map((agent) => agent.id), [created.id]);
+  assert.deepEqual(store.list({ workspaceId: "ws_other" }), []);
+  assert.deepEqual(store.list({ workspaceRoot: join(root, "other") }), []);
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

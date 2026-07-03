@@ -22,7 +22,8 @@ devspace agents run <profile-or-id> "<prompt>"
 devspace agents show <id>
 ```
 
-`ls` shows configured profiles and active agents for the current workspace.
+`ls` shows existing subagent sessions for the current workspace. DevSpace scopes
+it automatically from the shell environment injected by the workspace tool.
 
 `run <profile> "<prompt>"` starts a new agent and prints a DevSpace agent id.
 
@@ -38,8 +39,8 @@ DevSpace agent integration.
 
 ## Choosing a profile
 
-Use `devspace agents ls` and choose by profile name, description, provider, and
-model when present.
+Choose profiles from the compact subagent profile catalog returned by
+`open_workspace`. Use the profile name with `devspace agents run`.
 
 Good delegation targets:
 

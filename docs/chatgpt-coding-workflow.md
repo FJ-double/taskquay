@@ -115,7 +115,8 @@ Set `DEVSPACE_SKILLS=0` to hide skills from workspace output. Set
 `DEVSPACE_SUBAGENTS=1` to expose the experimental subagent catalog and
 `subagent-delegation` skill. That skill teaches the minimal
 `devspace agents ls`, `devspace agents run`, and `devspace agents show`
-workflow.
+workflow. The catalog comes from `open_workspace`; `devspace agents ls` lists
+existing subagent sessions for that workspace.
 
 ## Tool Names
 

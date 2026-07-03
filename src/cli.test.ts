@@ -23,6 +23,7 @@ try {
   const configDir = join(root, ".devspace");
   const stateDir = join(root, ".state");
   const projectRoot = join(root, "project");
+  mkdirSync(stateDir, { recursive: true });
   mkdirSync(join(configDir, "agents"), { recursive: true });
   mkdirSync(projectRoot, { recursive: true });
   writeFileSync(
@@ -39,6 +40,38 @@ try {
       "",
     ].join("\n"),
   );
+  writeFileSync(
+    join(stateDir, "local-agents.json"),
+    JSON.stringify(
+      {
+        agents: [
+          {
+            id: "agt_current",
+            workspaceId: "ws_current",
+            workspaceRoot: projectRoot,
+            profileName: "reviewer",
+            provider: "codex",
+            model: "gpt-5.4",
+            status: "idle",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+          {
+            id: "agt_other",
+            workspaceId: "ws_other",
+            workspaceRoot: projectRoot,
+            profileName: "reviewer",
+            provider: "codex",
+            status: "running",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:01.000Z",
+          },
+        ],
+      },
+      null,
+      2,
+    ) + "\n",
+  );
 
   const output = execFileSync("node", ["--import", "tsx", "src/cli.ts", "agents", "ls"], {
     cwd: process.cwd(),
@@ -48,13 +81,16 @@ try {
       DEVSPACE_CONFIG_DIR: configDir,
       DEVSPACE_ALLOWED_ROOTS: projectRoot,
       DEVSPACE_STATE_DIR: stateDir,
+      DEVSPACE_WORKSPACE_ID: "ws_current",
       DEVSPACE_WORKSPACE_ROOT: projectRoot,
       DEVSPACE_SUBAGENTS: "1",
       DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
     },
   });
 
-  assert.match(output, /profile reviewer codex gpt-5\.4 - Read-only reviewer\./);
+  assert.match(output, /agt_current idle reviewer codex gpt-5\.4/);
+  assert.doesNotMatch(output, /profile reviewer/);
+  assert.doesNotMatch(output, /agt_other/);
 
   assert.equal(loadConfig({
     DEVSPACE_CONFIG_DIR: configDir,

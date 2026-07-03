@@ -32,14 +32,22 @@ interface LocalAgentStoreData {
   agents: LocalAgentRecord[];
 }
 
+export interface LocalAgentListScope {
+  workspaceId?: string;
+  workspaceRoot?: string;
+}
+
 export class LocalAgentStore {
   constructor(private readonly filePath: string) {}
 
-  list(workspaceRoot?: string): LocalAgentRecord[] {
+  list(scope: LocalAgentListScope = {}): LocalAgentRecord[] {
     const data = this.read();
-    const resolvedRoot = workspaceRoot ? resolve(workspaceRoot) : undefined;
+    const resolvedRoot = scope.workspaceRoot ? resolve(scope.workspaceRoot) : undefined;
     return data.agents
-      .filter((agent) => !resolvedRoot || resolve(agent.workspaceRoot) === resolvedRoot)
+      .filter((agent) => {
+        if (scope.workspaceId) return agent.workspaceId === scope.workspaceId;
+        return !resolvedRoot || resolve(agent.workspaceRoot) === resolvedRoot;
+      })
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 

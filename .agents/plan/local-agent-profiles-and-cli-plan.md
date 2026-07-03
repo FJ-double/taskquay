@@ -15,6 +15,10 @@ devspace agents run <profile-or-id> "<prompt>"
 devspace agents show <id>
 ```
 
+Profile discovery happens through the compact catalog returned by
+`open_workspace`. `devspace agents ls` lists existing subagent sessions for the
+current workspace; it does not list profile definitions.
+
 ## Profile schema
 
 Profiles are discovered from:
@@ -79,6 +83,10 @@ from skill plus CLI guidance to first-class MCP agent tools.
 
 The profile body, provider protocol, raw provider transcript, and adapter
 details stay outside the default model context.
+
+Shell calls launched through DevSpace receive `DEVSPACE_WORKSPACE_ID` and
+`DEVSPACE_WORKSPACE_ROOT`, so `devspace agents ls` can scope itself without the
+model passing workspace flags.
 
 ## Non-goals
 
