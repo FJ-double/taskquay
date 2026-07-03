@@ -11,12 +11,10 @@ import * as prompts from "@clack/prompts";
 import { getShellConfig } from "@earendil-works/pi-coding-agent";
 import { satisfies } from "semver";
 import { loadConfig } from "./config.js";
+import { runLocalAgentProvider } from "./local-agent-adapters.js";
 import { loadLocalAgentProfiles, type LocalAgentProfile } from "./local-agent-profiles.js";
 import { createLocalAgentStore, type LocalAgentRecord } from "./local-agent-store.js";
-import {
-  createCodexSdkLocalAgentRuntime,
-  type LocalAgentRunResult,
-} from "./local-agent-runtime.js";
+import type { LocalAgentRunResult } from "./local-agent-runtime.js";
 import {
   ensureDevspaceDefaultSkills,
   generateOwnerToken,
@@ -452,14 +450,9 @@ async function runLocalAgentProfile(
   record: LocalAgentRecord,
   prompt: string,
 ): Promise<LocalAgentRunResult> {
-  if (profile.provider !== "codex") {
-    throw new Error(`Provider '${profile.provider}' is not wired yet. Supported provider: codex.`);
-  }
-
-  const runtime = await createCodexSdkLocalAgentRuntime();
   const body = profile.body.trim();
   const fullPrompt = body ? `${body}\n\nTask:\n${prompt}` : prompt;
-  return runtime.run({
+  return runLocalAgentProvider(profile.provider, {
     prompt: fullPrompt,
     workspace: record.workspaceRoot,
     providerSessionId: record.providerSessionId,
