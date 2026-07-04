@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "./config.js";
+import { LocalAgentStore } from "./local-agent-store.js";
 
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
   version: string;
@@ -40,38 +41,27 @@ try {
       "",
     ].join("\n"),
   );
-  writeFileSync(
-    join(stateDir, "local-agents.json"),
-    JSON.stringify(
-      {
-        agents: [
-          {
-            id: "agt_current",
-            workspaceId: "ws_current",
-            workspaceRoot: projectRoot,
-            profileName: "reviewer",
-            provider: "codex",
-            model: "gpt-5.4",
-            status: "idle",
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          },
-          {
-            id: "agt_other",
-            workspaceId: "ws_other",
-            workspaceRoot: projectRoot,
-            profileName: "reviewer",
-            provider: "codex",
-            status: "running",
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:01.000Z",
-          },
-        ],
-      },
-      null,
-      2,
-    ) + "\n",
+  const store = new LocalAgentStore(stateDir);
+  const current = store.update(
+    store.create({
+      workspaceId: "ws_current",
+      workspaceRoot: projectRoot,
+      profileName: "reviewer",
+      provider: "codex",
+      model: "gpt-5.4",
+    }).id,
+    { status: "idle" },
   );
+  const other = store.update(
+    store.create({
+      workspaceId: "ws_other",
+      workspaceRoot: projectRoot,
+      profileName: "reviewer",
+      provider: "codex",
+    }).id,
+    { status: "running" },
+  );
+  store.close();
 
   const output = execFileSync("node", ["--import", "tsx", "src/cli.ts", "agents", "ls"], {
     cwd: process.cwd(),
@@ -88,9 +78,9 @@ try {
     },
   });
 
-  assert.match(output, /agt_current idle reviewer codex gpt-5\.4/);
+  assert.match(output, new RegExp(`${current.id} idle reviewer codex gpt-5\\.4`));
   assert.doesNotMatch(output, /profile reviewer/);
-  assert.doesNotMatch(output, /agt_other/);
+  assert.doesNotMatch(output, new RegExp(other.id));
 
   assert.equal(loadConfig({
     DEVSPACE_CONFIG_DIR: configDir,

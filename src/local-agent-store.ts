@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { resolve } from "node:path";
+import { openDatabase, type DatabaseHandle } from "./db/client.js";
 import type { ServerConfig } from "./config.js";
 
 export type LocalAgentStatus = "starting" | "running" | "idle" | "error" | "stopped";
@@ -28,27 +28,58 @@ export interface CreateLocalAgentRecordInput {
   model?: string;
 }
 
-interface LocalAgentStoreData {
-  agents: LocalAgentRecord[];
-}
-
 export interface LocalAgentListScope {
   workspaceId?: string;
   workspaceRoot?: string;
 }
 
+interface LocalAgentRow {
+  id: string;
+  workspace_id: string | null;
+  workspace_root: string;
+  profile_name: string;
+  provider: string;
+  model: string | null;
+  provider_session_id: string | null;
+  status: string;
+  latest_response: string | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export class LocalAgentStore {
-  constructor(private readonly filePath: string) {}
+  private readonly database: DatabaseHandle;
+
+  constructor(stateDir: string) {
+    this.database = openDatabase(stateDir);
+  }
 
   list(scope: LocalAgentListScope = {}): LocalAgentRecord[] {
-    const data = this.read();
-    const resolvedRoot = scope.workspaceRoot ? resolve(scope.workspaceRoot) : undefined;
-    return data.agents
-      .filter((agent) => {
-        if (scope.workspaceId) return agent.workspaceId === scope.workspaceId;
-        return !resolvedRoot || resolve(agent.workspaceRoot) === resolvedRoot;
-      })
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    let rows: LocalAgentRow[];
+    if (scope.workspaceId) {
+      rows = this.database.sqlite
+        .prepare(
+          `select * from local_agent_sessions
+           where workspace_id = ?
+           order by updated_at desc`,
+        )
+        .all(scope.workspaceId) as LocalAgentRow[];
+    } else if (scope.workspaceRoot) {
+      rows = this.database.sqlite
+        .prepare(
+          `select * from local_agent_sessions
+           where workspace_root = ?
+           order by updated_at desc`,
+        )
+        .all(resolve(scope.workspaceRoot)) as LocalAgentRow[];
+    } else {
+      rows = this.database.sqlite
+        .prepare("select * from local_agent_sessions order by updated_at desc")
+        .all() as LocalAgentRow[];
+    }
+
+    return rows.map(rowToLocalAgentRecord);
   }
 
   create(input: CreateLocalAgentRecordInput): LocalAgentRecord {
@@ -65,85 +96,144 @@ export class LocalAgentStore {
       updatedAt: now,
     };
 
-    this.write((data) => ({ agents: [...data.agents, record] }));
+    this.database.sqlite
+      .prepare(
+        `insert into local_agent_sessions (
+          id,
+          workspace_id,
+          workspace_root,
+          profile_name,
+          provider,
+          model,
+          status,
+          created_at,
+          updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        record.id,
+        record.workspaceId ?? null,
+        record.workspaceRoot,
+        record.profileName,
+        record.provider,
+        record.model ?? null,
+        record.status,
+        record.createdAt,
+        record.updatedAt,
+      );
+
     return record;
   }
 
   get(idOrPrefix: string): LocalAgentRecord | undefined {
-    const agents = this.read().agents;
-    return resolveRecord(idOrPrefix, agents);
+    const exact = this.database.sqlite
+      .prepare(
+        `select * from local_agent_sessions
+         where id = ? or provider_session_id = ?
+         limit 1`,
+      )
+      .get(idOrPrefix, idOrPrefix) as LocalAgentRow | undefined;
+    if (exact) return rowToLocalAgentRecord(exact);
+
+    const matches = this.database.sqlite
+      .prepare(
+        `select * from local_agent_sessions
+         where id like ? escape '\\' or provider_session_id like ? escape '\\'
+         order by updated_at desc`,
+      )
+      .all(`${escapeLike(idOrPrefix)}%`, `${escapeLike(idOrPrefix)}%`) as LocalAgentRow[];
+
+    return matches.length === 1 ? rowToLocalAgentRecord(matches[0]!) : undefined;
   }
 
   update(id: string, patch: Partial<Omit<LocalAgentRecord, "id" | "createdAt">>): LocalAgentRecord {
-    let updated: LocalAgentRecord | undefined;
-    this.write((data) => ({
-      agents: data.agents.map((agent) => {
-        if (agent.id !== id) return agent;
-        updated = {
-          ...agent,
-          ...patch,
-          updatedAt: new Date().toISOString(),
-        };
-        return updated;
-      }),
-    }));
+    const current = this.getById(id);
+    if (!current) throw new Error(`Unknown subagent id: ${id}`);
 
-    if (!updated) throw new Error(`Unknown subagent id: ${id}`);
+    const updated: LocalAgentRecord = {
+      ...current,
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    };
+
+    this.database.sqlite
+      .prepare(
+        `update local_agent_sessions set
+          workspace_id = ?,
+          workspace_root = ?,
+          profile_name = ?,
+          provider = ?,
+          model = ?,
+          provider_session_id = ?,
+          status = ?,
+          latest_response = ?,
+          error = ?,
+          updated_at = ?
+         where id = ?`,
+      )
+      .run(
+        updated.workspaceId ?? null,
+        resolve(updated.workspaceRoot),
+        updated.profileName,
+        updated.provider,
+        updated.model ?? null,
+        updated.providerSessionId ?? null,
+        updated.status,
+        updated.latestResponse ?? null,
+        updated.error ?? null,
+        updated.updatedAt,
+        updated.id,
+      );
+
     return updated;
   }
 
-  private read(): LocalAgentStoreData {
-    if (!existsSync(this.filePath)) return { agents: [] };
-    return normalizeStoreData(JSON.parse(readFileSync(this.filePath, "utf8")));
+  close(): void {
+    this.database.close();
   }
 
-  private write(update: (data: LocalAgentStoreData) => LocalAgentStoreData): void {
-    const next = update(this.read());
-    mkdirSync(dirname(this.filePath), { recursive: true });
-    const tempPath = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
-    writeFileSync(tempPath, JSON.stringify(next, null, 2) + "\n", { mode: 0o600 });
-    renameSync(tempPath, this.filePath);
+  private getById(id: string): LocalAgentRecord | undefined {
+    const row = this.database.sqlite
+      .prepare("select * from local_agent_sessions where id = ?")
+      .get(id) as LocalAgentRow | undefined;
+    return row ? rowToLocalAgentRecord(row) : undefined;
   }
 }
 
 export function createLocalAgentStore(config: ServerConfig): LocalAgentStore {
-  return new LocalAgentStore(join(config.stateDir, "local-agents.json"));
+  return new LocalAgentStore(config.stateDir);
 }
 
-function normalizeStoreData(value: unknown): LocalAgentStoreData {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return { agents: [] };
-  const agents = (value as { agents?: unknown }).agents;
-  if (!Array.isArray(agents)) return { agents: [] };
+function rowToLocalAgentRecord(row: LocalAgentRow): LocalAgentRecord {
   return {
-    agents: agents.filter(isLocalAgentRecord),
+    id: row.id,
+    workspaceId: row.workspace_id ?? undefined,
+    workspaceRoot: row.workspace_root,
+    profileName: row.profile_name,
+    provider: row.provider,
+    model: row.model ?? undefined,
+    providerSessionId: row.provider_session_id ?? undefined,
+    status: readStatus(row.status),
+    latestResponse: row.latest_response ?? undefined,
+    error: row.error ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
-function isLocalAgentRecord(value: unknown): value is LocalAgentRecord {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const record = value as Partial<LocalAgentRecord>;
-  return (
-    typeof record.id === "string" &&
-    typeof record.workspaceRoot === "string" &&
-    typeof record.profileName === "string" &&
-    typeof record.provider === "string" &&
-    typeof record.status === "string" &&
-    typeof record.createdAt === "string" &&
-    typeof record.updatedAt === "string"
-  );
+function readStatus(status: string): LocalAgentStatus {
+  if (
+    status === "starting" ||
+    status === "running" ||
+    status === "idle" ||
+    status === "error" ||
+    status === "stopped"
+  ) {
+    return status;
+  }
+  return "error";
 }
 
-function resolveRecord(
-  idOrPrefix: string,
-  agents: LocalAgentRecord[],
-): LocalAgentRecord | undefined {
-  const exact = agents.find((agent) => agent.id === idOrPrefix || agent.providerSessionId === idOrPrefix);
-  if (exact) return exact;
-
-  const matches = agents.filter(
-    (agent) =>
-      agent.id.startsWith(idOrPrefix) ||
-      (agent.providerSessionId?.startsWith(idOrPrefix) ?? false),
-  );
-  return matches.length === 1 ? matches[0] : undefined;
+function escapeLike(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
 }
