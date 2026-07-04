@@ -3,6 +3,7 @@ import {
   createLocalAgentAdapter,
   extractOpenCodeFinalResponse,
   extractPiFinalResponse,
+  extractPiStreamingText,
 } from "./local-agent-adapters.js";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
 
@@ -140,4 +141,25 @@ assert.equal(
     ],
   }),
   "",
+);
+
+assert.equal(
+  extractPiStreamingText([
+    {
+      type: "message_update",
+      message: { role: "assistant", content: [{ type: "thinking", thinking: "hidden" }] },
+      assistantMessageEvent: { type: "thinking_delta", delta: "hidden" },
+    },
+    {
+      type: "message_update",
+      message: { role: "assistant", content: [{ type: "text", text: "Final " }] },
+      assistantMessageEvent: { type: "text_delta", delta: "Final " },
+    },
+    {
+      type: "message_update",
+      message: { role: "assistant", content: [{ type: "text", text: "Pi response." }] },
+      assistantMessageEvent: { type: "text_delta", delta: "Pi response." },
+    },
+  ]),
+  "Final Pi response.",
 );

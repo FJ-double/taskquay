@@ -192,7 +192,9 @@ class PiRpcLocalAgentAdapter implements LocalAgentAdapter {
       const sessionMessages = await rpc.request({ type: "get_messages" });
       const finalResponse = requireFinalResponse(
         "Pi",
-        extractPiFinalResponse(agentEnd) || extractPiFinalResponse(sessionMessages),
+        extractPiFinalResponse(agentEnd) ||
+          extractPiFinalResponse(sessionMessages) ||
+          extractPiStreamingText(events),
       );
       return {
         provider: this.provider,
@@ -388,6 +390,20 @@ export function extractPiFinalResponse(value: unknown): string {
     if (text) return text;
   }
   return "";
+}
+
+export function extractPiStreamingText(events: unknown[]): string {
+  return events
+    .map((event) => {
+      const record = asRecord(event);
+      if (!record || record.type !== "message_update") return "";
+      const update = asRecord(record.assistantMessageEvent);
+      if (!update || update.type !== "text_delta") return "";
+      return typeof update.delta === "string" ? update.delta : "";
+    })
+    .filter(Boolean)
+    .join("")
+    .trim();
 }
 
 function extractLastOpenCodeAssistantMessageText(messages: unknown[]): string {
