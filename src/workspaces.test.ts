@@ -36,6 +36,7 @@ try {
   await writeFile(join(root, "nested", "file.txt"), "hello\n");
 
   const config = loadConfig({
+    DEVSPACE_CONFIG_DIR: join(root, ".devspace-home"),
     DEVSPACE_ALLOWED_ROOTS: root,
     DEVSPACE_WORKTREE_ROOT: join(root, ".devspace", "worktrees"),
     DEVSPACE_AGENT_DIR: agentDir,
