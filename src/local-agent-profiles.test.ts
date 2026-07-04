@@ -90,10 +90,8 @@ try {
       "",
     ].join("\n"),
   );
-  await assert.rejects(
-    () => loadLocalAgentProfiles(enabledConfig, workspaceRoot),
-    /provider must be codex, claude, opencode, pi, cursor, or copilot/,
-  );
+  const profilesWithInvalid = await loadLocalAgentProfiles(enabledConfig, workspaceRoot);
+  assert.deepEqual(profilesWithInvalid.map((profile) => profile.name), ["reviewer"]);
 
   const disabledConfig = loadConfig({
     DEVSPACE_CONFIG_DIR: configDir,

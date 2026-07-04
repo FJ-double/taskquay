@@ -83,7 +83,11 @@ async function loadProfilesFromDirectory(directory: string): Promise<LocalAgentP
     if (!entry.name.endsWith(".md")) continue;
 
     const filePath = join(resolvedDirectory, entry.name);
-    profiles.push(await loadProfileFile(filePath));
+    try {
+      profiles.push(await loadProfileFile(filePath));
+    } catch (error) {
+      console.warn(`Skipping invalid subagent profile ${filePath}: ${errorMessage(error)}`);
+    }
   }
 
   return profiles;
@@ -210,4 +214,8 @@ function readString(frontmatter: Record<string, unknown>, key: string): string |
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed || undefined;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
