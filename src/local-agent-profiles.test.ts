@@ -32,7 +32,7 @@ try {
     [
       "---",
       "name: reviewer",
-      "description: Project reviewer.",
+      'description: "Project reviewer #1."',
       "provider: claude",
       "model: sonnet",
       "---",
@@ -66,13 +66,13 @@ try {
 
   assert.equal(profiles.length, 1);
   assert.equal(profiles[0]?.name, "reviewer");
-  assert.equal(profiles[0]?.description, "Project reviewer.");
+  assert.equal(profiles[0]?.description, "Project reviewer #1.");
   assert.equal(profiles[0]?.provider, "claude");
   assert.equal(profiles[0]?.model, "sonnet");
   assert.equal(profiles[0]?.body, "Project body.");
   assert.deepEqual(summarizeLocalAgentProfile(profiles[0]!), {
     name: "reviewer",
-    description: "Project reviewer.",
+    description: "Project reviewer #1.",
     provider: "claude",
     model: "sonnet",
   });

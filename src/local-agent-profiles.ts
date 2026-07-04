@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
+import { parse as parseYaml } from "yaml";
 import type { ServerConfig } from "./config.js";
 
 export type LocalAgentProvider = "codex" | "claude" | "opencode" | "pi" | "cursor" | "copilot";
@@ -114,63 +115,24 @@ function parseFrontmatter(content: string, filePath: string): ParsedFrontmatter 
   }
 
   return {
-    frontmatter: parseSimpleYaml(lines.slice(1, endIndex), filePath),
+    frontmatter: parseProfileYaml(lines.slice(1, endIndex).join("\n"), filePath),
     body: lines.slice(endIndex + 1).join("\n").trim(),
   };
 }
 
-function parseSimpleYaml(lines: string[], filePath: string): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  let currentMapKey: string | undefined;
-
-  for (const rawLine of lines) {
-    const line = rawLine.replace(/\s+#.*$/, "");
-    if (!line.trim()) continue;
-
-    const nestedMatch = /^  ([A-Za-z0-9_-]+):\s*(.*?)\s*$/.exec(line);
-    if (nestedMatch) {
-      if (!currentMapKey) {
-        throw new Error(`Unexpected nested frontmatter field in ${filePath}: ${rawLine}`);
-      }
-      const current = result[currentMapKey];
-      if (!current || typeof current !== "object" || Array.isArray(current)) {
-        throw new Error(`Invalid nested frontmatter field in ${filePath}: ${rawLine}`);
-      }
-      (current as Record<string, unknown>)[nestedMatch[1] ?? ""] = parseScalar(nestedMatch[2] ?? "");
-      continue;
-    }
-
-    const topLevelMatch = /^([A-Za-z0-9_-]+):\s*(.*?)\s*$/.exec(line);
-    if (!topLevelMatch) {
-      throw new Error(`Unsupported frontmatter line in ${filePath}: ${rawLine}`);
-    }
-
-    const key = topLevelMatch[1] ?? "";
-    const value = topLevelMatch[2] ?? "";
-    if (value === "") {
-      result[key] = {};
-      currentMapKey = key;
-      continue;
-    }
-
-    result[key] = parseScalar(value);
-    currentMapKey = undefined;
+function parseProfileYaml(source: string, filePath: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(source) ?? {};
+  } catch (error) {
+    throw new Error(`Unable to parse subagent profile frontmatter: ${filePath}: ${errorMessage(error)}`);
   }
 
-  return result;
-}
-
-function parseScalar(value: string): unknown {
-  const trimmed = value.trim();
-  if (trimmed === "true") return true;
-  if (trimmed === "false") return false;
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    return trimmed.slice(1, -1);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`Subagent profile frontmatter must be a mapping: ${filePath}`);
   }
-  return trimmed;
+
+  return parsed as Record<string, unknown>;
 }
 
 function profileFromFrontmatter(
