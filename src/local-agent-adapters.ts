@@ -189,13 +189,16 @@ class PiRpcLocalAgentAdapter implements LocalAgentAdapter {
       const done = rpc.waitForEvent((event) => asRecord(event)?.type === "agent_end", PI_AGENT_TIMEOUT_MS);
       await rpc.request({ type: "prompt", message: input.prompt });
       const agentEnd = await done;
-      const messages = readArray(agentEnd, "messages") ? agentEnd : await rpc.request({ type: "get_messages" });
-      const finalResponse = requireFinalResponse("Pi", extractPiFinalResponse(messages));
+      const sessionMessages = await rpc.request({ type: "get_messages" });
+      const finalResponse = requireFinalResponse(
+        "Pi",
+        extractPiFinalResponse(agentEnd) || extractPiFinalResponse(sessionMessages),
+      );
       return {
         provider: this.provider,
         providerSessionId,
         finalResponse,
-        items: [...events, messages],
+        items: [...events, sessionMessages],
       };
     } finally {
       child.kill();
