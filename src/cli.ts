@@ -456,6 +456,7 @@ async function runLocalAgentProfile(
 
 function spawnAgentWorker(agentId: string, promptFile: string): void {
   const child = spawn(process.execPath, [
+    ...process.execArgv,
     fileURLToPath(import.meta.url),
     "agents",
     "__worker",
