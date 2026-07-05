@@ -41,6 +41,12 @@ import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { formatPathForPrompt } from "./skills.js";
 import { createWorkspaceStore } from "./workspace-store.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
+import { summarizeLocalAgentProfile } from "./local-agent-profiles.js";
+import {
+  formatLocalAgentProviderAvailabilitySummary,
+  getLocalAgentProviderAvailabilitySnapshot,
+  type LocalAgentProviderAvailability,
+} from "./local-agent-availability.js";
 
 type Transport = StreamableHTTPServerTransport;
 const WORKSPACE_APP_URI = "ui://devspace/workspace-app.html";
@@ -67,6 +73,7 @@ const SHELL_TOOL_ANNOTATIONS = {
 interface RunningServer {
   app: ReturnType<typeof createMcpExpressApp>;
   config: ServerConfig;
+  localAgentProviders: LocalAgentProviderAvailability[];
   close(): void;
 }
 
@@ -208,6 +215,25 @@ function serverInstructions(config: ServerConfig, toolNames: ToolNames): string 
 
   return `Use DevSpace as a local coding workspace. Call ${toolNames.openWorkspace} once per project folder or worktree to obtain a workspaceId. Reuse that same workspaceId for all later file, search, edit, write, show-changes, and shell tools in that folder; do not call ${toolNames.openWorkspace} again unless switching folders/worktrees, changing checkout/worktree mode, the workspaceId is rejected as unknown, or the user explicitly asks to reopen. ${agentsMd}${skills}${inspection}Prefer ${toolNames.edit} for targeted modifications, ${toolNames.write} only for new files or complete rewrites, and ${toolNames.shell} for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. Do not create or modify files with ${toolNames.shell}; avoid shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or any command whose purpose is to write project files.${showChanges}`;
 }
+
+function formatVisibleAgent(agent: {
+  name: string;
+  provider: string;
+  model?: string;
+  providerAvailable?: boolean;
+  providerUnavailableReason?: string;
+}): string {
+  const model = agent.model ? `, model ${agent.model}` : "";
+  const availability = agent.providerAvailable === false
+    ? `, unavailable: ${agent.providerUnavailableReason ?? "provider unavailable"}`
+    : "";
+  return `${agent.name} (${agent.provider}${model}${availability})`;
+}
+
+function formatUnavailableAgentProvider(provider: LocalAgentProviderAvailability): string {
+  return `${provider.name} (${provider.reason ?? "unavailable"})`;
+}
+
 function resultOutputSchema(extra: z.ZodRawShape = {}): z.ZodRawShape {
   return {
     result: z
@@ -228,6 +254,21 @@ const workspaceSkillOutputSchema = z.object({
 const workspaceAgentsFileOutputSchema = z.object({
   path: z.string(),
   content: z.string(),
+});
+
+const workspaceLocalAgentOutputSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  provider: z.string(),
+  model: z.string().optional(),
+  providerAvailable: z.boolean().optional(),
+  providerUnavailableReason: z.string().optional(),
+});
+
+const workspaceLocalAgentProviderOutputSchema = z.object({
+  name: z.string(),
+  available: z.boolean(),
+  reason: z.string().optional(),
 });
 
 const workspaceAvailableAgentsFileOutputSchema = z.object({
@@ -562,6 +603,7 @@ function registerCodexProcessTools(
         workspaceId,
         command: cmd,
         cwd,
+        workspaceRoot: workspace.root,
         tty,
         columns,
         rows,
@@ -657,6 +699,7 @@ function createMcpServer(
   workspaces: WorkspaceRegistry,
   reviewCheckpoints: ReturnType<typeof createReviewCheckpointManager>,
   processSessions: ProcessSessionManager,
+  localAgentProviders: LocalAgentProviderAvailability[],
 ): McpServer {
   const toolNames = toolNamesFor(config);
   const server = new McpServer(
@@ -745,6 +788,8 @@ function createMcpServer(
         agentsFiles: z.array(workspaceAgentsFileOutputSchema),
         availableAgentsFiles: z.array(workspaceAvailableAgentsFileOutputSchema),
         skills: z.array(workspaceSkillOutputSchema),
+        agentProviders: z.array(workspaceLocalAgentProviderOutputSchema),
+        agents: z.array(workspaceLocalAgentOutputSchema),
         skillDiagnostics: z.array(z.unknown()),
         instruction: z.string(),
       },
@@ -767,6 +812,16 @@ function createMcpServer(
           description: skill.description,
           path: formatPathForPrompt(skill.filePath),
         }));
+      const visibleAgentProviders = config.subagents ? localAgentProviders : [];
+      const visibleAgents = workspace.agentProfiles.map((profile) => {
+        const summary = summarizeLocalAgentProfile(profile);
+        const availability = visibleAgentProviders.find((provider) => provider.name === summary.provider);
+        return {
+          ...summary,
+          providerAvailable: availability?.available,
+          providerUnavailableReason: availability?.reason,
+        };
+      });
       const loadedAgentsFiles = agentsFiles.map((file) => ({
         path: formatAgentsPath(file.path, workspace.root),
         content: file.content,
@@ -793,6 +848,15 @@ function createMcpServer(
             visibleSkills.length > 0
               ? `Available skills: ${visibleSkills.map((skill) => skill.name).join(", ")}`
               : undefined,
+            visibleAgentProviders.some((provider) => provider.available)
+              ? `Available subagent providers: ${visibleAgentProviders.filter((provider) => provider.available).map((provider) => provider.name).join(", ")}`
+              : undefined,
+            visibleAgentProviders.some((provider) => !provider.available)
+              ? `Unavailable subagent providers: ${visibleAgentProviders.filter((provider) => !provider.available).map(formatUnavailableAgentProvider).join(", ")}`
+              : undefined,
+            visibleAgents.length > 0
+              ? `Available subagent profiles: ${visibleAgents.map(formatVisibleAgent).join(", ")}`
+              : undefined,
             instruction,
           ].filter(Boolean).join("\n"),
         },
@@ -817,6 +881,8 @@ function createMcpServer(
               agentsFiles: loadedAgentsFiles.length,
               availableAgentsFiles: availableAgentsFileOutputs.length,
               skills: visibleSkills.length,
+              agentProviders: visibleAgentProviders.length,
+              agents: visibleAgents.length,
               skillDiagnostics: workspace.skillDiagnostics.length,
             },
           },
@@ -830,6 +896,8 @@ function createMcpServer(
           agentsFiles: loadedAgentsFiles,
           availableAgentsFiles: availableAgentsFileOutputs,
           skills: visibleSkills,
+          agentProviders: visibleAgentProviders,
+          agents: visibleAgents,
           skillDiagnostics: workspace.skillDiagnostics,
           instruction,
         },
@@ -1569,6 +1637,9 @@ export function createServer(config = loadConfig()): RunningServer {
   const workspaces = new WorkspaceRegistry(config, workspaceStore);
   const reviewCheckpoints = createReviewCheckpointManager();
   const processSessions = new ProcessSessionManager();
+  const localAgentProviders = config.subagents
+    ? getLocalAgentProviderAvailabilitySnapshot()
+    : [];
 
   if (config.logging.trustProxy) {
     app.set("trust proxy", true);
@@ -1692,7 +1763,13 @@ export function createServer(config = loadConfig()): RunningServer {
           }
         };
 
-        const server = createMcpServer(config, workspaces, reviewCheckpoints, processSessions);
+        const server = createMcpServer(
+          config,
+          workspaces,
+          reviewCheckpoints,
+          processSessions,
+          localAgentProviders,
+        );
         await server.connect(transport);
       } else {
         sendJsonRpcError(res, 400, -32000, "No valid MCP session");
@@ -1715,6 +1792,7 @@ export function createServer(config = loadConfig()): RunningServer {
   return {
     app,
     config,
+    localAgentProviders,
     close: () => {
       if (closed) return;
       closed = true;
@@ -1734,7 +1812,7 @@ async function isMainModule(): Promise<boolean> {
 }
 
 if (await isMainModule()) {
-  const { app, config, close } = createServer();
+  const { app, config, close, localAgentProviders } = createServer();
   const httpServer = app.listen(config.port, config.host, () => {
     console.log(
       `devspace listening on http://${config.host}:${config.port}/mcp`,
@@ -1745,6 +1823,9 @@ if (await isMainModule()) {
     console.log(`request logging: ${config.logging.requests ? "enabled" : "disabled"}`);
     console.log(`asset logging: ${config.logging.assets ? "enabled" : "disabled"}`);
     console.log(`trust proxy: ${config.logging.trustProxy ? "enabled" : "disabled"}`);
+    if (config.subagents) {
+      console.log(`subagent providers: ${formatLocalAgentProviderAvailabilitySummary(localAgentProviders)}`);
+    }
   });
 
   const shutdown = () => {
