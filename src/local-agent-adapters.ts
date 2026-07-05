@@ -79,17 +79,37 @@ class ClaudeLocalAgentAdapter implements LocalAgentAdapter {
       const record = message as Record<string, unknown>;
       if (typeof record.session_id === "string") providerSessionId = record.session_id;
       if (record.type === "result" && typeof record.result === "string") {
+        const resultError = claudeResultError(record);
+        if (resultError) throw new Error(resultError);
         finalResponse = record.result;
       }
     }
 
+    finalResponse = requireFinalResponse("Claude", finalResponse);
     return {
       provider: this.provider,
       providerSessionId,
-      finalResponse: finalResponse.trim(),
+      finalResponse,
       items,
     };
   }
+}
+
+function claudeResultError(record: Record<string, unknown>): string | undefined {
+  const subtype = typeof record.subtype === "string" ? record.subtype : undefined;
+  const isError = record.is_error === true || subtype?.startsWith("error");
+  if (!isError) return undefined;
+  const message =
+    directString(record.error) ??
+    directString(record.message) ??
+    directString(record.result) ??
+    subtype ??
+    "Claude returned an error result.";
+  return `Claude returned an error result: ${message}`;
+}
+
+function directString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function resolveExecutable(command: string): string | undefined {
