@@ -17,14 +17,30 @@ try {
   await mkdir(agentDir, { recursive: true });
   await writeFile(join(agentDir, "AGENTS.md"), "global instructions\n");
   await writeFile(join(root, "AGENTS.md"), "root instructions\n");
+  await mkdir(join(root, ".devspace", "agents"), { recursive: true });
+  await writeFile(
+    join(root, ".devspace", "agents", "reviewer.md"),
+    [
+      "---",
+      "name: reviewer",
+      "description: Read-only project reviewer.",
+      "provider: codex",
+      "---",
+      "",
+      "Review only.",
+      "",
+    ].join("\n"),
+  );
   await mkdir(join(root, "nested"));
   await writeFile(join(root, "nested", "AGENTS.md"), "nested instructions\n");
   await writeFile(join(root, "nested", "file.txt"), "hello\n");
 
   const config = loadConfig({
+    DEVSPACE_CONFIG_DIR: join(root, ".devspace-home"),
     DEVSPACE_ALLOWED_ROOTS: root,
     DEVSPACE_WORKTREE_ROOT: join(root, ".devspace", "worktrees"),
     DEVSPACE_AGENT_DIR: agentDir,
+    DEVSPACE_SUBAGENTS: "1",
     DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
     PORT: "1",
   });
@@ -39,6 +55,22 @@ try {
   assert.deepEqual(
     availableAgentsFiles.map((file) => file.path),
     [join(root, "nested", "AGENTS.md")],
+  );
+  assert.deepEqual(
+    workspace.agentProfiles.map((profile) => ({
+      name: profile.name,
+      description: profile.description,
+      provider: profile.provider,
+      body: profile.body,
+    })),
+    [
+      {
+        name: "reviewer",
+        description: "Read-only project reviewer.",
+        provider: "codex",
+        body: "Review only.",
+      },
+    ],
   );
 
   const missingWorkspaceRoot = join(root, "missing", "workspace");

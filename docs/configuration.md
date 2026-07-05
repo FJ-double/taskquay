@@ -92,6 +92,7 @@ sessions.
 | Variable | Purpose |
 | --- | --- |
 | `DEVSPACE_SKILLS` | Set to `0` to hide skills. Enabled by default. |
+| `DEVSPACE_SUBAGENTS` | Set to `1` to expose configured agent profiles as Subagents. Experimental and disabled by default. |
 | `DEVSPACE_AGENT_DIR` | Defaults to `~/.codex`; its `skills` child is loaded for compatibility. |
 | `DEVSPACE_SKILL_PATHS` | Optional comma-separated additional skill directories. |
 
@@ -99,11 +100,30 @@ DevSpace discovers standard Agent Skills from:
 
 - `~/.agents/skills`
 - project `.agents/skills`
+- `~/.devspace/skills`
 
 It also keeps compatibility with:
 
+- the bundled `subagent-delegation` skill when `DEVSPACE_SUBAGENTS=1`, unless `~/.devspace/skills/subagent-delegation/SKILL.md` exists
 - `DEVSPACE_AGENT_DIR/skills`, defaulting to `~/.codex/skills`
 - additional paths from `DEVSPACE_SKILL_PATHS`
+
+When Subagents are enabled, DevSpace discovers agent profiles
+from:
+
+- `~/.devspace/agents/*.md`
+- project `.devspace/agents/*.md`
+
+`open_workspace` returns a compact catalog containing profile names,
+descriptions, providers, and optional models so the host model can choose an
+agent without reading provider-specific launch details. `devspace agents ls`
+lists existing subagent sessions for the current workspace, scoped by the
+workspace environment injected into shell commands. The `subagent-delegation`
+skill teaches the model to use only the minimal `devspace agents ls`,
+`devspace agents run`, and `devspace agents show` workflow.
+
+Starter profile templates are available under `examples/agents/`. Copy or adapt
+them into one of the active profile directories before use.
 
 Legacy project paths such as `.pi/skills` can be added through `DEVSPACE_SKILL_PATHS` when needed.
 
