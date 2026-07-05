@@ -9,6 +9,7 @@ import {
   extractPiStreamingText,
   piCommandEnvironment,
 } from "./local-agent-adapters.js";
+import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
 
 const providers: LocalAgentProvider[] = [
@@ -202,6 +203,11 @@ assert.equal(
 {
   const devspaceBin = `${process.cwd()}/node_modules/.bin`;
   const userBin = "/home/user/.local/bin";
+  assert.equal(
+    removeDevspaceNodeModulesBinFromPath([devspaceBin, userBin].join(delimiter)),
+    userBin,
+  );
+
   const env = piCommandEnvironment({
     PATH: [devspaceBin, userBin].join(delimiter),
   });

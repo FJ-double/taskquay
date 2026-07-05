@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { delimiter, resolve, sep } from "node:path";
+import { delimiter, resolve } from "node:path";
+import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import {
   LOCAL_AGENT_PROVIDERS,
   type LocalAgentProvider,
@@ -145,15 +146,6 @@ function piAvailabilityEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   if (!path) return env;
   return {
     ...env,
-    PATH: path
-      .split(delimiter)
-      .filter((entry) => entry && !isDevspaceNodeModulesBin(entry))
-      .join(delimiter),
+    PATH: removeDevspaceNodeModulesBinFromPath(path),
   };
-}
-
-function isDevspaceNodeModulesBin(pathEntry: string): boolean {
-  const resolvedEntry = resolve(pathEntry);
-  return resolvedEntry.endsWith(`${sep}node_modules${sep}.bin`)
-    && resolvedEntry.includes(`${sep}devspace${sep}`);
 }
