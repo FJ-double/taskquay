@@ -6,6 +6,15 @@ import type { ServerConfig } from "./config.js";
 
 export type LocalAgentProvider = "codex" | "claude" | "opencode" | "pi" | "cursor" | "copilot";
 
+export const LOCAL_AGENT_PROVIDERS: readonly LocalAgentProvider[] = [
+  "codex",
+  "claude",
+  "opencode",
+  "pi",
+  "cursor",
+  "copilot",
+];
+
 export interface LocalAgentProfile {
   name: string;
   description: string;
@@ -29,14 +38,7 @@ interface ParsedFrontmatter {
 }
 
 const FRONTMATTER_DELIMITER = "---";
-const PROVIDERS = new Set<LocalAgentProvider>([
-  "codex",
-  "claude",
-  "opencode",
-  "pi",
-  "cursor",
-  "copilot",
-]);
+const PROVIDERS = new Set<LocalAgentProvider>(LOCAL_AGENT_PROVIDERS);
 
 export async function loadLocalAgentProfiles(
   config: ServerConfig,
@@ -169,6 +171,10 @@ function readProvider(frontmatter: Record<string, unknown>, filePath: string): L
     );
   }
   return provider as LocalAgentProvider;
+}
+
+export function isLocalAgentProvider(value: string): value is LocalAgentProvider {
+  return PROVIDERS.has(value as LocalAgentProvider);
 }
 
 function readString(frontmatter: Record<string, unknown>, key: string): string | undefined {
