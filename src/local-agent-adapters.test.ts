@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { delimiter } from "node:path";
 import {
   claudeCommandEnvironment,
   createLocalAgentAdapter,
@@ -202,7 +203,7 @@ assert.equal(
   const devspaceBin = `${process.cwd()}/node_modules/.bin`;
   const userBin = "/home/user/.local/bin";
   const env = piCommandEnvironment({
-    PATH: [devspaceBin, userBin].join(":"),
+    PATH: [devspaceBin, userBin].join(delimiter),
   });
 
   assert.equal(env.PATH, userBin);
@@ -212,8 +213,8 @@ assert.equal(
   const devspaceBin = `${process.cwd()}/node_modules/.bin`;
   const env = piCommandEnvironment({
     PI_COMMAND: "/custom/pi",
-    PATH: [devspaceBin, "/home/user/.local/bin"].join(":"),
+    PATH: [devspaceBin, "/home/user/.local/bin"].join(delimiter),
   });
 
-  assert.equal(env.PATH, `${devspaceBin}:/home/user/.local/bin`);
+  assert.equal(env.PATH, [devspaceBin, "/home/user/.local/bin"].join(delimiter));
 }
