@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  claudeCommandEnvironment,
   createLocalAgentAdapter,
   extractOpenCodeFinalResponse,
   extractPiFinalResponse,
@@ -22,6 +23,22 @@ for (const provider of providers) {
   const adapter = createLocalAgentAdapter(provider);
   assert.equal(adapter.provider, provider);
   assert.equal(typeof adapter.run, "function");
+}
+
+{
+  const env = claudeCommandEnvironment({
+    CLAUDECODE: "1",
+    CLAUDE_CODE_ENTRYPOINT: "cli",
+    CLAUDE_CODE_SSE_PORT: "1234",
+    CLAUDE_AGENT_SDK_VERSION: "test",
+    PATH: "/usr/bin",
+  });
+
+  assert.equal(env.CLAUDECODE, undefined);
+  assert.equal(env.CLAUDE_CODE_ENTRYPOINT, undefined);
+  assert.equal(env.CLAUDE_CODE_SSE_PORT, undefined);
+  assert.equal(env.CLAUDE_AGENT_SDK_VERSION, undefined);
+  assert.equal(env.PATH, "/usr/bin");
 }
 
 assert.equal(

@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { delimiter, resolve, sep } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -57,14 +57,17 @@ class ClaudeLocalAgentAdapter implements LocalAgentAdapter {
 
   async run(input: LocalAgentRunInput): Promise<LocalAgentRunResult> {
     const { query } = await import("@anthropic-ai/claude-agent-sdk");
+    const claudeExecutable = process.env.CLAUDE_COMMAND ?? resolveExecutable("claude");
     const messages = query({
       prompt: input.prompt,
       options: {
         cwd: input.workspace,
         model: input.model,
         resume: input.providerSessionId,
-        permissionMode: "plan",
-        maxTurns: 1,
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+        env: claudeCommandEnvironment(process.env),
+        ...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
       },
     });
 
@@ -87,6 +90,30 @@ class ClaudeLocalAgentAdapter implements LocalAgentAdapter {
       items,
     };
   }
+}
+
+function resolveExecutable(command: string): string | undefined {
+  const result = spawnSync(process.platform === "win32" ? "where.exe" : "command", [
+    ...(process.platform === "win32" ? [command] : ["-v", command]),
+  ], {
+    encoding: "utf8",
+    shell: process.platform !== "win32",
+  });
+  const executable = result.stdout?.split(/\r?\n/).find((line) => line.trim());
+  return executable?.trim() || undefined;
+}
+
+export function claudeCommandEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const next = { ...env };
+  for (const key of [
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_SSE_PORT",
+    "CLAUDE_AGENT_SDK_VERSION",
+  ]) {
+    delete next[key];
+  }
+  return next;
 }
 
 class OpencodeLocalAgentAdapter implements LocalAgentAdapter {
