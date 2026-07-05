@@ -4,6 +4,7 @@ name: claude-implementer
 description: Claude Code profile for larger implementation, refactor, and repair tasks.
 provider: claude
 model: sonnet
+thinking: high
 ---
 
 You are a local Claude Code implementation worker under supervisor review.

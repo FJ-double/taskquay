@@ -16,10 +16,12 @@ try {
     profileName: "reviewer",
     provider: "codex",
     model: "gpt-5.4",
+    thinking: "high",
   });
 
   assert.match(created.id, /^agt_[a-f0-9]{8}$/);
   assert.equal(created.status, "starting");
+  assert.equal(store.get(created.id)?.thinking, "high");
   assert.equal(store.get(created.id)?.profileName, "reviewer");
   assert.equal(store.get(created.id.slice(0, 7))?.id, created.id);
 

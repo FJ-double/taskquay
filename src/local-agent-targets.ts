@@ -9,6 +9,7 @@ export interface ParsedLocalAgentRunArgs {
   target: string;
   prompt: string;
   model?: string;
+  thinking?: string;
 }
 
 export type LocalAgentTarget =
@@ -17,6 +18,7 @@ export type LocalAgentTarget =
       name: string;
       provider: LocalAgentProvider;
       model?: string;
+      thinking?: string;
       profile: LocalAgentProfile;
     }
   | {
@@ -24,15 +26,17 @@ export type LocalAgentTarget =
       name: LocalAgentProvider;
       provider: LocalAgentProvider;
       model?: string;
+      thinking?: string;
     };
 
 export function parseLocalAgentRunArgs(args: string[]): ParsedLocalAgentRunArgs {
   const [target, ...rest] = args;
   if (!target) {
-    throw new Error('Usage: devspace agents run <profile-or-provider-or-id> [--model <model>] "<prompt>"');
+    throw new Error('Usage: devspace agents run <profile-or-provider-or-id> [--model <model>] [--thinking <level>] "<prompt>"');
   }
 
   let model: string | undefined;
+  let thinking: string | undefined;
   const promptParts: string[] = [];
   for (let index = 0; index < rest.length; index += 1) {
     const part = rest[index];
@@ -49,21 +53,35 @@ export function parseLocalAgentRunArgs(args: string[]): ParsedLocalAgentRunArgs 
       model = value;
       continue;
     }
+    if (part === "--thinking") {
+      const value = rest[index + 1]?.trim();
+      if (!value) throw new Error("Missing value for --thinking.");
+      thinking = value;
+      index += 1;
+      continue;
+    }
+    if (part?.startsWith("--thinking=")) {
+      const value = part.slice("--thinking=".length).trim();
+      if (!value) throw new Error("Missing value for --thinking.");
+      thinking = value;
+      continue;
+    }
     promptParts.push(part ?? "");
   }
 
   const prompt = promptParts.join(" ").trim();
   if (!prompt) {
-    throw new Error('Usage: devspace agents run <profile-or-provider-or-id> [--model <model>] "<prompt>"');
+    throw new Error('Usage: devspace agents run <profile-or-provider-or-id> [--model <model>] [--thinking <level>] "<prompt>"');
   }
 
-  return { target, prompt, model };
+  return { target, prompt, model, thinking };
 }
 
 export function resolveLocalAgentTarget(
   target: string,
   profiles: LocalAgentProfile[],
   modelOverride?: string,
+  thinkingOverride?: string,
 ): LocalAgentTarget | undefined {
   const profile = profiles.find((candidate) => candidate.name === target);
   if (profile) {
@@ -72,6 +90,7 @@ export function resolveLocalAgentTarget(
       name: profile.name,
       provider: profile.provider,
       model: modelOverride ?? profile.model,
+      thinking: thinkingOverride ?? profile.thinking,
       profile,
     };
   }
@@ -82,6 +101,7 @@ export function resolveLocalAgentTarget(
       name: target,
       provider: target,
       model: modelOverride,
+      thinking: thinkingOverride,
     };
   }
 

@@ -14,6 +14,7 @@ export interface LocalAgentRunInput {
   providerSessionId?: string;
   writeMode?: LocalAgentWriteMode;
   model?: string;
+  thinking?: string;
 }
 
 export interface LocalAgentRunResult {
