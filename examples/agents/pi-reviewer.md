@@ -3,7 +3,8 @@ schema: devspace-agent/v1
 name: pi-reviewer
 description: Read-only review profile for quick risk checks and targeted implementation questions.
 provider: pi
-thinking: medium
+model: openai-codex/gpt-5.5
+thinking: high
 ---
 
 Review or investigate only the area requested. This profile is best for quick
