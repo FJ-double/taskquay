@@ -18,14 +18,18 @@ Use only these commands for normal delegation:
 
 ```bash
 devspace agents ls
-devspace agents run <profile-or-id> "<prompt>"
+devspace agents run <profile-or-provider-or-id> "<prompt>"
 devspace agents show <id>
 ```
 
 `ls` shows existing subagent sessions for the current workspace. DevSpace scopes
 it automatically from the shell environment injected by the workspace tool.
 
-`run <profile> "<prompt>"` starts a new agent and prints a DevSpace agent id.
+`run <profile> "<prompt>"` starts a new configured profile and prints a
+DevSpace agent id.
+
+`run <provider> "<prompt>"` starts a raw built-in provider when no configured
+profile is needed. Built-in providers are listed by `open_workspace`.
 
 `run <id> "<prompt>"` sends a follow-up to an existing agent.
 
@@ -40,7 +44,16 @@ DevSpace agent integration.
 ## Choosing a profile
 
 Choose profiles from the compact subagent profile catalog returned by
-`open_workspace`. Use the profile name with `devspace agents run`.
+`open_workspace`. Use the profile name with `devspace agents run`. If no
+profile fits and delegation is still appropriate, use a built-in provider name
+from `open_workspace`.
+
+Profiles may declare a model. To override the configured/default provider model
+for a run, pass `--model`:
+
+```bash
+devspace agents run <profile-or-provider> --model <model> "<prompt>"
+```
 
 Good delegation targets:
 
