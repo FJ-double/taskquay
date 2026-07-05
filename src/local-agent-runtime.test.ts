@@ -55,6 +55,7 @@ assert.deepEqual(codex.started[0], {
   sandboxMode: "read-only",
   approvalPolicy: "never",
   model: undefined,
+  modelReasoningEffort: undefined,
 });
 
 await runtime.run({
@@ -62,6 +63,7 @@ await runtime.run({
   workspace: "/tmp/project",
   writeMode: "allowed",
   model: "gpt-5.4",
+  thinking: "high",
 });
 
 assert.deepEqual(codex.started[1], {
@@ -69,6 +71,7 @@ assert.deepEqual(codex.started[1], {
   sandboxMode: "workspace-write",
   approvalPolicy: "never",
   model: "gpt-5.4",
+  modelReasoningEffort: "high",
 });
 
 const resumed = await runtime.run({
@@ -88,6 +91,7 @@ assert.deepEqual(codex.resumed, [
       sandboxMode: "danger-full-access",
       approvalPolicy: "never",
       model: undefined,
+      modelReasoningEffort: undefined,
     },
   },
 ]);
