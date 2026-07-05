@@ -190,12 +190,18 @@ class PiRpcLocalAgentAdapter implements LocalAgentAdapter {
       await rpc.request({ type: "prompt", message: input.prompt });
       const agentEnd = await done;
       const sessionMessages = await rpc.request({ type: "get_messages" });
-      const finalResponse = requireFinalResponse(
-        "Pi",
+      const finalResponse =
         extractPiFinalResponse(agentEnd) ||
-          extractPiFinalResponse(sessionMessages) ||
-          extractPiStreamingText(events),
-      );
+        extractPiFinalResponse(sessionMessages) ||
+        extractPiStreamingText(events);
+      if (!finalResponse) {
+        const providerError =
+          extractPiProviderError(agentEnd) ||
+          extractPiProviderError(sessionMessages) ||
+          extractPiProviderError(events);
+        if (providerError) throw new Error(`Pi returned an error: ${providerError}`);
+      }
+      requireFinalResponse("Pi", finalResponse);
       return {
         provider: this.provider,
         providerSessionId,
@@ -404,6 +410,26 @@ export function extractPiStreamingText(events: unknown[]): string {
     .filter(Boolean)
     .join("")
     .trim();
+}
+
+export function extractPiProviderError(value: unknown): string {
+  const root = unwrapProviderPayload(value);
+  if (Array.isArray(root)) {
+    for (let index = root.length - 1; index >= 0; index -= 1) {
+      const error = extractPiProviderError(root[index]);
+      if (error) return error;
+    }
+    return "";
+  }
+
+  const messages = readArray(root, "messages");
+  if (messages) return extractPiProviderError(messages);
+
+  const message = asRecord(root)?.message ?? root;
+  const record = asRecord(message);
+  if (!record) return "";
+  const error = record.errorMessage ?? record.error;
+  return typeof error === "string" ? error.trim() : "";
 }
 
 function extractLastOpenCodeAssistantMessageText(messages: unknown[]): string {

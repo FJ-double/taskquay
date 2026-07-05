@@ -3,6 +3,7 @@ import {
   createLocalAgentAdapter,
   extractOpenCodeFinalResponse,
   extractPiFinalResponse,
+  extractPiProviderError,
   extractPiStreamingText,
 } from "./local-agent-adapters.js";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
@@ -141,6 +142,21 @@ assert.equal(
     ],
   }),
   "",
+);
+
+assert.equal(
+  extractPiProviderError({
+    type: "agent_end",
+    messages: [
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "" }],
+        stopReason: "error",
+        errorMessage: "(0 , _piAi.streamSimpleOpenAIResponses) is not a function",
+      },
+    ],
+  }),
+  "(0 , _piAi.streamSimpleOpenAIResponses) is not a function",
 );
 
 assert.equal(
