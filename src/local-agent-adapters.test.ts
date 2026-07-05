@@ -8,6 +8,7 @@ import {
   extractPiProviderError,
   extractPiStreamingText,
   piCommandEnvironment,
+  resolveAcpModelConfigUpdate,
   resolveAcpThinkingConfigUpdate,
 } from "./local-agent-adapters.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
@@ -27,6 +28,69 @@ for (const provider of providers) {
   assert.equal(adapter.provider, provider);
   assert.equal(typeof adapter.run, "function");
 }
+
+assert.deepEqual(
+  resolveAcpModelConfigUpdate({
+    sessionId: "session_model_1",
+    newSessionResponse: {
+      configOptions: [
+        {
+          type: "select",
+          id: "model",
+          category: "model",
+          options: [
+            { value: "claude-sonnet-4.5", name: "Sonnet" },
+            { value: "gpt-5.4", name: "GPT 5.4" },
+          ],
+        },
+      ],
+    },
+  }, "gpt-5.4", "cursor"),
+  { sessionId: "session_model_1", configId: "model", value: "gpt-5.4" },
+);
+
+assert.deepEqual(
+  resolveAcpModelConfigUpdate({
+    sessionId: "session_model_2",
+    newSessionResponse: {
+      configOptions: [
+        {
+          type: "select",
+          id: "model_config",
+          category: "model",
+          options: [
+            {
+              group: "claude",
+              name: "Claude",
+              options: [
+                { value: "claude-sonnet-4.5", name: "Sonnet" },
+                { value: "claude-opus-4.5", name: "Opus" },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  }, "claude-opus-4.5", "copilot"),
+  { sessionId: "session_model_2", configId: "model_config", value: "claude-opus-4.5" },
+);
+
+assert.throws(
+  () => resolveAcpModelConfigUpdate({
+    sessionId: "session_model_3",
+    newSessionResponse: {
+      configOptions: [
+        {
+          type: "select",
+          id: "model",
+          category: "model",
+          options: [{ value: "gpt-5.4", name: "GPT 5.4" }],
+        },
+      ],
+    },
+  }, "unknown-model", "cursor"),
+  /Available values: gpt-5\.4/,
+);
 
 assert.deepEqual(
   resolveAcpThinkingConfigUpdate({

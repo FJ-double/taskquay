@@ -205,6 +205,10 @@ class AcpLocalAgentAdapter implements LocalAgentAdapter {
           const session = await context.buildSession(input.workspace).start();
           providerSessionId = session.sessionId;
           try {
+            if (input.model) {
+              const config = resolveAcpModelConfigUpdate(session, input.model, this.provider);
+              await context.request(methods.agent.session.setConfigOption, config);
+            }
             if (input.thinking) {
               const config = resolveAcpThinkingConfigUpdate(session, input.thinking, this.provider);
               await context.request(methods.agent.session.setConfigOption, config);
@@ -241,35 +245,65 @@ class AcpLocalAgentAdapter implements LocalAgentAdapter {
   }
 }
 
+export function resolveAcpModelConfigUpdate(
+  session: unknown,
+  model: string,
+  provider: string,
+): { sessionId: string; configId: string; value: string } {
+  return resolveAcpSelectConfigUpdate(session, {
+    category: "model",
+    label: "model",
+    provider,
+    value: model,
+  });
+}
+
 export function resolveAcpThinkingConfigUpdate(
   session: unknown,
   thinking: string,
   provider: string,
 ): { sessionId: string; configId: string; value: string } {
+  return resolveAcpSelectConfigUpdate(session, {
+    category: "thought_level",
+    label: "thinking option",
+    provider,
+    value: thinking,
+  });
+}
+
+function resolveAcpSelectConfigUpdate(
+  session: unknown,
+  options: {
+    category: string;
+    label: string;
+    provider: string;
+    value: string;
+  },
+): { sessionId: string; configId: string; value: string } {
   const record = asRecord(session);
-  if (!record) throw new Error(`${provider} ACP session did not return session metadata.`);
+  if (!record) throw new Error(`${options.provider} ACP session did not return session metadata.`);
   const sessionId = typeof record?.sessionId === "string" ? record.sessionId : undefined;
-  if (!sessionId) throw new Error(`${provider} ACP session did not return a session id.`);
+  if (!sessionId) throw new Error(`${options.provider} ACP session did not return a session id.`);
 
   const response = asRecord(record.newSessionResponse);
   const configOptions = response ? readArray(response, "configOptions") ?? [] : [];
-  const thinkingConfig = configOptions
+  const config = configOptions
     .map(asRecord)
-    .find((option) => option?.type === "select" && option.category === "thought_level");
-  if (!thinkingConfig) {
-    throw new Error(`${provider} ACP server does not expose a thinking option.`);
+    .find((option) => option?.type === "select" && option.category === options.category);
+  if (!config) {
+    throw new Error(`${options.provider} ACP server does not expose a ${options.label}.`);
   }
 
-  const configId = directString(thinkingConfig.id);
-  if (!configId) throw new Error(`${provider} ACP thinking option is missing an id.`);
+  const configId = directString(config.id);
+  if (!configId) throw new Error(`${options.provider} ACP ${options.label} is missing an id.`);
 
-  const available = flattenAcpSelectValues(thinkingConfig);
-  if (!available.includes(thinking)) {
+  const available = flattenAcpSelectValues(config);
+  if (!available.includes(options.value)) {
     const suffix = available.length > 0 ? ` Available values: ${available.join(", ")}.` : "";
-    throw new Error(`${provider} ACP thinking option does not support '${thinking}'.${suffix}`);
+    throw new Error(`${options.provider} ACP ${options.label} does not support '${options.value}'.${suffix}`);
   }
 
-  return { sessionId, configId, value: thinking };
+  return { sessionId, configId, value: options.value };
 }
 
 function flattenAcpSelectValues(option: Record<string, unknown>): string[] {
