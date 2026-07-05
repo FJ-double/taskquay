@@ -102,16 +102,28 @@ function resolveCommand(command: string, env: NodeJS.ProcessEnv = process.env): 
   const commandHasPath = command.includes("/") || command.includes("\\");
   if (commandHasPath) return executableExists(command, env) ? command : undefined;
 
-  const result = spawnSync(process.platform === "win32" ? "where.exe" : "command", [
-    ...(process.platform === "win32" ? [command] : ["-v", command]),
-  ], {
-    encoding: "utf8",
-    env,
-    shell: process.platform !== "win32",
-    windowsHide: true,
-  });
-  const executable = result.stdout?.split(/\r?\n/).find((line) => line.trim());
-  return executable?.trim() || undefined;
+  for (const candidate of candidateCommandPaths(command, env)) {
+    if (executableExists(candidate, env)) return candidate;
+  }
+  return undefined;
+}
+
+function candidateCommandPaths(command: string, env: NodeJS.ProcessEnv): string[] {
+  const path = env.PATH;
+  if (!path) return [];
+  const extensions = process.platform === "win32"
+    ? (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+      .split(";")
+      .filter(Boolean)
+    : [""];
+  const candidates: string[] = [];
+  for (const directory of path.split(delimiter)) {
+    if (!directory) continue;
+    for (const extension of extensions) {
+      candidates.push(resolve(directory, `${command}${extension}`));
+    }
+  }
+  return candidates;
 }
 
 function executableExists(command: string, env: NodeJS.ProcessEnv): boolean {
