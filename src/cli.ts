@@ -18,6 +18,10 @@ import {
   type LocalAgentProfile,
 } from "./local-agent-profiles.js";
 import {
+  assertLocalAgentProviderAvailable,
+  formatLocalAgentProviderAvailabilitySummary,
+} from "./local-agent-availability.js";
+import {
   formatAvailableLocalAgentTargets,
   parseLocalAgentRunArgs,
   resolveLocalAgentTarget,
@@ -208,7 +212,7 @@ async function serve(): Promise<void> {
 
   const { createServer } = await import("./server.js");
   const config = loadConfig();
-  const { app, close } = createServer(config);
+  const { app, close, localAgentProviders } = createServer(config);
   const httpServer = app.listen(config.port, config.host, () => {
     console.log(`devspace listening on http://${config.host}:${config.port}/mcp`);
     console.log(`public base url: ${config.publicBaseUrl}`);
@@ -219,6 +223,9 @@ async function serve(): Promise<void> {
     }
     console.log("auth: Owner password approval required");
     console.log(`logging: ${config.logging.level} ${config.logging.format}`);
+    if (config.subagents) {
+      console.log(`subagent providers: ${formatLocalAgentProviderAvailabilitySummary(localAgentProviders)}`);
+    }
   });
 
   const shutdown = () => {
@@ -354,9 +361,13 @@ async function runAgentsRun(args: string[]): Promise<void> {
   const workspaceRoot = resolveCurrentWorkspaceRoot();
   const store = createLocalAgentStore(config);
   const existing = store.get(parsed.target);
-  const promptFile = writeAgentPromptFile(parsed.prompt);
 
   if (existing) {
+    if (!isLocalAgentProvider(existing.provider)) {
+      throw new Error(`Unknown subagent provider for existing session: ${existing.provider}`);
+    }
+    assertLocalAgentProviderAvailable(existing.provider);
+    const promptFile = writeAgentPromptFile(parsed.prompt);
     store.update(existing.id, {
       status: "starting",
       model: parsed.model ?? existing.model,
@@ -375,7 +386,9 @@ async function runAgentsRun(args: string[]): Promise<void> {
       `Unknown subagent profile, provider, or id: ${parsed.target}. Available ${formatAvailableLocalAgentTargets(profiles)}`,
     );
   }
+  assertLocalAgentProviderAvailable(target.provider);
 
+  const promptFile = writeAgentPromptFile(parsed.prompt);
   const record = store.create({
     workspaceId: process.env.DEVSPACE_WORKSPACE_ID,
     workspaceRoot,
