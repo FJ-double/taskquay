@@ -1,6 +1,7 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
+import type { EffortLevel } from "@anthropic-ai/claude-agent-sdk";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import {
@@ -63,6 +64,7 @@ class ClaudeLocalAgentAdapter implements LocalAgentAdapter {
       options: {
         cwd: input.workspace,
         model: input.model,
+        ...(input.thinking ? { thinking: { type: "adaptive" } as const, effort: input.thinking as EffortLevel } : {}),
         resume: input.providerSessionId,
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
@@ -203,6 +205,10 @@ class AcpLocalAgentAdapter implements LocalAgentAdapter {
           const session = await context.buildSession(input.workspace).start();
           providerSessionId = session.sessionId;
           try {
+            if (input.thinking) {
+              const config = resolveAcpThinkingConfigUpdate(session, input.thinking, this.provider);
+              await context.request(methods.agent.session.setConfigOption, config);
+            }
             const prompt = session.prompt(input.prompt);
             const textParts: string[] = [];
             for (;;) {
@@ -235,6 +241,54 @@ class AcpLocalAgentAdapter implements LocalAgentAdapter {
   }
 }
 
+export function resolveAcpThinkingConfigUpdate(
+  session: unknown,
+  thinking: string,
+  provider: string,
+): { sessionId: string; configId: string; value: string } {
+  const record = asRecord(session);
+  if (!record) throw new Error(`${provider} ACP session did not return session metadata.`);
+  const sessionId = typeof record?.sessionId === "string" ? record.sessionId : undefined;
+  if (!sessionId) throw new Error(`${provider} ACP session did not return a session id.`);
+
+  const response = asRecord(record.newSessionResponse);
+  const configOptions = response ? readArray(response, "configOptions") ?? [] : [];
+  const thinkingConfig = configOptions
+    .map(asRecord)
+    .find((option) => option?.type === "select" && option.category === "thought_level");
+  if (!thinkingConfig) {
+    throw new Error(`${provider} ACP server does not expose a thinking option.`);
+  }
+
+  const configId = directString(thinkingConfig.id);
+  if (!configId) throw new Error(`${provider} ACP thinking option is missing an id.`);
+
+  const available = flattenAcpSelectValues(thinkingConfig);
+  if (!available.includes(thinking)) {
+    const suffix = available.length > 0 ? ` Available values: ${available.join(", ")}.` : "";
+    throw new Error(`${provider} ACP thinking option does not support '${thinking}'.${suffix}`);
+  }
+
+  return { sessionId, configId, value: thinking };
+}
+
+function flattenAcpSelectValues(option: Record<string, unknown>): string[] {
+  const values: string[] = [];
+  for (const item of readArray(option, "options") ?? []) {
+    const record = asRecord(item);
+    const value = directString(record?.value);
+    if (value) {
+      values.push(value);
+      continue;
+    }
+    for (const nested of readArray(record, "options") ?? []) {
+      const nestedValue = directString(asRecord(nested)?.value);
+      if (nestedValue) values.push(nestedValue);
+    }
+  }
+  return values;
+}
+
 function selectAcpAllowPermissionOption(options: Array<{ optionId: string; kind: string }>): { optionId: string } | undefined {
   return (
     options.find((option) => option.kind === "allow_once") ??
@@ -248,6 +302,7 @@ class PiRpcLocalAgentAdapter implements LocalAgentAdapter {
   async run(input: LocalAgentRunInput): Promise<LocalAgentRunResult> {
     const args = ["--mode", "rpc"];
     if (input.model) args.push("--model", input.model);
+    if (input.thinking) args.push("--thinking", input.thinking);
     if (input.providerSessionId) args.push("--session", input.providerSessionId);
     const child = spawn(process.env.PI_COMMAND ?? "pi", args, {
       cwd: input.workspace,
@@ -435,6 +490,7 @@ async function promptOpencodeSession(
     prompt: { parts: [{ type: "text", text: input.prompt }] },
     parts: [{ type: "text", text: input.prompt }],
     ...(input.model ? { model: parseOpencodeModel(input.model) } : {}),
+    ...(input.thinking ? { variant: input.thinking } : {}),
   };
   return session.prompt(promptInput, { throwOnError: true });
 }

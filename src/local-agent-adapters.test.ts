@@ -8,6 +8,7 @@ import {
   extractPiProviderError,
   extractPiStreamingText,
   piCommandEnvironment,
+  resolveAcpThinkingConfigUpdate,
 } from "./local-agent-adapters.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
@@ -26,6 +27,69 @@ for (const provider of providers) {
   assert.equal(adapter.provider, provider);
   assert.equal(typeof adapter.run, "function");
 }
+
+assert.deepEqual(
+  resolveAcpThinkingConfigUpdate({
+    sessionId: "session_1",
+    newSessionResponse: {
+      configOptions: [
+        {
+          type: "select",
+          id: "effort",
+          category: "thought_level",
+          options: [
+            { value: "low", name: "Low" },
+            { value: "high", name: "High" },
+          ],
+        },
+      ],
+    },
+  }, "high", "cursor"),
+  { sessionId: "session_1", configId: "effort", value: "high" },
+);
+
+assert.deepEqual(
+  resolveAcpThinkingConfigUpdate({
+    sessionId: "session_2",
+    newSessionResponse: {
+      configOptions: [
+        {
+          type: "select",
+          id: "thoughts",
+          category: "thought_level",
+          options: [
+            {
+              group: "reasoning",
+              name: "Reasoning",
+              options: [
+                { value: "medium", name: "Medium" },
+                { value: "xhigh", name: "X High" },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  }, "xhigh", "copilot"),
+  { sessionId: "session_2", configId: "thoughts", value: "xhigh" },
+);
+
+assert.throws(
+  () => resolveAcpThinkingConfigUpdate({
+    sessionId: "session_3",
+    newSessionResponse: {
+      configOptions: [
+        {
+          type: "select",
+          id: "thoughts",
+          category: "thought_level",
+          options: [{ value: "low", name: "Low" }],
+        },
+      ],
+    },
+  }, "max", "cursor"),
+  /Available values: low/,
+);
 
 {
   const env = claudeCommandEnvironment({
