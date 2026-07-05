@@ -152,6 +152,7 @@ function migrateLocalAgentSessions(sqlite: Database.Database): void {
       profile_name text not null,
       provider text not null,
       model text,
+      thinking text,
       provider_session_id text,
       status text not null,
       latest_response text,
@@ -169,11 +170,13 @@ function migrateLocalAgentSessions(sqlite: Database.Database): void {
     create index if not exists local_agent_sessions_provider_session_id_idx
       on local_agent_sessions(provider_session_id);
   `);
+
+  addColumnIfMissing(sqlite, "local_agent_sessions", "thinking", "text");
 }
 
 function addColumnIfMissing(
   sqlite: Database.Database,
-  table: "workspace_sessions",
+  table: "workspace_sessions" | "local_agent_sessions",
   column: string,
   definition: string,
 ): void {

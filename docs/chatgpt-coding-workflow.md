@@ -94,7 +94,7 @@ It also keeps compatibility with:
 When Subagents are enabled, DevSpace discovers agent profiles
 from `~/.devspace/agents/*.md` and project `.devspace/agents/*.md`.
 `open_workspace` exposes a compact catalog with profile names, descriptions,
-providers, and optional models so the model can choose a configured agent
+providers, and optional models/thinking levels so the model can choose a configured agent
 without seeing provider-specific launch details.
 
 Example profiles are packaged under `examples/agents/` for users who want

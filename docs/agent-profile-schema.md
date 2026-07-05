@@ -20,6 +20,7 @@ name: reviewer
 description: Read-only reviewer for bugs, security risks, and missing tests.
 provider: codex
 model: gpt-5.4
+thinking: high
 disabled: false
 ---
 
@@ -86,6 +87,26 @@ model: gpt-5.4
 model: sonnet
 ```
 
+### `thinking`
+
+Optional provider reasoning effort, thinking level, or model variant. If omitted,
+DevSpace lets the provider default apply. Values are provider-specific
+passthrough strings; DevSpace does not translate names between harnesses.
+
+```yaml
+thinking: low
+thinking: high
+thinking: xhigh
+```
+
+DevSpace passes this through to providers that expose a matching control:
+
+- `claude`: SDK effort with adaptive thinking.
+- `codex`: SDK model reasoning effort.
+- `pi`: `--thinking`.
+- `opencode`: model variant.
+- `cursor` and `copilot`: ACP thought-level config when supported.
+
 ### `disabled`
 
 Optional boolean. Disabled profiles are not exposed.
@@ -123,7 +144,8 @@ devspace agents show <id>
   "name": "reviewer",
   "description": "Read-only reviewer for bugs, security risks, and missing tests.",
   "provider": "codex",
-  "model": "gpt-5.4"
+  "model": "gpt-5.4",
+  "thinking": "high"
 }
 ```
 

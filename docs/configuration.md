@@ -115,7 +115,7 @@ from:
 - project `.devspace/agents/*.md`
 
 `open_workspace` returns a compact catalog containing profile names,
-descriptions, providers, and optional models so the host model can choose an
+descriptions, providers, and optional models/thinking levels so the host model can choose an
 agent without reading provider-specific launch details. `devspace agents ls`
 lists existing subagent sessions for the current workspace, scoped by the
 workspace environment injected into shell commands. The `subagent-delegation`

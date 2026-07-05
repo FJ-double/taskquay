@@ -20,6 +20,7 @@ export interface LocalAgentProfile {
   description: string;
   provider: LocalAgentProvider;
   model?: string;
+  thinking?: string;
   filePath: string;
   body: string;
   disabled: boolean;
@@ -30,6 +31,7 @@ export interface LocalAgentProfileSummary {
   description: string;
   provider: LocalAgentProvider;
   model?: string;
+  thinking?: string;
 }
 
 interface ParsedFrontmatter {
@@ -71,6 +73,7 @@ export function summarizeLocalAgentProfile(
     description: profile.description,
     provider: profile.provider,
     model: profile.model,
+    thinking: profile.thinking,
   };
 }
 
@@ -154,6 +157,7 @@ function profileFromFrontmatter(
     description,
     provider,
     model: readString(frontmatter, "model"),
+    thinking: readString(frontmatter, "thinking"),
     filePath,
     body,
     disabled: frontmatter.disabled === true,

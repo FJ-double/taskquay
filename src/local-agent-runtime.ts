@@ -1,6 +1,7 @@
 import type {
   Codex,
   CodexOptions,
+  ModelReasoningEffort,
   RunResult,
   SandboxMode,
   ThreadOptions,
@@ -14,6 +15,7 @@ export interface LocalAgentRunInput {
   providerSessionId?: string;
   writeMode?: LocalAgentWriteMode;
   model?: string;
+  thinking?: string;
 }
 
 export interface LocalAgentRunResult {
@@ -58,6 +60,7 @@ function threadOptionsFor(input: LocalAgentRunInput): ThreadOptions {
     sandboxMode: sandboxModeFor(input.writeMode),
     approvalPolicy: "never",
     model: input.model,
+    modelReasoningEffort: input.thinking as ModelReasoningEffort | undefined,
   };
 }
 
