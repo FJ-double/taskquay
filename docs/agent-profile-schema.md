@@ -101,11 +101,10 @@ thinking: xhigh
 DevSpace passes this through to providers that expose a matching control:
 
 - `claude`: SDK effort with adaptive thinking.
+- `codex`: SDK model reasoning effort.
 - `pi`: `--thinking`.
 - `opencode`: model variant.
 - `cursor` and `copilot`: ACP thought-level config when supported.
-- `codex`: currently depends on the Codex integration exposing an effort
-  control; otherwise the provider default applies.
 
 ### `disabled`
 
