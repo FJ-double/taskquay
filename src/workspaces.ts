@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { Stats } from "node:fs";
 import type { WorkspaceMode, WorkspaceStore } from "./workspace-store.js";
 import { mkdir, opendir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -65,6 +66,12 @@ export interface OpenWorkspaceInput {
   mode?: WorkspaceMode;
   baseRef?: string;
 }
+
+type PathStats = Stats;
+type DirectoryOps = {
+  stat: (path: string) => Promise<PathStats>;
+  mkdir: (path: string, options: { recursive: true }) => Promise<unknown>;
+};
 
 export class WorkspaceRegistry {
   private readonly workspaces = new Map<string, Workspace>();
@@ -168,9 +175,7 @@ export class WorkspaceRegistry {
 
   private async openCheckoutWorkspace(path: string): Promise<WorkspaceContext> {
     const root = assertAllowedPath(path, this.config.allowedRoots);
-    await mkdir(root, { recursive: true });
-
-    const rootStats = await stat(root);
+    const rootStats = await ensureCheckoutWorkspaceRoot(root);
     if (!rootStats.isDirectory()) {
       throw new Error(`Workspace root must be a directory: ${path}`);
     }
@@ -298,6 +303,22 @@ export class WorkspaceRegistry {
   }
 }
 
+export async function ensureCheckoutWorkspaceRoot(
+  path: string,
+  ops: DirectoryOps = { stat, mkdir },
+): Promise<PathStats> {
+  try {
+    return await ops.stat(path);
+  } catch (error) {
+    if (!isErrnoException(error) || error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  await ops.mkdir(path, { recursive: true });
+  return await ops.stat(path);
+}
+
 const CONTEXT_FILE_NAMES = new Set(["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]);
 const SKIPPED_CONTEXT_DIRS = new Set([
   ".git",
@@ -378,4 +399,8 @@ async function walkWorkspace(
 
     await visit(path, entry);
   }
+}
+
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
