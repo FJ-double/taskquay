@@ -15,7 +15,13 @@ const root = await mkdtemp(join(tmpdir(), "devspace-workspace-test-"));
 try {
   const agentDir = join(root, ".pi", "agent");
   await mkdir(agentDir, { recursive: true });
-  await writeFile(join(agentDir, "AGENTS.md"), "global instructions\n");
+  await mkdir(join(agentDir, "skills"), { recursive: true });
+  await writeFile(join(agentDir, "skills", "AGENTS.md"), "global instructions\n");
+  if (platform() === "win32") {
+    await writeFile(join(agentDir, "AGENTS.md"), "global instructions\n");
+  } else {
+    await symlink("skills/AGENTS.md", join(agentDir, "AGENTS.md"));
+  }
   await writeFile(join(root, "AGENTS.md"), "root instructions\n");
   await mkdir(join(root, ".devspace", "agents"), { recursive: true });
   await writeFile(
