@@ -248,12 +248,19 @@ export class WorkspaceRegistry {
 
   private async loadInitialAgentsFiles(root: string): Promise<LoadedAgentsFile[]> {
     const agentDir = resolve(this.config.agentDir);
+    const resolvedRoot = (await tryRealpath(root)) ?? root;
+    const resolvedAgentDir = (await tryRealpath(agentDir)) ?? agentDir;
     const loadedFiles: LoadedAgentsFile[] = [];
 
     for (const file of loadProjectContextFiles({ cwd: root, agentDir })) {
       const path = resolve(file.path);
       if (!isInitialAgentsFilePath(path, root, agentDir)) continue;
-      const content = await readResolvedContextFile(path, file.content, root, agentDir);
+      const content = await readResolvedContextFile(
+        path,
+        file.content,
+        resolvedRoot,
+        resolvedAgentDir,
+      );
       if (content === undefined) continue;
 
       loadedFiles.push({
