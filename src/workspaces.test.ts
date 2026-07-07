@@ -179,6 +179,12 @@ try {
       mode: "worktree",
     });
     assert.equal(aliasWorkspace.workspace.sourceRoot, join(aliasRoot, "git-project"));
+
+    const aliasCheckout = await new WorkspaceRegistry(aliasConfig).openWorkspace(aliasRoot);
+    assert.deepEqual(
+      aliasCheckout.agentsFiles.map((file) => file.content),
+      ["global instructions\n", "root instructions\n"],
+    );
   }
 } finally {
   await rm(root, { recursive: true, force: true });
