@@ -90,8 +90,9 @@ async function boot(): Promise<void> {
       return;
     }
 
-    card = { ...structured, tool };
-    expanded = false;
+    const nextCard = { ...structured, tool };
+    card = nextCard;
+    expanded = isReviewTool(tool) && isExpandableCard(nextCard);
     reviewFilesExpanded = false;
     errorMessage = null;
     render();
@@ -220,7 +221,7 @@ function renderEmpty(message: string, tone: "muted" | "error" = "muted"): void {
 }
 
 async function renderPayloadIfNeeded(): Promise<void> {
-  if (!card || !currentPayloadContainer || (!expanded && !isReviewTool(card.tool))) return;
+  if (!card || !currentPayloadContainer || !expanded) return;
 
   const target = currentPayloadContainer;
 
@@ -391,42 +392,61 @@ function renderReviewCard(card: ToolResultCard, display: ToolDisplay): void {
   unmountPayload();
 
   const files = card.files ?? [];
-  const summary = card.summary ?? {};
   const visibleFiles = reviewFilesExpanded ? files : files.slice(0, 3);
   const hiddenCount = Math.max(0, files.length - visibleFiles.length);
+  const expandable = isExpandableCard(card);
   const main = element("main", { className: "shell" });
   const section = element("section", { className: "tool-card review" });
-  const header = element("div", { className: "review-header" });
+  const header = element("button", {
+    className: "tool-header review-header",
+    type: "button",
+    ariaExpanded: String(expanded),
+    disabled: !expandable,
+  });
+
+  if (expandable) {
+    header.addEventListener("click", () => {
+      expanded = !expanded;
+      render();
+    });
+  }
+
   const icon = element("span", { className: "tool-icon", ariaHidden: "true" });
   icon.append(renderIcon(display.icon));
-  const titleGroup = element("div", { className: "review-title-group" });
+  const titleGroup = element("span", { className: "tool-main review-title-group" });
 
   titleGroup.append(
     element("span", { className: "tool-title", text: display.title }),
     element("span", { className: "tool-label", text: display.label, title: display.label }),
   );
-  header.append(icon, titleGroup, renderSummaryBadge(card));
+  header.append(
+    icon,
+    titleGroup,
+    renderSummaryBadge(card),
+    renderChevron(expanded, expandable),
+  );
 
-  const body = element("div", { className: "review-summary" });
-  currentPayloadContainer = body;
+  section.append(header);
+  if (expanded) {
+    const body = element("div", { className: "review-summary" });
+    const payload = element("div", { className: "review-payload" });
+    currentPayloadContainer = payload;
+    body.append(payload);
 
-  const actions = element("div", { className: "review-actions" });
-  if (hiddenCount > 0) {
-    const showMore = element("button", {
-      className: "review-action",
-      type: "button",
-      text: `Show ${hiddenCount} more ${hiddenCount === 1 ? "file" : "files"}`,
-    });
-    showMore.addEventListener("click", () => {
-      reviewFilesExpanded = true;
-      render();
-    });
-    actions.append(showMore);
-  }
+    if (hiddenCount > 0) {
+      const showMore = element("button", {
+        className: "review-more",
+        type: "button",
+        text: `Show ${hiddenCount} more ${hiddenCount === 1 ? "file" : "files"}`,
+      });
+      showMore.addEventListener("click", () => {
+        reviewFilesExpanded = true;
+        render();
+      });
+      body.append(showMore);
+    }
 
-  section.append(header, body);
-  if (actions.childElementCount > 0) {
-    section.append(actions);
+    section.append(body);
   }
 
   main.append(section);
