@@ -362,6 +362,11 @@ body {
     border-radius: 10px;
   }
 
+  .chevron {
+    width: 18px;
+    height: 18px;
+  }
+
   .review-header {
     grid-template-columns: 42px minmax(0, 1fr) auto 18px;
   }
