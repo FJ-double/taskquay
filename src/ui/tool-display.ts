@@ -147,7 +147,7 @@ export function getToolHeaderSummary(card: ToolResultCard): ToolHeaderSummary {
 
 function patchIcon(operation: ReturnType<typeof getPatchDisplayParts>["iconOperation"]): ToolIcon {
   if (operation === "add") return toolIcons.writeFile;
-  if (operation === "delete") return toolIcons.readFile;
+  if (operation === "delete") return toolIcons.deleteFile;
   if (operation === "move") return toolIcons.files;
   return toolIcons.editFile;
 }

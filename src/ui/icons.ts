@@ -1,6 +1,7 @@
 import {
   ChevronDown,
   FileDiff,
+  FileMinus,
   FilePenLine,
   FilePlus,
   FileText,
@@ -17,6 +18,7 @@ import {
 
 export const toolIcons = {
   chevronDown: ChevronDown,
+  deleteFile: FileMinus,
   diff: FileDiff,
   editFile: FilePenLine,
   files: Files,

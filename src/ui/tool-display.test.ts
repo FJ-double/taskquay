@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { toolIcons } from "./icons.js";
 import { getToolDisplay, getToolHeaderSummary } from "./tool-display.js";
 
 assert.deepEqual(
@@ -44,6 +45,14 @@ assert.deepEqual(
 assert.deepEqual(
   getToolHeaderSummary({ tool: "glob", summary: { lines: 1 } }),
   { kind: "empty" },
+);
+
+assert.equal(
+  getToolDisplay({
+    tool: "apply_patch",
+    files: [{ path: "src/removed.ts", operation: "delete" }],
+  }).icon,
+  toolIcons.deleteFile,
 );
 
 assert.deepEqual(
