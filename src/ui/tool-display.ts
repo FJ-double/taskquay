@@ -2,7 +2,6 @@ import {
   isEditTool,
   isPatchTool,
   isReviewTool,
-  isSearchTool,
   isShellTool,
   isWriteTool,
   summaryNumber,
@@ -70,10 +69,9 @@ export function getToolDisplay(card: ToolResultCard): ToolDisplay {
         tone: "search",
       };
     case "glob": {
-      const files = summaryNumber(card.summary, "lines");
       return {
         icon: toolIcons.files,
-        title: files === undefined ? "Found files" : `Found ${files} ${fileNoun(files)}`,
+        title: "Found files",
         label: searchLabel(card),
         tone: "search",
       };
@@ -139,7 +137,7 @@ export function getToolHeaderSummary(card: ToolResultCard): ToolHeaderSummary {
     return parts.length > 0 ? { kind: "text", text: parts.join(" · ") } : { kind: "empty" };
   }
 
-  if (isSearchTool(card.tool) || card.tool === "read" || card.tool === "ls") {
+  if (card.tool === "grep" || card.tool === "read" || card.tool === "ls") {
     const lines = countLabel(summaryNumber(summary, "lines"), "line");
     return lines ? { kind: "text", text: lines } : { kind: "empty" };
   }
@@ -200,6 +198,3 @@ function durationLabel(durationMs: number | undefined): string | undefined {
   return `${(durationMs / 1_000).toFixed(durationMs < 10_000 ? 1 : 0)}s`;
 }
 
-function fileNoun(count: number): "file" | "files" {
-  return count === 1 ? "file" : "files";
-}

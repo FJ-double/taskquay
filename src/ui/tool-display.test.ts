@@ -37,6 +37,16 @@ assert.equal(
 );
 
 assert.deepEqual(
+  pickDisplay(getToolDisplay({ tool: "glob", summary: { lines: 1, pattern: "**/*.ts" } })),
+  { title: "Found files", tone: "search" },
+);
+
+assert.deepEqual(
+  getToolHeaderSummary({ tool: "glob", summary: { lines: 1 } }),
+  { kind: "empty" },
+);
+
+assert.deepEqual(
   getToolHeaderSummary({ tool: "show_changes", summary: { additions: 14, removals: 1 } }),
   { kind: "diff", additions: 14, removals: 1 },
 );
