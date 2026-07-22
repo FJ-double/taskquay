@@ -39,6 +39,38 @@ npx @waishnav/devspace config set publicBaseUrl https://devspace.example.com
 | `DEVSPACE_WORKTREE_ROOT` | Directory for managed Git worktrees. Defaults to `~/.devspace/worktrees`. |
 | `DEVSPACE_STATE_DIR` | Directory for SQLite state. Defaults to `~/.local/share/devspace`. |
 
+## Native Artifact Download
+
+Native-file download is disabled by default. Enable it when ChatGPT needs to hand
+an attached or generated file into an already-open workspace:
+
+```bash
+DEVSPACE_ARTIFACTS=1 npx @waishnav/devspace serve
+```
+
+This feature currently supports Linux, macOS, FreeBSD, OpenBSD, and NetBSD. It
+is not registered on Windows because the secure publication path depends on
+descriptor-anchored directory operations.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DEVSPACE_ARTIFACTS` | `0` | Expose `download_artifact` for trusted native files. |
+| `DEVSPACE_ARTIFACT_MAX_FILE_BYTES` | `104857600` | Maximum streamed size of one file (100 MiB). |
+
+The same settings may be persisted in `~/.devspace/config.json` as
+`artifactsEnabled` and `artifactMaxFileBytes`.
+
+`download_artifact` accepts the native file object supplied by the MCP connector,
+a `workspaceId` returned by `open_workspace`, and a relative workspace `path`.
+DevSpace safely creates missing parent directories, refuses to overwrite an
+existing destination, and returns only the normalized workspace-relative path.
+It does not accept conflict modes, expected hashes, arbitrary URL strings, local
+paths, embedded credentials, or extra object fields.
+
+There is no artifact root, total quota, TTL, pinning, persistent database record,
+or background artifact cleanup service. See [Native File Download](artifact-exchange.md)
+for the supported connector shape and security boundaries.
+
 ## OAuth
 
 DevSpace uses a single-user OAuth approval flow.
@@ -158,6 +190,7 @@ DEVSPACE_OAUTH_OWNER_TOKEN="$(openssl rand -base64 32)" \
 DEVSPACE_ALLOWED_ROOTS="$HOME/personal,$HOME/work" \
 DEVSPACE_PUBLIC_BASE_URL="https://devspace.example.com" \
 DEVSPACE_WORKTREE_ROOT="$HOME/.devspace/worktrees" \
+DEVSPACE_ARTIFACTS="1" \
 DEVSPACE_TOOL_MODE="minimal" \
 DEVSPACE_WIDGETS="full" \
 npx @waishnav/devspace serve

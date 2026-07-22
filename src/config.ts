@@ -9,6 +9,7 @@ export type ToolMode = "minimal" | "full" | "codex";
 export type WidgetMode = "off" | "changes" | "full";
 const DEFAULT_OAUTH_ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 const DEFAULT_OAUTH_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
+const DEFAULT_ARTIFACT_MAX_FILE_BYTES = 100 * 1024 * 1024;
 
 export interface ServerConfig {
   host: string;
@@ -21,6 +22,8 @@ export interface ServerConfig {
   widgets: WidgetMode;
   stateDir: string;
   worktreeRoot: string;
+  artifactsEnabled: boolean;
+  artifactMaxFileBytes: number;
   skillsEnabled: boolean;
   skillPaths: string[];
   devspaceSkillsDir: string;
@@ -124,11 +127,16 @@ function parseStringList(value: string | undefined, fallback: string[]): string[
   return entries && entries.length > 0 ? entries : fallback;
 }
 
-function parsePositiveInteger(value: string | undefined, fallback: number, name: string): number {
+function parsePositiveInteger(
+  value: string | undefined,
+  fallback: number,
+  name: string,
+  max = Number.MAX_SAFE_INTEGER,
+): number {
   if (!value) return fallback;
 
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1) {
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > max) {
     throw new Error(`Invalid ${name}: ${value}`);
   }
 
@@ -226,6 +234,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     widgets: parseWidgetMode(env.DEVSPACE_WIDGETS),
     stateDir: resolve(expandHomePath(env.DEVSPACE_STATE_DIR ?? files.config.stateDir ?? defaultStateDir())),
     worktreeRoot: resolve(expandHomePath(env.DEVSPACE_WORKTREE_ROOT ?? files.config.worktreeRoot ?? defaultWorktreeRoot())),
+    artifactsEnabled:
+      env.DEVSPACE_ARTIFACTS === undefined
+        ? files.config.artifactsEnabled === true
+        : parseBoolean(env.DEVSPACE_ARTIFACTS),
+    artifactMaxFileBytes: parsePositiveInteger(
+      env.DEVSPACE_ARTIFACT_MAX_FILE_BYTES ?? numberConfigValue(files.config.artifactMaxFileBytes),
+      DEFAULT_ARTIFACT_MAX_FILE_BYTES,
+      "DEVSPACE_ARTIFACT_MAX_FILE_BYTES",
+    ),
     skillsEnabled: env.DEVSPACE_SKILLS === undefined ? true : parseBoolean(env.DEVSPACE_SKILLS),
     skillPaths: parsePathList(env.DEVSPACE_SKILL_PATHS),
     devspaceSkillsDir: devspaceSkillsDir(env),
@@ -237,6 +254,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     agentDir: resolve(expandHomePath(env.DEVSPACE_AGENT_DIR ?? files.config.agentDir ?? defaultAgentDir())),
     logging: parseLoggingConfig(env),
   };
+}
+
+function numberConfigValue(value: number | undefined): string | undefined {
+  return value === undefined ? undefined : String(value);
 }
 
 function parsePublicBaseUrl(value: string): string {
