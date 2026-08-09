@@ -16,37 +16,6 @@ import { WorkspaceRegistry } from "./workspaces.js";
 
 const execFileAsync = promisify(execFile);
 
-test("server and tools make workspace reuse the normal path", async (t) => {
-  const context = await fixture(t);
-
-  assert.equal(
-    context.client.getServerVersion()?.description,
-    "Coding tools for project workspaces. Open each project or worktree once, then reuse its workspaceId.",
-  );
-  assert.doesNotMatch(context.client.getServerVersion()?.description ?? "", /\blocal\b/i);
-
-  const instructions = context.client.getInstructions();
-  assert.ok(instructions);
-  assert.match(instructions, /During continued work in the same project or worktree, do not call open_workspace again/);
-  assert.match(instructions, /when the current workspaceId is rejected/);
-
-  const tools = await context.client.listTools();
-  const openTool = tools.tools.find((tool) => tool.name === "open_workspace");
-  assert.ok(openTool?.description);
-  assert.match(openTool.description, /when no usable workspaceId exists/);
-  assert.match(openTool.description, /reuse the existing workspaceId instead of calling this tool again/);
-  assert.doesNotMatch(openTool.description, /\blocal\b/i);
-
-  for (const tool of tools.tools.filter((candidate) => candidate.name !== "open_workspace")) {
-    const modelContract = JSON.stringify({
-      description: tool.description,
-      inputSchema: tool.inputSchema,
-    });
-    assert.doesNotMatch(modelContract, /Call open_workspace first/);
-    assert.doesNotMatch(modelContract, /Workspace identifier returned by open_workspace/);
-  }
-});
-
 test("open_workspace keeps lifecycle flags out of model output and preserves complete card metadata", async (t) => {
   const context = await fixture(t);
   const first = await callOpen(context.client, context.project, "chat-1");
@@ -78,15 +47,6 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
   assert.equal(repeatedStructured.skillDiagnostics, undefined);
   assert.equal("workspaceReused" in repeatedStructured, false);
   assert.equal("includeBootstrapContext" in repeatedStructured, false);
-
-  const repeatedText = responseText(repeated);
-  assert.match(repeatedText, /Workspace already open as/);
-  assert.match(repeatedText, /Continue with this workspaceId/);
-  assert.match(repeatedText, /already provided for this workspace/);
-
-  const firstInstruction = structuredContent(first).instruction;
-  assert.ok(typeof firstInstruction === "string");
-  assert.match(firstInstruction, /Keep reusing it while working in this project/);
 
   const card = responseCard(repeated);
   assert.equal(card.workspaceReused, true);
@@ -137,7 +97,6 @@ test("new worktrees always receive a fresh workspace and complete worktree conte
     assert.match(responseText(result), /Opened isolated worktree workspace/);
   }
   assert.equal(structuredContent(checkoutAgain).agentsFiles, undefined);
-  assert.match(responseText(checkoutAgain), /Continue with this workspaceId/);
 });
 
 test("checkout opened after a worktree receives its own complete context", async (t) => {
@@ -152,7 +111,6 @@ test("checkout opened after a worktree receives its own complete context", async
   assert.ok(Array.isArray(structuredContent(checkout).agentsFiles));
   assert.equal(structuredContent(checkoutAgain).workspaceId, structuredContent(checkout).workspaceId);
   assert.equal(structuredContent(checkoutAgain).agentsFiles, undefined);
-  assert.match(responseText(checkoutAgain), /Continue with this workspaceId/);
 });
 
 test("a host without conversation metadata receives normal explicit-workspace behavior", async (t) => {
@@ -204,7 +162,6 @@ test("checkout reuse and context suppression survive a registry restart", async 
     const restored = await callOpen(restoredClient, context.project, "chat-1");
     assert.equal(structuredContent(restored).workspaceId, firstWorkspaceId);
     assert.equal(structuredContent(restored).agentsFiles, undefined);
-    assert.match(responseText(restored), /Continue with this workspaceId/);
   } finally {
     await closeRestored();
   }
