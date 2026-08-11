@@ -196,6 +196,18 @@ export class LocalAgentStore {
     return updated;
   }
 
+  reconcileActiveRuns(message = "DevSpace restarted while this agent turn was running."): number {
+    const now = new Date().toISOString();
+    const result = this.database.sqlite
+      .prepare(
+        `update local_agent_sessions
+         set status = 'error', error = ?, updated_at = ?
+         where status in ('starting', 'running')`,
+      )
+      .run(message, now);
+    return Number(result.changes);
+  }
+
   close(): void {
     this.database.close();
   }

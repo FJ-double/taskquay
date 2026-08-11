@@ -1,0 +1,280 @@
+import type { ServerConfig } from "./config.js";
+import {
+  loadLocalAgentProfiles,
+  type LocalAgentProfile,
+  type LocalAgentProvider,
+} from "./local-agent-profiles.js";
+import {
+  resolveLocalAgentTarget,
+} from "./local-agent-targets.js";
+import {
+  createLocalAgentStore,
+  type LocalAgentListScope,
+  type LocalAgentRecord,
+  type LocalAgentStore,
+} from "./local-agent-store.js";
+import {
+  type LocalAgentDriver,
+  type LocalAgentRunInput,
+  type LocalAgentRuntimeContext,
+  type LocalAgentWriteMode,
+} from "./local-agent-runtime.js";
+import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
+
+export interface StartLocalAgentInput {
+  target: string;
+  prompt: string;
+  workspaceRoot: string;
+  workspaceId?: string;
+  model?: string;
+  thinking?: string;
+  writeMode?: LocalAgentWriteMode;
+}
+
+export interface RunOverrides {
+  model?: string;
+  thinking?: string;
+  writeMode?: LocalAgentWriteMode;
+}
+
+export interface LocalAgentManagerLogger {
+  (level: "info" | "warn" | "error", event: string, fields: Record<string, unknown>): void;
+}
+
+export interface LocalAgentManagerOptions {
+  store?: LocalAgentStore;
+  drivers: readonly LocalAgentDriver[];
+  pool?: LocalAgentRuntimePool;
+  loadProfiles?: (workspaceRoot: string) => Promise<LocalAgentProfile[]>;
+  agentDir?: string;
+  logger?: LocalAgentManagerLogger;
+}
+
+/**
+ * Owns one durable DevSpace agent's turn lifecycle. Provider runtimes remain
+ * below this seam; this class only translates records into provider inputs and
+ * persists the result.
+ */
+export class LocalAgentManager {
+  private readonly store: LocalAgentStore;
+  private readonly drivers = new Map<LocalAgentProvider, LocalAgentDriver>();
+  private readonly pool: LocalAgentRuntimePool;
+  private readonly loadProfiles: (workspaceRoot: string) => Promise<LocalAgentProfile[]>;
+  private readonly agentDir?: string;
+  private readonly logger?: LocalAgentManagerLogger;
+  private readonly activeTurns = new Map<string, Promise<void>>();
+  private accepting = true;
+  private closePromise?: Promise<void>;
+
+  constructor(config: ServerConfig, options: LocalAgentManagerOptions) {
+    this.store = options.store ?? createLocalAgentStore(config);
+    for (const driver of options.drivers) this.drivers.set(driver.provider, driver);
+    this.pool = options.pool ?? new LocalAgentRuntimePool({ logger: options.logger });
+    this.loadProfiles = options.loadProfiles ?? ((workspaceRoot) => loadLocalAgentProfiles(config, workspaceRoot));
+    this.agentDir = options.agentDir ?? config.agentDir;
+    this.logger = options.logger;
+    this.store.reconcileActiveRuns();
+  }
+
+  async start(input: StartLocalAgentInput): Promise<LocalAgentRecord> {
+    this.assertAccepting();
+    const profiles = await this.loadProfiles(input.workspaceRoot);
+    const target = resolveLocalAgentTarget(input.target, profiles, input.model, input.thinking);
+    if (!target) {
+      throw new Error(`Unknown subagent profile or provider: ${input.target}`);
+    }
+    this.assertDriver(target.provider);
+
+    const record = this.store.create({
+      workspaceId: input.workspaceId,
+      workspaceRoot: input.workspaceRoot,
+      profileName: target.name,
+      provider: target.provider,
+      model: target.model,
+      thinking: target.thinking,
+    });
+    return this.begin(record, input.prompt, {
+      model: target.model,
+      thinking: target.thinking,
+      writeMode: input.writeMode,
+    });
+  }
+
+  async continue(
+    agentId: string,
+    prompt: string,
+    overrides: RunOverrides = {},
+  ): Promise<LocalAgentRecord> {
+    this.assertAccepting();
+    const record = this.store.get(agentId);
+    if (!record) throw new Error(`Unknown subagent id: ${agentId}`);
+    this.assertDriver(record.provider);
+    return this.begin(record, prompt, overrides);
+  }
+
+  get(agentId: string): LocalAgentRecord | undefined {
+    return this.store.get(agentId);
+  }
+
+  list(scope: LocalAgentListScope = {}): LocalAgentRecord[] {
+    return this.store.list(scope);
+  }
+
+  async close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    this.accepting = false;
+    const turns = Array.from(this.activeTurns.values());
+    this.closePromise = (async () => {
+      const results = await Promise.allSettled([
+        this.pool.close(),
+        ...turns,
+      ]);
+      for (const result of results) {
+        if (result.status === "rejected") {
+          this.log("warn", "local_agent_close_failed", { error: errorMessage(result.reason) });
+        }
+      }
+      this.store.close();
+    })();
+    return this.closePromise;
+  }
+
+  get activeTurnCount(): number {
+    return this.activeTurns.size;
+  }
+
+  private begin(
+    record: LocalAgentRecord,
+    prompt: string,
+    overrides: RunOverrides,
+  ): LocalAgentRecord {
+    if (this.activeTurns.has(record.id)) {
+      throw new Error(`Agent ${record.id} already has a running turn.`);
+    }
+
+    const updated = this.store.update(record.id, {
+      status: "running",
+      model: overrides.model ?? record.model,
+      thinking: overrides.thinking ?? record.thinking,
+      latestResponse: undefined,
+      error: undefined,
+    });
+    const turn = this.runTurn(updated, prompt, overrides);
+    this.activeTurns.set(record.id, turn);
+    void turn.catch(() => undefined);
+    return updated;
+  }
+
+  private async runTurn(
+    record: LocalAgentRecord,
+    prompt: string,
+    overrides: RunOverrides,
+  ): Promise<void> {
+    const startedAt = Date.now();
+    this.log("info", "agent_run_started", {
+      provider: record.provider,
+      agentId: record.id,
+      providerSessionIdPrefix: record.providerSessionId?.slice(0, 8),
+    });
+    try {
+      const profiles = await this.loadProfiles(record.workspaceRoot);
+      const profile = profiles.find((candidate) => candidate.name === record.profileName);
+      const input = this.buildRunInput(record, profile, prompt, overrides);
+      const driver = this.assertDriver(record.provider);
+      const context: LocalAgentRuntimeContext = {
+        agentId: record.id,
+        provider: driver.provider,
+        workspace: record.workspaceRoot,
+        providerSessionId: record.providerSessionId,
+        writeMode: input.writeMode,
+        model: input.model,
+        thinking: input.thinking,
+        agentDir: this.agentDir,
+      };
+      const result = await this.pool.run(driver, context, input);
+      const current = this.store.get(record.id);
+      if (!current) return;
+      const updated = this.store.update(record.id, {
+        providerSessionId: result.providerSessionId ?? current.providerSessionId,
+        status: "idle",
+        latestResponse: result.finalResponse,
+        error: undefined,
+      });
+      this.log("info", "agent_run_completed", {
+        provider: updated.provider,
+        agentId: updated.id,
+        providerSessionIdPrefix: updated.providerSessionId?.slice(0, 8),
+        durationMs: Math.max(0, Date.now() - startedAt),
+      });
+    } catch (error) {
+      const current = this.store.get(record.id);
+      if (current) {
+        this.store.update(record.id, {
+          status: "error",
+          error: errorMessage(error),
+        });
+      }
+      this.log("error", "agent_run_failed", {
+        provider: record.provider,
+        agentId: record.id,
+        providerSessionIdPrefix: record.providerSessionId?.slice(0, 8),
+        durationMs: Math.max(0, Date.now() - startedAt),
+        error: errorMessage(error),
+      });
+      throw error;
+    } finally {
+      this.activeTurns.delete(record.id);
+    }
+  }
+
+  private buildRunInput(
+    record: LocalAgentRecord,
+    profile: LocalAgentProfile | undefined,
+    prompt: string,
+    overrides: RunOverrides,
+  ): LocalAgentRunInput {
+    const isRawProvider = record.profileName === record.provider;
+    if (!profile && !isRawProvider) {
+      throw new Error(`Subagent profile not found: ${record.profileName}`);
+    }
+    const body = profile?.body.trim();
+    const fullPrompt = body ? `${body}\n\nTask:\n${prompt}` : prompt;
+    return {
+      prompt: fullPrompt,
+      workspace: record.workspaceRoot,
+      providerSessionId: record.providerSessionId,
+      writeMode: overrides.writeMode ?? "allowed",
+      model: record.model ?? profile?.model,
+      thinking: record.thinking ?? profile?.thinking,
+    };
+  }
+
+  private assertDriver(provider: string): LocalAgentDriver {
+    const driver = this.drivers.get(provider as LocalAgentProvider);
+    if (!driver) throw new Error(`No local agent driver is configured for provider: ${provider}`);
+    return driver;
+  }
+
+  private assertAccepting(): void {
+    if (!this.accepting) throw new Error("Local agent manager is closed.");
+  }
+
+  private log(
+    level: "info" | "warn" | "error",
+    event: string,
+    fields: Record<string, unknown>,
+  ): void {
+    this.logger?.(level, event, fields);
+  }
+}
+
+export function createLocalAgentManager(
+  config: ServerConfig,
+  options: Omit<LocalAgentManagerOptions, "drivers"> & { drivers: readonly LocalAgentDriver[] },
+): LocalAgentManager {
+  return new LocalAgentManager(config, options);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
