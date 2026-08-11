@@ -37,6 +37,11 @@ profile is needed. Built-in providers are listed by `open_workspace`.
 running, `show` waits briefly. If there is still no final response, call `show`
 again later.
 
+The commands automatically start the internal `devspace-agentd` process when
+needed. `devspace serve` is not required for local-agent execution. The daemon
+owns shared agent sessions and provider runtimes for the configured DevSpace
+state directory.
+
 Do not run provider CLIs such as `codex`, `claude`, `opencode`, `pi`,
 `cursor-agent`, or `copilot` directly unless you are explicitly debugging
 DevSpace agent integration.

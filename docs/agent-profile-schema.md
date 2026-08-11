@@ -2,7 +2,8 @@
 
 DevSpace agent profiles are user-owned markdown files with YAML
 frontmatter. They describe roles such as reviewer, explorer, or implementer.
-DevSpace owns provider invocation.
+The internal on-demand `devspace-agentd` process owns provider invocation. The
+CLI and MCP server use it as clients when they need agent execution.
 
 Profiles are discovered from:
 
@@ -161,5 +162,6 @@ profile.
 - Inferring changed files, tests, or diffs from worker output.
 - Exposing raw provider transcripts by default.
 - Teaching the model provider-specific CLIs.
-- First-class MCP agent tools. Future tools should wrap the same provider
-  adapter registry used by `devspace agents`.
+- First-class MCP agent tools. Future tools should call the same local agent
+  daemon used by `devspace agents` rather than executing providers in the MCP
+  server process.
