@@ -1,14 +1,22 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
+import type {
+  ModelReasoningEffort,
+  SandboxMode,
+  ThreadOptions,
+} from "@openai/codex-sdk";
 import type { EffortLevel } from "@anthropic-ai/claude-agent-sdk";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import {
-  createCodexSdkLocalAgentRuntime,
   type LocalAgentRunInput,
   type LocalAgentRunResult,
+  type LocalAgentRuntime,
+  type LocalAgentRuntimeContext,
+  type LocalAgentDriver,
 } from "./local-agent-runtime.js";
+import { LOCAL_AGENT_PROVIDERS } from "./local-agent-profiles.js";
 
 export interface LocalAgentAdapter {
   readonly provider: LocalAgentProvider;
@@ -44,13 +52,68 @@ export function createLocalAgentAdapter(provider: LocalAgentProvider): LocalAgen
   }
 }
 
+export function createLocalAgentDrivers(): LocalAgentDriver[] {
+  return LOCAL_AGENT_PROVIDERS.map((provider) => new LegacyLocalAgentDriver(provider));
+}
+
+class LegacyLocalAgentDriver implements LocalAgentDriver {
+  readonly idleTimeoutMs = 60_000;
+
+  constructor(readonly provider: LocalAgentProvider) {}
+
+  runtimeKey(context: LocalAgentRuntimeContext): string {
+    return `legacy:${this.provider}:${context.agentId}`;
+  }
+
+  async createRuntime(_context: LocalAgentRuntimeContext): Promise<LocalAgentRuntime> {
+    const adapter = createLocalAgentAdapter(this.provider);
+    return {
+      provider: this.provider,
+      run: (input) => adapter.run(input),
+      releaseSession: async () => undefined,
+      close: async () => undefined,
+      isAlive: () => true,
+    };
+  }
+}
+
 class CodexLocalAgentAdapter implements LocalAgentAdapter {
   readonly provider = "codex" as const;
 
   async run(input: LocalAgentRunInput): Promise<LocalAgentRunResult> {
-    const runtime = await createCodexSdkLocalAgentRuntime();
-    return runtime.run(input);
+    const module = await import("@openai/codex-sdk");
+    const codex = new module.Codex();
+    const options = threadOptionsFor(input);
+    const thread = input.providerSessionId
+      ? codex.resumeThread(input.providerSessionId, options)
+      : codex.startThread(options);
+    const turn = await thread.run(input.prompt);
+    return {
+      provider: this.provider,
+      providerSessionId: thread.id,
+      finalResponse: turn.finalResponse,
+      items: turn.items,
+    };
   }
+}
+
+function sandboxModeFor(writeMode: LocalAgentRunInput["writeMode"]): SandboxMode {
+  switch (writeMode) {
+    case "allowed": return "workspace-write";
+    case "full_access": return "danger-full-access";
+    case "read_only":
+    case undefined: return "read-only";
+  }
+}
+
+function threadOptionsFor(input: LocalAgentRunInput): ThreadOptions {
+  return {
+    workingDirectory: input.workspace,
+    sandboxMode: sandboxModeFor(input.writeMode),
+    approvalPolicy: "never",
+    model: input.model,
+    modelReasoningEffort: input.thinking as ModelReasoningEffort | undefined,
+  };
 }
 
 class ClaudeLocalAgentAdapter implements LocalAgentAdapter {

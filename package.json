@@ -8,7 +8,8 @@
     "node": ">=22.19 <27"
   },
   "bin": {
-    "devspace": "dist/cli.js"
+    "devspace": "dist/cli.js",
+    "devspace-agentd": "dist/local-agent-daemon-main.js"
   },
   "files": [
     "dist",
