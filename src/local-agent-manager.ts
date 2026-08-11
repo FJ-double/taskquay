@@ -1,6 +1,4 @@
-import type { ServerConfig } from "./config.js";
 import {
-  loadLocalAgentProfiles,
   type LocalAgentProfile,
   type LocalAgentProvider,
 } from "./local-agent-profiles.js";
@@ -8,7 +6,6 @@ import {
   resolveLocalAgentTarget,
 } from "./local-agent-targets.js";
 import {
-  createLocalAgentStore,
   type LocalAgentListScope,
   type LocalAgentRecord,
   type LocalAgentStore,
@@ -42,10 +39,10 @@ export interface LocalAgentManagerLogger {
 }
 
 export interface LocalAgentManagerOptions {
-  store?: LocalAgentStore;
+  store: LocalAgentStore;
   drivers: readonly LocalAgentDriver[];
-  pool?: LocalAgentRuntimePool;
-  loadProfiles?: (workspaceRoot: string) => Promise<LocalAgentProfile[]>;
+  pool: LocalAgentRuntimePool;
+  loadProfiles: (workspaceRoot: string) => Promise<LocalAgentProfile[]>;
   agentDir?: string;
   logger?: LocalAgentManagerLogger;
 }
@@ -66,12 +63,12 @@ export class LocalAgentManager {
   private accepting = true;
   private closePromise?: Promise<void>;
 
-  constructor(config: ServerConfig, options: LocalAgentManagerOptions) {
-    this.store = options.store ?? createLocalAgentStore(config);
+  constructor(options: LocalAgentManagerOptions) {
+    this.store = options.store;
     for (const driver of options.drivers) this.drivers.set(driver.provider, driver);
-    this.pool = options.pool ?? new LocalAgentRuntimePool({ logger: options.logger });
-    this.loadProfiles = options.loadProfiles ?? ((workspaceRoot) => loadLocalAgentProfiles(config, workspaceRoot));
-    this.agentDir = options.agentDir ?? config.agentDir;
+    this.pool = options.pool;
+    this.loadProfiles = options.loadProfiles;
+    this.agentDir = options.agentDir;
     this.logger = options.logger;
     this.store.reconcileActiveRuns();
   }
@@ -141,6 +138,14 @@ export class LocalAgentManager {
 
   get activeTurnCount(): number {
     return this.activeTurns.size;
+  }
+
+  get runtimeCount(): number {
+    return this.pool.size;
+  }
+
+  async evictIdle(now?: number): Promise<void> {
+    await this.pool.evictIdle(now);
   }
 
   private begin(
@@ -268,11 +273,8 @@ export class LocalAgentManager {
   }
 }
 
-export function createLocalAgentManager(
-  config: ServerConfig,
-  options: Omit<LocalAgentManagerOptions, "drivers"> & { drivers: readonly LocalAgentDriver[] },
-): LocalAgentManager {
-  return new LocalAgentManager(config, options);
+export function createLocalAgentManager(options: LocalAgentManagerOptions): LocalAgentManager {
+  return new LocalAgentManager(options);
 }
 
 function errorMessage(error: unknown): string {

@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadConfig } from "./config.js";
 import { LocalAgentManager } from "./local-agent-manager.js";
 import type { LocalAgentProfile } from "./local-agent-profiles.js";
 import type {
@@ -12,16 +11,11 @@ import type {
   LocalAgentRuntime,
   LocalAgentRuntimeContext,
 } from "./local-agent-runtime.js";
+import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 import { LocalAgentStore } from "./local-agent-store.js";
 
 const root = await mkdtemp(join(tmpdir(), "devspace-agent-manager-test-"));
-const config = loadConfig({
-  DEVSPACE_ALLOWED_ROOTS: root,
-  DEVSPACE_STATE_DIR: join(root, "state"),
-  DEVSPACE_SUBAGENTS: "1",
-  DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
-  PORT: "1",
-});
+const stateDir = join(root, "state");
 const profile: LocalAgentProfile = {
   name: "reviewer",
   description: "Test reviewer",
@@ -81,7 +75,7 @@ const driver: LocalAgentDriver = {
   },
 };
 
-const store = new LocalAgentStore(config.stateDir);
+const store = new LocalAgentStore(stateDir);
 const stale = store.create({
   workspaceRoot: root,
   profileName: "reviewer",
@@ -89,9 +83,10 @@ const stale = store.create({
 });
 store.update(stale.id, { status: "running", latestResponse: "previous response" });
 
-const manager = new LocalAgentManager(config, {
+const manager = new LocalAgentManager({
   store,
   drivers: [driver],
+  pool: new LocalAgentRuntimePool(),
   loadProfiles: async () => [profile],
 });
 

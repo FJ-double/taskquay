@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { openDatabase, type DatabaseHandle } from "./db/client.js";
-import type { ServerConfig } from "./config.js";
 
 export type LocalAgentStatus = "starting" | "running" | "idle" | "error" | "stopped";
 
@@ -220,8 +219,8 @@ export class LocalAgentStore {
   }
 }
 
-export function createLocalAgentStore(config: ServerConfig): LocalAgentStore {
-  return new LocalAgentStore(config.stateDir);
+export function createLocalAgentStore(stateDir: string): LocalAgentStore {
+  return new LocalAgentStore(stateDir);
 }
 
 function rowToLocalAgentRecord(row: LocalAgentRow): LocalAgentRecord {
