@@ -20,7 +20,7 @@ import {
   LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
   localAgentDaemonPaths,
 } from "./local-agent-daemon-lifecycle.js";
-import type { LocalAgentManager, RunOverrides, StartLocalAgentInput } from "./local-agent-manager.js";
+import type { RunOverrides, StartLocalAgentInput } from "./local-agent-manager.js";
 import type { LocalAgentListScope, LocalAgentRecord } from "./local-agent-store.js";
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 8_000;

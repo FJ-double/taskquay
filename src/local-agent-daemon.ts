@@ -1,6 +1,7 @@
 import { appendFileSync, chmodSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Server as NetServer, type Socket } from "node:net";
 import {
+  LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
   LocalAgentDaemonAlreadyRunningError,
   LocalAgentDaemonLock,
   ensureLocalAgentDaemonStateDir,
@@ -16,7 +17,7 @@ import {
   type LocalAgentDaemonStatus,
   LocalAgentDaemonProtocolError,
 } from "./local-agent-daemon-protocol.js";
-import type { LocalAgentManager, RunOverrides, StartLocalAgentInput } from "./local-agent-manager.js";
+import type { RunOverrides, StartLocalAgentInput } from "./local-agent-manager.js";
 import type { LocalAgentListScope, LocalAgentRecord } from "./local-agent-store.js";
 
 const MAX_REQUEST_BYTES = 512 * 1024;
@@ -107,7 +108,7 @@ export class LocalAgentDaemon {
     if (!this.startedAt) throw new Error("Local agent daemon is not started.");
     return {
       state: this.stopping ? "stopping" : "ready",
-      protocolVersion: 1,
+      protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
       pid: process.pid,
       endpoint: this.paths.endpoint,
       startedAt: this.startedAt,
@@ -183,7 +184,7 @@ export class LocalAgentDaemon {
       const response = await this.dispatch(request);
       socket.end(encodeLocalAgentDaemonResponse({
         requestId: request.requestId,
-        protocolVersion: 1,
+        protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
         ok: true,
         result: response,
       }));
@@ -194,10 +195,10 @@ export class LocalAgentDaemon {
   }
 
   private async dispatch(request: LocalAgentDaemonRequest): Promise<unknown> {
-    if (request.protocolVersion !== 1) {
+    if (request.protocolVersion !== LOCAL_AGENT_DAEMON_PROTOCOL_VERSION) {
       throw new LocalAgentDaemonProtocolError(
         "PROTOCOL_MISMATCH",
-        `Unsupported daemon protocol version ${request.protocolVersion}; expected 1.`,
+        `Unsupported daemon protocol version ${request.protocolVersion}; expected ${LOCAL_AGENT_DAEMON_PROTOCOL_VERSION}.`,
       );
     }
     if (!this.accepting && request.method !== "hello" && request.method !== "daemon.status") {
@@ -210,7 +211,11 @@ export class LocalAgentDaemon {
       case "agent.run": {
         const existing = this.manager.get(request.params.target);
         return existing
-          ? this.manager.continue(request.params.target, request.params.prompt, request.params)
+          ? this.manager.continue(request.params.target, request.params.prompt, {
+              model: request.params.model,
+              thinking: request.params.thinking,
+              writeMode: request.params.writeMode,
+            })
           : this.manager.start(request.params);
       }
       case "agent.start":
@@ -235,7 +240,7 @@ export class LocalAgentDaemon {
   private writeError(socket: Socket, requestId: string, code: string, message: string): void {
     socket.end(encodeLocalAgentDaemonResponse({
       requestId,
-      protocolVersion: 1,
+      protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
       ok: false,
       error: { code, message },
     }));
