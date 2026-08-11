@@ -27,7 +27,23 @@ on Windows. The endpoint is not exposed through the public MCP HTTP port.
 Provider session identifiers and logical agent records are durable; live
 provider runtimes are disposable and may be recreated after a daemon restart.
 
+The daemon state directory contains the socket or pipe identity, an atomic
+lock, a PID marker, and diagnostic logs. A second client cannot start another
+daemon for the same state directory. Stale lock and socket files are recovered
+only after the recorded PID is no longer alive.
+
 The daemon is started on demand and may exit after its active turns, clients,
 and warm runtime idle periods have ended. Users do not need to manage it during
-normal operation. Diagnostic commands may inspect or stop it when debugging
-startup, process, or cleanup problems.
+normal operation. Diagnostic commands are available for startup, process, and
+cleanup problems:
+
+```bash
+devspace agents daemon status
+devspace agents daemon stop
+devspace agents daemon logs
+```
+
+Shutdown gives active turns a bounded graceful window. If that window expires,
+the process exits with active records left durable; the next daemon startup
+reconciles stale `starting` and `running` records to `error` without discarding
+their `providerSessionId` or `latestResponse`.
