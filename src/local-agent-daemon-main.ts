@@ -12,6 +12,7 @@ import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 import { LocalAgentStore } from "./local-agent-store.js";
 
 const config = loadConfig();
+const DEFAULT_DAEMON_SHUTDOWN_TIMEOUT_MS = 10_000;
 const paths = localAgentDaemonPaths(config.stateDir);
 const log = (
   level: "info" | "warn" | "error",
@@ -37,6 +38,16 @@ let shuttingDown = false;
 const shutdown = () => {
   if (shuttingDown) return;
   shuttingDown = true;
+  const forceTimer = setTimeout(() => {
+    log("error", "daemon_forced_shutdown", {
+      activeTurns: manager.activeTurnCount,
+      runtimeCount: manager.runtimeCount,
+    });
+    // Active records intentionally remain durable. The next daemon startup
+    // reconciles them to error while preserving provider continuation data.
+    process.exit(1);
+  }, parseShutdownTimeoutMs(process.env.DEVSPACE_AGENTD_SHUTDOWN_TIMEOUT_MS));
+  forceTimer.unref();
   void daemon.close().finally(() => process.exit(0));
 };
 process.once("SIGINT", shutdown);
@@ -60,6 +71,15 @@ function parseIdleShutdownMs(value: string | undefined): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) {
     throw new Error("DEVSPACE_AGENTD_IDLE_TIMEOUT_MS must be a non-negative duration.");
+  }
+  return parsed;
+}
+
+function parseShutdownTimeoutMs(value: string | undefined): number {
+  if (value === undefined || value.trim() === "") return DEFAULT_DAEMON_SHUTDOWN_TIMEOUT_MS;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error("DEVSPACE_AGENTD_SHUTDOWN_TIMEOUT_MS must be a non-negative duration.");
   }
   return parsed;
 }
