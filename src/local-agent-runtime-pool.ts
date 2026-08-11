@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type {
   LocalAgentDriver,
+  LocalAgentRunCallbacks,
   LocalAgentRunInput,
   LocalAgentRunResult,
   LocalAgentRuntime,
@@ -8,6 +9,7 @@ import type {
 } from "./local-agent-runtime.js";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
+const DEFAULT_SESSION_IDLE_TIMEOUT_MS = 60_000;
 
 export interface LocalAgentRuntimePoolLogger {
   (level: "info" | "warn" | "error", event: string, fields: Record<string, unknown>): void;
@@ -17,6 +19,7 @@ interface RuntimeEntry {
   readonly key: string;
   readonly driver: LocalAgentDriver;
   readonly idleTimeoutMs: number;
+  readonly sessionIdleTimeoutMs: number;
   readonly createPromise: Promise<LocalAgentRuntime>;
   runtime?: LocalAgentRuntime;
   activeRuns: number;
@@ -24,11 +27,18 @@ interface RuntimeEntry {
   closePromise?: Promise<void>;
   idleTimer?: NodeJS.Timeout;
   closing: boolean;
+  readonly sessions: Map<string, SessionEntry>;
+}
+
+interface SessionEntry {
+  activeRuns: number;
+  lastUsedAt: number;
 }
 
 export interface LocalAgentRuntimePoolOptions {
   now?: () => number;
   logger?: LocalAgentRuntimePoolLogger;
+  sessionIdleTimeoutMs?: number;
 }
 
 /**
@@ -40,18 +50,24 @@ export class LocalAgentRuntimePool {
   private readonly entries = new Map<string, RuntimeEntry>();
   private readonly now: () => number;
   private readonly logger?: LocalAgentRuntimePoolLogger;
+  private readonly sessionIdleTimeoutMs: number;
   private closing = false;
   private closePromise?: Promise<void>;
 
   constructor(options: LocalAgentRuntimePoolOptions = {}) {
     this.now = options.now ?? Date.now;
     this.logger = options.logger;
+    this.sessionIdleTimeoutMs = options.sessionIdleTimeoutMs ?? DEFAULT_SESSION_IDLE_TIMEOUT_MS;
+    if (!Number.isFinite(this.sessionIdleTimeoutMs) || this.sessionIdleTimeoutMs < 0) {
+      throw new Error("Local agent session idle timeout must be a non-negative finite duration.");
+    }
   }
 
   async run(
     driver: LocalAgentDriver,
     context: LocalAgentRuntimeContext,
     input: LocalAgentRunInput,
+    inputCallbacks?: LocalAgentRunCallbacks,
   ): Promise<LocalAgentRunResult> {
     if (this.closing) throw new Error("Local agent runtime pool is closed.");
 
@@ -70,12 +86,39 @@ export class LocalAgentRuntimePool {
 
     this.clearIdleTimer(entry);
     entry.activeRuns += 1;
+    const sessionIds = new Set<string>();
+    const registerSession = (providerSessionId: string): void => {
+      if (!providerSessionId || sessionIds.has(providerSessionId)) return;
+      sessionIds.add(providerSessionId);
+      const session = entry.sessions.get(providerSessionId) ?? { activeRuns: 0, lastUsedAt: this.now() };
+      session.activeRuns += 1;
+      session.lastUsedAt = this.now();
+      entry.sessions.set(providerSessionId, session);
+    };
+    registerSession(input.providerSessionId ?? "");
+    const callbacks: LocalAgentRunCallbacks = {
+      onSessionId: async (providerSessionId) => {
+        registerSession(providerSessionId);
+        await inputCallbacks?.onSessionId?.(providerSessionId);
+      },
+    };
     const startedAt = this.now();
     try {
-      return await runtime.run(input);
+      const result = await runtime.run(input, callbacks);
+      registerSession(result.providerSessionId ?? "");
+      return result;
     } catch (error) {
       if (!runtime.isAlive()) {
-        await this.removeAndClose(entry, "runtime_crashed");
+        try {
+          await this.removeAndClose(entry, "runtime_crashed");
+        } catch (cleanupError) {
+          this.log("warn", "harness_runtime_close_failed", {
+            provider: driver.provider,
+            runtimeKeyHash: hashRuntimeKey(entry.key),
+            reason: "runtime_crashed",
+            error: errorMessage(cleanupError),
+          });
+        }
         this.log("warn", "harness_runtime_crashed", {
           provider: driver.provider,
           runtimeKeyHash: hashRuntimeKey(entry.key),
@@ -87,6 +130,12 @@ export class LocalAgentRuntimePool {
       }
       throw error;
     } finally {
+      for (const providerSessionId of sessionIds) {
+        const session = entry.sessions.get(providerSessionId);
+        if (!session) continue;
+        session.activeRuns = Math.max(0, session.activeRuns - 1);
+        session.lastUsedAt = this.now();
+      }
       entry.activeRuns -= 1;
       entry.lastUsedAt = this.now();
       if (entry.activeRuns === 0 && !entry.closing) this.scheduleIdleClose(entry);
@@ -97,9 +146,11 @@ export class LocalAgentRuntimePool {
   async evictIdle(now = this.now()): Promise<void> {
     const evictions: Promise<void>[] = [];
     for (const entry of this.entries.values()) {
-      if (entry.closing || entry.activeRuns > 0 || !entry.runtime) continue;
-      if (now - entry.lastUsedAt < entry.idleTimeoutMs) continue;
-      evictions.push(this.removeAndClose(entry, "idle_timeout"));
+      if (entry.closing || !entry.runtime) continue;
+      await this.releaseIdleSessions(entry, now);
+      if (entry.activeRuns === 0 && now - entry.lastUsedAt >= entry.idleTimeoutMs) {
+        evictions.push(this.removeAndClose(entry, "idle_timeout"));
+      }
     }
     await Promise.all(evictions);
   }
@@ -161,13 +212,19 @@ export class LocalAgentRuntimePool {
       key,
       driver,
       idleTimeoutMs: driver.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS,
+      sessionIdleTimeoutMs: this.sessionIdleTimeoutMs,
       createPromise,
       activeRuns: 0,
       lastUsedAt: this.now(),
       closing: false,
+      sessions: new Map(),
     };
     this.entries.set(key, entry);
     await createPromise;
+    if (this.closing || entry.closing || this.entries.get(key) !== entry) {
+      await this.closeEntry(entry, "pool_shutdown_during_creation");
+      throw new Error("Local agent runtime pool is closed.");
+    }
     return entry;
   }
 
@@ -209,6 +266,7 @@ export class LocalAgentRuntimePool {
       } catch {
         return;
       }
+      await this.releaseSessions(entry, runtime, reason);
       try {
         await runtime.close();
         this.log("info", "harness_runtime_closed", {
@@ -227,6 +285,56 @@ export class LocalAgentRuntimePool {
       }
     })();
     return entry.closePromise;
+  }
+
+  private async releaseIdleSessions(entry: RuntimeEntry, now: number): Promise<void> {
+    const releases: Promise<void>[] = [];
+    for (const [providerSessionId, session] of entry.sessions) {
+      if (session.activeRuns > 0 || now - session.lastUsedAt < entry.sessionIdleTimeoutMs) continue;
+      releases.push(this.releaseSession(entry, providerSessionId));
+    }
+    await Promise.all(releases);
+  }
+
+  private async releaseSessions(
+    entry: RuntimeEntry,
+    runtime: LocalAgentRuntime,
+    reason: string,
+  ): Promise<void> {
+    const releases = Array.from(entry.sessions.keys()).map(async (providerSessionId) => {
+      try {
+        await runtime.releaseSession(providerSessionId);
+      } catch (error) {
+        this.log("warn", "harness_session_release_failed", {
+          provider: entry.driver.provider,
+          runtimeKeyHash: hashRuntimeKey(entry.key),
+          providerSessionIdPrefix: providerSessionId.slice(0, 8),
+          reason,
+          error: errorMessage(error),
+        });
+      }
+    });
+    await Promise.all(releases);
+    entry.sessions.clear();
+  }
+
+  private async releaseSession(entry: RuntimeEntry, providerSessionId: string): Promise<void> {
+    const runtime = entry.runtime;
+    if (!runtime || entry.closing) return;
+    try {
+      await runtime.releaseSession(providerSessionId);
+      if (entry.sessions.get(providerSessionId)?.activeRuns === 0) {
+        entry.sessions.delete(providerSessionId);
+      }
+    } catch (error) {
+      this.log("warn", "harness_session_release_failed", {
+        provider: entry.driver.provider,
+        runtimeKeyHash: hashRuntimeKey(entry.key),
+        providerSessionIdPrefix: providerSessionId.slice(0, 8),
+        reason: "idle_timeout",
+        error: errorMessage(error),
+      });
+    }
   }
 
   private log(

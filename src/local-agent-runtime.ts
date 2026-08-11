@@ -18,6 +18,15 @@ export interface LocalAgentRunResult {
   items: unknown[];
 }
 
+export interface LocalAgentRunCallbacks {
+  /**
+   * Called as soon as a provider creates or resolves a durable continuation
+   * identity. The callback is awaited before the provider starts work that
+   * could otherwise fail and lose that identity.
+   */
+  onSessionId?: (providerSessionId: string) => void | Promise<void>;
+}
+
 export interface LocalAgentRuntimeContext {
   agentId: string;
   provider: LocalAgentProvider;
@@ -36,7 +45,7 @@ export interface LocalAgentRuntimeContext {
  */
 export interface LocalAgentRuntime {
   readonly provider: LocalAgentProvider;
-  run(input: LocalAgentRunInput): Promise<LocalAgentRunResult>;
+  run(input: LocalAgentRunInput, callbacks?: LocalAgentRunCallbacks): Promise<LocalAgentRunResult>;
   releaseSession(providerSessionId: string): Promise<void>;
   close(): Promise<void>;
   isAlive(): boolean;
