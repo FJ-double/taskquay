@@ -59,8 +59,7 @@ export class LocalAgentClient {
   }
 
   async run(input: StartLocalAgentInput): Promise<LocalAgentRecord> {
-    const result = await this.request("agent.run", input);
-    return decodeAgentRecord(result);
+    return this.start(input);
   }
 
   async start(input: StartLocalAgentInput): Promise<LocalAgentRecord> {

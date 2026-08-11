@@ -10,6 +10,7 @@ import {
   formatLocalAgentProviderAvailabilitySummary,
 } from "./local-agent-availability.js";
 import {
+  parseLocalAgentContinueArgs,
   parseLocalAgentRunArgs,
 } from "./local-agent-targets.js";
 import { createLocalAgentClient } from "./local-agent-client.js";
@@ -296,7 +297,8 @@ function printHelp(): void {
       "  devspace config get      Print persisted config",
       "  devspace config set publicBaseUrl <url|null>",
       "  devspace agents ls       List subagent sessions",
-      "  devspace agents run <profile-or-provider-or-id> [--model <model>] <prompt>",
+      "  devspace agents run <profile-or-provider> [--model <model>] <prompt>",
+      "  devspace agents continue <id> [--model <model>] <prompt>",
       "  devspace agents show <id>",
       "  devspace agents daemon <status|stop|logs>",
       "  devspace -v, --version   Print the installed version",
@@ -316,6 +318,9 @@ async function runAgentsCommand(args: string[]): Promise<void> {
       return;
     case "run":
       await runAgentsRun(rest);
+      return;
+    case "continue":
+      await runAgentsContinue(rest);
       return;
     case "show":
       await runAgentsShow(rest);
@@ -354,11 +359,22 @@ async function runAgentsRun(args: string[]): Promise<void> {
   const config = loadConfig();
   const workspaceRoot = resolveCurrentWorkspaceRoot();
   const client = createLocalAgentClient(config);
-  const record = await client.run({
+  const record = await client.start({
     target: parsed.target,
     prompt: parsed.prompt,
     workspaceRoot,
     workspaceId: process.env.DEVSPACE_WORKSPACE_ID,
+    model: parsed.model,
+    thinking: parsed.thinking,
+  });
+  console.log(formatAgentLine(record));
+}
+
+async function runAgentsContinue(args: string[]): Promise<void> {
+  const parsed = parseLocalAgentContinueArgs(args);
+  const config = loadConfig();
+  const client = createLocalAgentClient(config);
+  const record = await client.continue(parsed.agentId, parsed.prompt, {
     model: parsed.model,
     thinking: parsed.thinking,
   });
@@ -445,7 +461,8 @@ function printAgentsHelp(): void {
       "",
       "Usage:",
       "  devspace agents ls",
-      "  devspace agents run <profile-or-provider-or-id> [--model <model>] [--thinking <level>] <prompt>",
+      "  devspace agents run <profile-or-provider> [--model <model>] [--thinking <level>] <prompt>",
+      "  devspace agents continue <id> [--model <model>] [--thinking <level>] <prompt>",
       "  devspace agents show <id>",
       "  devspace agents daemon <status|stop|logs>",
     ].join("\n"),

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { LocalAgentManager } from "./local-agent-manager.js";
+import { LocalAgentConflictError, LocalAgentManager } from "./local-agent-manager.js";
 import type { LocalAgentProfile } from "./local-agent-profiles.js";
 import type {
   LocalAgentDriver,
@@ -31,8 +31,12 @@ class FakeRuntime implements LocalAgentRuntime {
   closed = false;
   private releaseHold: (() => void) | undefined;
 
-  async run(input: LocalAgentRunInput): Promise<LocalAgentRunResult> {
+  async run(input: LocalAgentRunInput, callbacks?: { onSessionId?: (id: string) => void | Promise<void> }): Promise<LocalAgentRunResult> {
     this.inputs.push(input);
+    if (input.prompt.includes("early-fail")) {
+      await callbacks?.onSessionId?.("thread_early");
+      throw new Error("provider failed after session creation");
+    }
     if (input.prompt.includes("fail")) throw new Error("provider failed");
     if (input.prompt.includes("hold")) {
       await new Promise<void>((resolve) => { this.releaseHold = resolve; });
@@ -88,8 +92,16 @@ const manager = new LocalAgentManager({
   drivers: [driver],
   pool: new LocalAgentRuntimePool(),
   loadProfiles: async () => [profile],
+  allowedRoots: [root],
 });
 
+await assert.rejects(
+  manager.start({ target: "reviewer", prompt: "outside", workspaceRoot: join(tmpdir(), "outside") }),
+  /outside allowed roots/,
+);
+
+assert.equal(manager.get(stale.id)?.status, "running");
+manager.reconcileActiveRuns();
 assert.equal(manager.get(stale.id)?.status, "error");
 assert.equal(manager.get(stale.id)?.latestResponse, "previous response");
 assert.equal(
@@ -106,7 +118,7 @@ assert.equal(first.status, "running");
 await waitFor(() => runtimes.get(first.id)?.inputs.length === 1);
 await assert.rejects(
   () => manager.continue(first.id, "another prompt"),
-  new RegExp(`Agent ${first.id} already has a running turn\\.`),
+  (error: unknown) => error instanceof LocalAgentConflictError && error.agentId === first.id,
 );
 
 runtimes.get(first.id)!.release();
@@ -135,7 +147,26 @@ const failed = await manager.start({
 await waitFor(() => manager.get(failed.id)?.status === "error");
 assert.equal(manager.get(failed.id)?.error, "provider failed");
 
-await manager.close();
+const earlyFailure = await manager.start({
+  target: "reviewer",
+  prompt: "early-fail",
+  workspaceRoot: root,
+});
+await waitFor(() => manager.get(earlyFailure.id)?.status === "error");
+assert.equal(manager.get(earlyFailure.id)?.providerSessionId, "thread_early");
+
+const shuttingDown = await manager.start({
+  target: "reviewer",
+  prompt: "hold during shutdown",
+  workspaceRoot: root,
+});
+await waitFor(() => runtimes.get(shuttingDown.id)?.inputs.length === 1);
+const closing = manager.close();
+await new Promise<void>((resolve) => setImmediate(resolve));
+assert.equal(runtimes.get(shuttingDown.id)?.closed, false);
+runtimes.get(shuttingDown.id)!.release();
+await closing;
+
 await manager.close();
 await rm(root, { recursive: true, force: true });
 

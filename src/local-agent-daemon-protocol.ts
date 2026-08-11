@@ -12,7 +12,6 @@ import { LOCAL_AGENT_DAEMON_PROTOCOL_VERSION } from "./local-agent-daemon-lifecy
 
 export type LocalAgentDaemonMethod =
   | "hello"
-  | "agent.run"
   | "agent.start"
   | "agent.continue"
   | "agent.get"
@@ -21,11 +20,8 @@ export type LocalAgentDaemonMethod =
   | "daemon.stop"
   | "daemon.logs";
 
-export interface AgentDaemonRunParams extends StartLocalAgentInput {}
-
 export type LocalAgentDaemonRequest =
   | AgentDaemonRequestBase<"hello", Record<string, never>>
-  | AgentDaemonRequestBase<"agent.run", AgentDaemonRunParams>
   | AgentDaemonRequestBase<"agent.start", StartLocalAgentInput>
   | AgentDaemonRequestBase<"agent.continue", { id: string; prompt: string; overrides?: RunOverrides }>
   | AgentDaemonRequestBase<"agent.get", { id: string }>
@@ -94,7 +90,6 @@ export function decodeLocalAgentDaemonRequest(value: unknown): LocalAgentDaemonR
     case "daemon.status":
     case "daemon.stop":
       return { requestId, protocolVersion, method, params: decodeEmptyParams(params) } as LocalAgentDaemonRequest;
-    case "agent.run":
     case "agent.start":
       return {
         requestId,

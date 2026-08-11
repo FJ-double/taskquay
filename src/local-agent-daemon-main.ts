@@ -26,11 +26,13 @@ const manager = new LocalAgentManager({
   pool: new LocalAgentRuntimePool({ logger: log }),
   loadProfiles: (workspaceRoot) => loadLocalAgentProfiles(config, workspaceRoot),
   agentDir: config.agentDir,
+  allowedRoots: config.allowedRoots,
   logger: log,
 });
 const daemon = new LocalAgentDaemon({
   stateDir: paths.stateDir,
   manager,
+  onLockAcquired: () => { manager.reconcileActiveRuns(); },
   idleShutdownMs: parseIdleShutdownMs(process.env.DEVSPACE_AGENTD_IDLE_TIMEOUT_MS),
 });
 

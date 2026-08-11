@@ -134,7 +134,8 @@ The Subagent skill teaches only:
 
 ```bash
 devspace agents ls
-devspace agents run <profile-or-id> "<prompt>"
+devspace agents run <profile-or-provider> "<prompt>"
+devspace agents continue <id> "<prompt>"
 devspace agents show <id>
 ```
 
@@ -152,6 +153,10 @@ devspace agents show <id>
 
 `devspace agents ls` lists existing subagent sessions for the current workspace;
 it does not list profile definitions.
+
+Use `devspace agents continue <id>` for a later turn. The logical agent ID is
+the `agt_...` value returned by `run` or `ls`; provider session IDs are not
+accepted as substitutes.
 
 The full profile body stays out of the model context until DevSpace launches the
 profile.

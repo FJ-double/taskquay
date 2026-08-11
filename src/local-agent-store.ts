@@ -130,25 +130,23 @@ export class LocalAgentStore {
     return record;
   }
 
-  get(idOrPrefix: string): LocalAgentRecord | undefined {
+  getById(id: string): LocalAgentRecord | undefined {
     const exact = this.database.sqlite
       .prepare(
         `select * from local_agent_sessions
-         where id = ? or provider_session_id = ?
+         where id = ?
          limit 1`,
       )
-      .get(idOrPrefix, idOrPrefix) as LocalAgentRow | undefined;
-    if (exact) return rowToLocalAgentRecord(exact);
+      .get(id) as LocalAgentRow | undefined;
+    return exact ? rowToLocalAgentRecord(exact) : undefined;
+  }
 
-    const matches = this.database.sqlite
-      .prepare(
-        `select * from local_agent_sessions
-         where id like ? escape '\\' or provider_session_id like ? escape '\\'
-         order by updated_at desc`,
-      )
-      .all(`${escapeLike(idOrPrefix)}%`, `${escapeLike(idOrPrefix)}%`) as LocalAgentRow[];
-
-    return matches.length === 1 ? rowToLocalAgentRecord(matches[0]!) : undefined;
+  /**
+   * Compatibility alias for callers that already use the store directly.
+   * Identity lookup is exact and never falls back to provider session IDs.
+   */
+  get(id: string): LocalAgentRecord | undefined {
+    return this.getById(id);
   }
 
   update(id: string, patch: Partial<Omit<LocalAgentRecord, "id" | "createdAt">>): LocalAgentRecord {
@@ -211,12 +209,6 @@ export class LocalAgentStore {
     this.database.close();
   }
 
-  private getById(id: string): LocalAgentRecord | undefined {
-    const row = this.database.sqlite
-      .prepare("select * from local_agent_sessions where id = ?")
-      .get(id) as LocalAgentRow | undefined;
-    return row ? rowToLocalAgentRecord(row) : undefined;
-  }
 }
 
 export function createLocalAgentStore(stateDir: string): LocalAgentStore {
@@ -252,8 +244,4 @@ function readStatus(status: string): LocalAgentStatus {
     return status;
   }
   return "error";
-}
-
-function escapeLike(value: string): string {
-  return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
 }

@@ -12,11 +12,13 @@ import {
 } from "./local-agent-store.js";
 import {
   type LocalAgentDriver,
+  type LocalAgentRunCallbacks,
   type LocalAgentRunInput,
   type LocalAgentRuntimeContext,
   type LocalAgentWriteMode,
 } from "./local-agent-runtime.js";
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
+import { assertAllowedPath } from "./roots.js";
 
 export interface StartLocalAgentInput {
   target: string;
@@ -44,7 +46,17 @@ export interface LocalAgentManagerOptions {
   pool: LocalAgentRuntimePool;
   loadProfiles: (workspaceRoot: string) => Promise<LocalAgentProfile[]>;
   agentDir?: string;
+  allowedRoots?: readonly string[];
   logger?: LocalAgentManagerLogger;
+}
+
+export class LocalAgentConflictError extends Error {
+  readonly code = "CONFLICT" as const;
+
+  constructor(readonly agentId: string) {
+    super(`Agent ${agentId} already has a running turn.`);
+    this.name = "LocalAgentConflictError";
+  }
 }
 
 /**
@@ -58,6 +70,7 @@ export class LocalAgentManager {
   private readonly pool: LocalAgentRuntimePool;
   private readonly loadProfiles: (workspaceRoot: string) => Promise<LocalAgentProfile[]>;
   private readonly agentDir?: string;
+  private readonly allowedRoots?: readonly string[];
   private readonly logger?: LocalAgentManagerLogger;
   private readonly activeTurns = new Map<string, Promise<void>>();
   private accepting = true;
@@ -69,13 +82,18 @@ export class LocalAgentManager {
     this.pool = options.pool;
     this.loadProfiles = options.loadProfiles;
     this.agentDir = options.agentDir;
+    this.allowedRoots = options.allowedRoots;
     this.logger = options.logger;
-    this.store.reconcileActiveRuns();
+  }
+
+  reconcileActiveRuns(message?: string): number {
+    return this.store.reconcileActiveRuns(message);
   }
 
   async start(input: StartLocalAgentInput): Promise<LocalAgentRecord> {
     this.assertAccepting();
-    const profiles = await this.loadProfiles(input.workspaceRoot);
+    const workspaceRoot = this.authorizeWorkspace(input.workspaceRoot);
+    const profiles = await this.loadProfiles(workspaceRoot);
     const target = resolveLocalAgentTarget(input.target, profiles, input.model, input.thinking);
     if (!target) {
       throw new Error(`Unknown subagent profile or provider: ${input.target}`);
@@ -84,7 +102,7 @@ export class LocalAgentManager {
 
     const record = this.store.create({
       workspaceId: input.workspaceId,
-      workspaceRoot: input.workspaceRoot,
+      workspaceRoot,
       profileName: target.name,
       provider: target.provider,
       model: target.model,
@@ -103,14 +121,15 @@ export class LocalAgentManager {
     overrides: RunOverrides = {},
   ): Promise<LocalAgentRecord> {
     this.assertAccepting();
-    const record = this.store.get(agentId);
+    const record = this.store.getById(agentId);
     if (!record) throw new Error(`Unknown subagent id: ${agentId}`);
+    this.authorizeWorkspace(record.workspaceRoot);
     this.assertDriver(record.provider);
     return this.begin(record, prompt, overrides);
   }
 
   get(agentId: string): LocalAgentRecord | undefined {
-    return this.store.get(agentId);
+    return this.store.getById(agentId);
   }
 
   list(scope: LocalAgentListScope = {}): LocalAgentRecord[] {
@@ -122,14 +141,16 @@ export class LocalAgentManager {
     this.accepting = false;
     const turns = Array.from(this.activeTurns.values());
     this.closePromise = (async () => {
-      const results = await Promise.allSettled([
-        this.pool.close(),
-        ...turns,
-      ]);
-      for (const result of results) {
+      const turnResults = await Promise.allSettled(turns);
+      for (const result of turnResults) {
         if (result.status === "rejected") {
           this.log("warn", "local_agent_close_failed", { error: errorMessage(result.reason) });
         }
+      }
+      try {
+        await this.pool.close();
+      } catch (error) {
+        this.log("warn", "local_agent_close_failed", { error: errorMessage(error) });
       }
       this.store.close();
     })();
@@ -154,7 +175,7 @@ export class LocalAgentManager {
     overrides: RunOverrides,
   ): LocalAgentRecord {
     if (this.activeTurns.has(record.id)) {
-      throw new Error(`Agent ${record.id} already has a running turn.`);
+      throw new LocalAgentConflictError(record.id);
     }
 
     const updated = this.store.update(record.id, {
@@ -196,8 +217,15 @@ export class LocalAgentManager {
         thinking: input.thinking,
         agentDir: this.agentDir,
       };
-      const result = await this.pool.run(driver, context, input);
-      const current = this.store.get(record.id);
+      const callbacks: LocalAgentRunCallbacks = {
+        onSessionId: (providerSessionId) => {
+          const current = this.store.getById(record.id);
+          if (!current || current.providerSessionId === providerSessionId) return;
+          this.store.update(record.id, { providerSessionId });
+        },
+      };
+      const result = await this.pool.run(driver, context, input, callbacks);
+      const current = this.store.getById(record.id);
       if (!current) return;
       const updated = this.store.update(record.id, {
         providerSessionId: result.providerSessionId ?? current.providerSessionId,
@@ -212,7 +240,7 @@ export class LocalAgentManager {
         durationMs: Math.max(0, Date.now() - startedAt),
       });
     } catch (error) {
-      const current = this.store.get(record.id);
+      const current = this.store.getById(record.id);
       if (current) {
         this.store.update(record.id, {
           status: "error",
@@ -262,6 +290,11 @@ export class LocalAgentManager {
 
   private assertAccepting(): void {
     if (!this.accepting) throw new Error("Local agent manager is closed.");
+  }
+
+  private authorizeWorkspace(workspaceRoot: string): string {
+    if (!this.allowedRoots) return workspaceRoot;
+    return assertAllowedPath(workspaceRoot, [...this.allowedRoots]);
   }
 
   private log(

@@ -18,12 +18,15 @@ Use only these commands for normal delegation:
 
 ```bash
 devspace agents ls
-devspace agents run <profile-or-provider-or-id> "<prompt>"
+devspace agents run <profile-or-provider> "<prompt>"
+devspace agents continue <id> "<prompt>"
 devspace agents show <id>
 ```
 
 `ls` shows existing subagent sessions for the current workspace. DevSpace scopes
 it automatically from the shell environment injected by the workspace tool.
+Use the returned logical `agt_...` ID with `continue`; provider session IDs and
+prefixes are not interchangeable with logical agent IDs.
 
 `run <profile> "<prompt>"` starts a new configured profile and prints a
 DevSpace agent id.

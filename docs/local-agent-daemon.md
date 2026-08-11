@@ -5,7 +5,7 @@ by the MCP server and not by an individual CLI invocation. The daemon is an
 internal implementation detail: the normal workflow remains:
 
 ```text
-devspace agents run/show/ls
+devspace agents run/continue/show/ls
           │
           ▼
     devspace-agentd
@@ -42,6 +42,11 @@ devspace agents daemon status
 devspace agents daemon stop
 devspace agents daemon logs
 ```
+
+Agent identity is explicit at the client boundary. `agents run` starts a new
+logical agent from a profile or provider; `agents continue <id>` continues an
+existing logical agent. Provider session IDs are never accepted as logical
+agent IDs, and the daemon does not resolve ambiguous prefixes.
 
 Shutdown gives active turns a bounded graceful window. If that window expires,
 the process exits with active records left durable; the next daemon startup

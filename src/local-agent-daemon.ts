@@ -17,7 +17,7 @@ import {
   type LocalAgentDaemonStatus,
   LocalAgentDaemonProtocolError,
 } from "./local-agent-daemon-protocol.js";
-import type { RunOverrides, StartLocalAgentInput } from "./local-agent-manager.js";
+import { LocalAgentConflictError, type RunOverrides, type StartLocalAgentInput } from "./local-agent-manager.js";
 import type { LocalAgentListScope, LocalAgentRecord } from "./local-agent-store.js";
 
 const MAX_REQUEST_BYTES = 512 * 1024;
@@ -42,6 +42,7 @@ export interface LocalAgentDaemonOptions {
   idleCheckIntervalMs?: number;
   now?: () => number;
   paths?: LocalAgentDaemonPaths;
+  onLockAcquired?: () => void | Promise<void>;
 }
 
 export class LocalAgentDaemon {
@@ -51,6 +52,7 @@ export class LocalAgentDaemon {
   private readonly idleShutdownMs: number;
   private readonly idleCheckIntervalMs: number;
   private readonly now: () => number;
+  private readonly onLockAcquired?: () => void | Promise<void>;
   private readonly sockets = new Set<Socket>();
   private server?: NetServer;
   private idleTimer?: NodeJS.Timeout;
@@ -67,6 +69,7 @@ export class LocalAgentDaemon {
     this.idleShutdownMs = options.idleShutdownMs ?? DEFAULT_DAEMON_IDLE_SHUTDOWN_MS;
     this.idleCheckIntervalMs = options.idleCheckIntervalMs ?? DEFAULT_IDLE_CHECK_INTERVAL_MS;
     this.now = options.now ?? Date.now;
+    this.onLockAcquired = options.onLockAcquired;
     if (!Number.isFinite(this.idleShutdownMs) || this.idleShutdownMs < 0) {
       throw new Error("Agent daemon idle shutdown must be a non-negative finite duration.");
     }
@@ -77,6 +80,7 @@ export class LocalAgentDaemon {
     ensureLocalAgentDaemonStateDir(this.paths.stateDir);
     try {
       this.lock.acquire();
+      await this.onLockAcquired?.();
       if (process.platform !== "win32") rmSync(this.paths.socketPath, { force: true });
       const server = createServer((socket) => this.handleConnection(socket));
       this.server = server;
@@ -208,16 +212,6 @@ export class LocalAgentDaemon {
     switch (request.method) {
       case "hello":
         return this.status();
-      case "agent.run": {
-        const existing = this.manager.get(request.params.target);
-        return existing
-          ? this.manager.continue(request.params.target, request.params.prompt, {
-              model: request.params.model,
-              thinking: request.params.thinking,
-              writeMode: request.params.writeMode,
-            })
-          : this.manager.start(request.params);
-      }
       case "agent.start":
         return this.manager.start(request.params);
       case "agent.continue":
@@ -290,7 +284,7 @@ function readRequestId(value: unknown): string {
 
 function errorCode(error: unknown): string {
   if (error instanceof LocalAgentDaemonProtocolError) return error.code;
-  if (errorMessage(error).includes("already has a running turn")) return "CONFLICT";
+  if (error instanceof LocalAgentConflictError) return "CONFLICT";
   if (errorMessage(error).includes("is stopping")) return "DAEMON_STOPPING";
   return "AGENT_ERROR";
 }

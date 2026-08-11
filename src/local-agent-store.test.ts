@@ -21,9 +21,9 @@ try {
 
   assert.match(created.id, /^agt_[a-f0-9]{8}$/);
   assert.equal(created.status, "starting");
-  assert.equal(store.get(created.id)?.thinking, "high");
-  assert.equal(store.get(created.id)?.profileName, "reviewer");
-  assert.equal(store.get(created.id.slice(0, 7))?.id, created.id);
+  assert.equal(store.getById(created.id)?.thinking, "high");
+  assert.equal(store.getById(created.id)?.profileName, "reviewer");
+  assert.equal(store.getById(created.id.slice(0, 7)), undefined);
 
   const updated = store.update(created.id, {
     status: "idle",
@@ -34,8 +34,8 @@ try {
 
   assert.equal(updated.status, "idle");
   assert.equal(updated.thinking, "medium");
-  assert.equal(store.get("thread_123")?.id, created.id);
-  assert.equal(store.get(created.id)?.thinking, "medium");
+  assert.equal(store.getById("thread_123"), undefined);
+  assert.equal(store.getById(created.id)?.thinking, "medium");
   assert.equal(store.update(created.id, { latestResponse: undefined }).latestResponse, undefined);
   assert.deepEqual(
     store.list({ workspaceRoot: join(root, "project") }).map((agent) => agent.latestResponse),
