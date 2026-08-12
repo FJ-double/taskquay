@@ -1,6 +1,7 @@
 import {
   type LocalAgentProfile,
   type LocalAgentProvider,
+  isLocalAgentProvider,
 } from "./local-agent-profiles.js";
 import {
   resolveLocalAgentTarget,
@@ -189,7 +190,9 @@ export class LocalAgentManager {
       latestResponse: undefined,
       error: undefined,
     });
-    const turn = this.runTurn(updated, prompt, overrides);
+    // Defer invocation until after the tracking entry is visible. This keeps
+    // cleanup correct even if runTurn later gains a synchronous completion path.
+    const turn = Promise.resolve().then(() => this.runTurn(updated, prompt, overrides));
     this.activeTurns.set(record.id, turn);
     void turn.catch(() => undefined);
     return updated;
@@ -287,7 +290,10 @@ export class LocalAgentManager {
   }
 
   private assertDriver(provider: string): LocalAgentDriver {
-    const driver = this.drivers.get(provider as LocalAgentProvider);
+    if (!isLocalAgentProvider(provider)) {
+      throw new Error(`No local agent driver is configured for provider: ${provider}`);
+    }
+    const driver = this.drivers.get(provider);
     if (!driver) throw new Error(`No local agent driver is configured for provider: ${provider}`);
     return driver;
   }

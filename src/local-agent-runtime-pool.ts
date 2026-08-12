@@ -189,60 +189,72 @@ export class LocalAgentRuntimePool {
     context: LocalAgentRuntimeContext,
   ): Promise<RuntimeEntry> {
     const key = driver.runtimeKey(context);
-    const existing = this.entries.get(key);
-    if (existing && !existing.closing) {
-      if (!existing.runtime || existing.runtime.isAlive()) {
-        this.clearIdleTimer(existing);
-        if (existing.runtime) {
-          this.log("info", "harness_runtime_reused", {
+    while (true) {
+      const existing = this.entries.get(key);
+      if (existing && !existing.closing) {
+        if (!existing.runtime || existing.runtime.isAlive()) {
+          this.clearIdleTimer(existing);
+          if (existing.runtime) {
+            this.log("info", "harness_runtime_reused", {
+              provider: driver.provider,
+              runtimeKeyHash: hashRuntimeKey(key),
+              agentId: context.agentId,
+            });
+          }
+          await existing.createPromise;
+          if (
+            !this.closing &&
+            !existing.closing &&
+            this.entries.get(key) === existing &&
+            existing.runtime?.isAlive()
+          ) {
+            return existing;
+          }
+        }
+        await this.removeAndClose(existing, "runtime_not_alive");
+        continue;
+      }
+
+      if (this.closing) throw new Error("Local agent runtime pool is closed.");
+
+      let entry!: RuntimeEntry;
+      const createPromise = Promise.resolve()
+        .then(() => driver.createRuntime(context))
+        .then((runtime) => {
+          entry.runtime = runtime;
+          entry.lastUsedAt = this.now();
+          this.log("info", "harness_runtime_started", {
             provider: driver.provider,
             runtimeKeyHash: hashRuntimeKey(key),
             agentId: context.agentId,
           });
-        }
-        await existing.createPromise;
-        if (existing.runtime?.isAlive()) return existing;
-      }
-      await this.removeAndClose(existing, "runtime_not_alive");
-    }
-
-    let entry!: RuntimeEntry;
-    const createPromise = Promise.resolve()
-      .then(() => driver.createRuntime(context))
-      .then((runtime) => {
-        entry.runtime = runtime;
-        entry.lastUsedAt = this.now();
-        this.log("info", "harness_runtime_started", {
-          provider: driver.provider,
-          runtimeKeyHash: hashRuntimeKey(key),
-          agentId: context.agentId,
+          return runtime;
+        })
+        .catch((error) => {
+          if (this.entries.get(key) === entry) this.entries.delete(key);
+          throw error;
         });
-        return runtime;
-      })
-      .catch((error) => {
-        if (this.entries.get(key) === entry) this.entries.delete(key);
-        throw error;
-      });
 
-    entry = {
-      key,
-      driver,
-      idleTimeoutMs: driver.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS,
-      sessionIdleTimeoutMs: this.sessionIdleTimeoutMs,
-      createPromise,
-      activeRuns: 0,
-      lastUsedAt: this.now(),
-      closing: false,
-      sessions: new Map(),
-      activeRunWaiters: new Set(),
-    };
-    this.entries.set(key, entry);
-    await createPromise;
-    if (this.closing || entry.closing || this.entries.get(key) !== entry) {
-      await this.closeEntry(entry, "pool_shutdown_during_creation");
-      throw new Error("Local agent runtime pool is closed.");
+      entry = {
+        key,
+        driver,
+        idleTimeoutMs: driver.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS,
+        sessionIdleTimeoutMs: this.sessionIdleTimeoutMs,
+        createPromise,
+        activeRuns: 0,
+        lastUsedAt: this.now(),
+        closing: false,
+        sessions: new Map(),
+        activeRunWaiters: new Set(),
+      };
+      this.entries.set(key, entry);
+      await createPromise;
+      if (this.closing || entry.closing || this.entries.get(key) !== entry) {
+        await this.closeEntry(entry, "pool_shutdown_during_creation");
+        throw new Error("Local agent runtime pool is closed.");
+      }
+      return entry;
     }
-    return entry;
   }
 
   private scheduleIdleClose(entry: RuntimeEntry): void {
