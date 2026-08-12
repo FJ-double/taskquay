@@ -122,18 +122,29 @@ const competingDaemon = new LocalAgentDaemon({
 });
 
 try {
-  await ownerDaemon.start();
+  const startupResults = await Promise.allSettled([
+    ownerDaemon.start(),
+    competingDaemon.start(),
+  ]);
+  assert.equal(
+    startupResults.filter((result) => result.status === "fulfilled").length,
+    1,
+    "only one competing daemon may acquire the state-directory lock",
+  );
+  assert.equal(
+    startupResults.filter((result) => result.status === "rejected").length,
+    1,
+  );
   const lockBefore = readFileSync(ownerDaemon.paths.lockPath, "utf8");
   const pidBefore = readFileSync(ownerDaemon.paths.pidPath, "utf8");
   assert.notEqual(ownerDaemon.paths.endpoint, "");
-  await assert.rejects(competingDaemon.start(), /already running/);
   assert.equal(readFileSync(ownerDaemon.paths.lockPath, "utf8"), lockBefore);
   assert.equal(readFileSync(ownerDaemon.paths.pidPath, "utf8"), pidBefore);
-  if (process.platform === "win32") {
-    assert.match(ownerDaemon.paths.endpoint, /^\\\\\.\\pipe\\/);
-  } else {
-    assert.equal(existsSync(ownerDaemon.paths.socketPath), true);
-  }
+  const ownerClient = new LocalAgentClient({
+    stateDir: ownershipStateDir,
+    spawnDaemon: () => { throw new Error("the winning daemon should already be reachable"); },
+  });
+  assert.equal((await ownerClient.status()).pid, process.pid);
 } finally {
   await competingDaemon.close();
   await ownerDaemon.close();
@@ -159,8 +170,10 @@ try {
 
   shutdownSocket = createConnection(socketDaemon.paths.endpoint);
   await onceSocket(shutdownSocket, "connect");
+  const shutdownSocketClosed = onceSocket(shutdownSocket, "close");
   const startedAt = Date.now();
   await socketDaemon.close();
+  await shutdownSocketClosed;
   assert.ok(Date.now() - startedAt < 500, "shutdown should destroy idle client sockets before closing the server");
 } finally {
   shutdownSocket?.destroy();
