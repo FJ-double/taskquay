@@ -108,6 +108,11 @@ await assert.rejects(
 );
 
 assert.equal(manager.get(stale.id, scope)?.status, "running");
+assert.throws(
+  () => manager.get(stale.id, { workspaceId: "ws_current", workspaceRoot: root }),
+  /different workspace/,
+  "agents must not be controlled with an unrelated workspace id",
+);
 manager.reconcileActiveRuns();
 assert.equal(manager.get(stale.id, scope)?.status, "error");
 assert.equal(manager.get(stale.id, scope)?.latestResponse, "previous response");

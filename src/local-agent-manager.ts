@@ -318,7 +318,11 @@ export class LocalAgentManager {
     if (workspaceRoot !== record.workspaceRoot) {
       throw new Error(`Subagent ${record.id} belongs to a different workspace.`);
     }
+<<<<<<< HEAD
     if (!record.workspaceId || record.workspaceId !== scope.workspaceId) {
+=======
+    if (record.workspaceId !== scope.workspaceId) {
+>>>>>>> 90b5d09 (fix: require scoped local agent listings)
       throw new Error(`Subagent ${record.id} belongs to a different workspace.`);
     }
   }
