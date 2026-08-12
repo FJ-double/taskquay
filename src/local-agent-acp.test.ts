@@ -63,7 +63,7 @@ const runtime = new AcpRuntime({
 
 const first = await runtime.run({
   prompt: "first",
-  workspace: "/tmp/project",
+  workspaceRoot: "/tmp/project",
   model: "model-a",
   thinking: "high",
   writeMode: "read_only",
@@ -72,7 +72,7 @@ const first = await runtime.run({
 });
 const warm = await runtime.run({
   prompt: "warm",
-  workspace: "/tmp/project",
+  workspaceRoot: "/tmp/project",
   providerSessionId: first.providerSessionId ?? undefined,
   model: "model-a",
   thinking: "high",
@@ -121,7 +121,7 @@ assert.equal(
 await assert.rejects(
   resumedRuntime.run({
     prompt: "resumed",
-    workspace: "/tmp/project",
+    workspaceRoot: "/tmp/project",
     providerSessionId: first.providerSessionId ?? undefined,
     model: "model-that-is-not-advertised-after-resume",
     modelOverrideRequested: true,
@@ -251,7 +251,7 @@ const cachedDriver = new AcpLocalAgentDriver("cursor", {}, () => {
 const cachedContext = {
   agentId: "agt_acp",
   provider: "cursor" as const,
-  workspace: "/tmp/project",
+  workspaceRoot: "/tmp/project",
   writeMode: "allowed" as const,
 };
 const resolvedProject = resolve("/tmp/project");

@@ -64,20 +64,20 @@ const pool = new LocalAgentRuntimePool();
 const first = await pool.run(driver, {
   agentId: "agt_one",
   provider: "opencode",
-  workspace: "/tmp/project",
+  workspaceRoot: "/tmp/project",
   }, {
     prompt: "first",
-    workspace: "/tmp/project",
+    workspaceRoot: "/tmp/project",
     model: "anthropic/sonnet",
     thinking: "high",
   });
 const second = await pool.run(driver, {
   agentId: "agt_two",
   provider: "opencode",
-  workspace: "/tmp/project",
+  workspaceRoot: "/tmp/project",
 }, {
   prompt: "second",
-  workspace: "/tmp/project",
+  workspaceRoot: "/tmp/project",
 });
 
 assert.equal(factoryCalls, 1, "OpenCode agents share one server runtime");
@@ -98,10 +98,10 @@ let callbackSessionId: string | undefined;
 await pool.run(driver, {
   agentId: "agt_one",
   provider: "opencode",
-  workspace: "/tmp/project",
+  workspaceRoot: "/tmp/project",
 }, {
   prompt: "thinking override",
-  workspace: "/tmp/project",
+  workspaceRoot: "/tmp/project",
   providerSessionId: first.providerSessionId ?? undefined,
   thinking: "low",
 }, {
@@ -184,20 +184,20 @@ const recoveringPool = new LocalAgentRuntimePool();
 await recoveringPool.run(recoveringDriver, {
   agentId: "agt_dead",
   provider: "opencode",
-  workspace: "/tmp/project",
+  workspaceRoot: "/tmp/project",
 }, {
   prompt: "initial",
-  workspace: "/tmp/project",
+  workspaceRoot: "/tmp/project",
 });
 healthAvailable = false;
 await assert.rejects(
   recoveringPool.run(recoveringDriver, {
     agentId: "agt_dead",
     provider: "opencode",
-    workspace: "/tmp/project",
+    workspaceRoot: "/tmp/project",
   }, {
     prompt: "dead runtime",
-    workspace: "/tmp/project",
+    workspaceRoot: "/tmp/project",
   }),
   /health check failed/,
 );
@@ -205,10 +205,10 @@ assert.equal(recoveringPool.size, 0, "a failed health check removes the dead run
 await recoveringPool.run(recoveringDriver, {
   agentId: "agt_dead",
   provider: "opencode",
-  workspace: "/tmp/project",
+  workspaceRoot: "/tmp/project",
 }, {
   prompt: "recreated",
-  workspace: "/tmp/project",
+  workspaceRoot: "/tmp/project",
 });
 assert.equal(recoveringFactoryCalls, 2, "the next turn creates a fresh OpenCode server");
 await recoveringPool.close();

@@ -104,7 +104,7 @@ export class PiSessionRuntime implements LocalAgentRuntime {
   }
 
   private async applyOverrides(input: LocalAgentRunInput): Promise<void> {
-    await updatePiSandboxSession(this.session, input.workspace, input.writeMode ?? "allowed");
+    await updatePiSandboxSession(this.session, input.workspaceRoot, input.writeMode ?? "allowed");
     this.session.setActiveToolsByName([...piToolsForWriteMode(input.writeMode)]);
     if (input.model) {
       const model = resolvePiModel(this.session.modelRegistry, input.model);
@@ -130,7 +130,7 @@ export class PiLocalAgentDriver implements LocalAgentDriver {
   async createRuntime(context: LocalAgentRuntimeContext): Promise<LocalAgentRuntime> {
     const input: LocalAgentRunInput = {
       prompt: "",
-      workspace: context.workspace,
+      workspaceRoot: context.workspaceRoot,
       providerSessionId: context.providerSessionId,
       writeMode: context.writeMode,
       model: context.model,
@@ -158,19 +158,19 @@ async function defaultPiSessionFactory(
   const agentDir = getAgentDir();
   const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
   const modelRegistry = ModelRegistry.create(authStorage, join(agentDir, "models.json"));
-  const sessionManager = await resolveSessionManager(SessionManager, input.workspace, input.providerSessionId);
+  const sessionManager = await resolveSessionManager(SessionManager, input.workspaceRoot, input.providerSessionId);
   const model = input.model ? resolvePiModel(modelRegistry, input.model) : undefined;
   if (input.model && !model) throw new Error(`Pi model not found: ${input.model}`);
   const modeRef = createPiSandboxModeRef(input.writeMode ?? "allowed");
   const resourceLoader = new DefaultResourceLoader({
-    cwd: input.workspace,
+    cwd: input.workspaceRoot,
     agentDir,
-    extensionFactories: [createPiSandboxExtension(input.workspace, modeRef)],
+    extensionFactories: [createPiSandboxExtension(input.workspaceRoot, modeRef)],
   });
   let session: PiSessionLike | undefined;
   try {
     const result = await createAgentSession({
-      cwd: input.workspace,
+      cwd: input.workspaceRoot,
       agentDir,
       authStorage,
       modelRegistry,
@@ -183,7 +183,7 @@ async function defaultPiSessionFactory(
       tools: [...PI_FULL_ACCESS_TOOLS],
     });
     session = result.session;
-    await registerPiSandboxSession(session, input.workspace, modeRef, input.writeMode ?? "allowed");
+    await registerPiSandboxSession(session, input.workspaceRoot, modeRef, input.writeMode ?? "allowed");
     session.setActiveToolsByName([...piToolsForWriteMode(input.writeMode)]);
     return session;
   } catch (error) {
@@ -216,11 +216,11 @@ interface PiSessionManagerApi {
 
 async function resolveSessionManager(
   SessionManager: PiSessionManagerApi,
-  workspace: string,
+  workspaceRoot: string,
   providerSessionId: string | undefined,
 ): Promise<unknown> {
-  if (!providerSessionId) return SessionManager.create(workspace);
-  const sessions = await SessionManager.list(workspace);
+  if (!providerSessionId) return SessionManager.create(workspaceRoot);
+  const sessions = await SessionManager.list(workspaceRoot);
   const match = sessions.find((session) => session.id === providerSessionId);
   if (!match) throw new Error(`Pi session not found: ${providerSessionId}`);
   return SessionManager.open(match.path);

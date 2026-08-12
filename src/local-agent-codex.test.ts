@@ -19,7 +19,7 @@ const cachedDriver = new CodexLocalAgentDriver(
     return { executable: "/usr/local/bin/codex", version: "1.2.3" };
   },
 );
-const cachedContext = { agentId: "agt_test", provider: "codex" as const, workspace: "/tmp/project" };
+const cachedContext = { agentId: "agt_test", provider: "codex" as const, workspaceRoot: "/tmp/project" };
 const resolvedCodexHome = resolve("/tmp/codex-home");
 assert.equal(cachedDriver.runtimeKey(cachedContext), `codex:/usr/local/bin/codex:${resolvedCodexHome}`);
 assert.equal(cachedDriver.runtimeKey(cachedContext), `codex:/usr/local/bin/codex:${resolvedCodexHome}`);
@@ -91,14 +91,14 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     let callbackSessionId: string | undefined;
     const first = await runtime.run({
       prompt: "first",
-      workspace: "/tmp/project",
+      workspaceRoot: "/tmp/project",
       writeMode: "read_only",
       model: "gpt-5.4",
       thinking: "high",
     }, { onSessionId: (id) => { callbackSessionId = id; } });
     const resumed = await runtime.run({
       prompt: "resumed",
-      workspace: "/tmp/project",
+      workspaceRoot: "/tmp/project",
       providerSessionId: first.providerSessionId ?? undefined,
     });
     assert.equal(first.providerSessionId, "thread_new");
