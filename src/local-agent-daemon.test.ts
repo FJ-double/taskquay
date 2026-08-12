@@ -128,7 +128,11 @@ try {
   await assert.rejects(competingDaemon.start(), /already running/);
   assert.equal(readFileSync(ownerDaemon.paths.lockPath, "utf8"), lockBefore);
   assert.equal(readFileSync(ownerDaemon.paths.pidPath, "utf8"), pidBefore);
-  assert.equal(existsSync(ownerDaemon.paths.socketPath), true);
+  if (process.platform === "win32") {
+    assert.match(ownerDaemon.paths.endpoint, /^\\\\\.\\pipe\\/);
+  } else {
+    assert.equal(existsSync(ownerDaemon.paths.socketPath), true);
+  }
 } finally {
   await competingDaemon.close();
   await ownerDaemon.close();
