@@ -145,16 +145,14 @@ export class LocalAgentManager {
     this.accepting = false;
     const turns = Array.from(this.activeTurns.values());
     this.closePromise = (async () => {
+      // Closing pooled runtimes is what interrupts provider turns. Waiting for
+      // those turns first can strand a provider process indefinitely.
+      await this.pool.close();
       const turnResults = await Promise.allSettled(turns);
       for (const result of turnResults) {
         if (result.status === "rejected") {
           this.log("warn", "local_agent_close_failed", { error: errorMessage(result.reason) });
         }
-      }
-      try {
-        await this.pool.close();
-      } catch (error) {
-        this.log("warn", "local_agent_close_failed", { error: errorMessage(error) });
       }
       this.store.close();
     })();

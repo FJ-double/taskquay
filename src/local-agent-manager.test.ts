@@ -168,8 +168,7 @@ const shuttingDown = await manager.start({
 await waitFor(() => runtimes.get(shuttingDown.id)?.inputs.length === 1);
 const closing = manager.close();
 await new Promise<void>((resolve) => setImmediate(resolve));
-assert.equal(runtimes.get(shuttingDown.id)?.closed, false);
-runtimes.get(shuttingDown.id)!.release();
+assert.equal(runtimes.get(shuttingDown.id)?.closed, true);
 await closing;
 
 await manager.close();

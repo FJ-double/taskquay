@@ -33,6 +33,7 @@ const daemon = new LocalAgentDaemon({
   stateDir: paths.stateDir,
   manager,
   onLockAcquired: () => { manager.reconcileActiveRuns(); },
+  onClosed: () => { if (!shuttingDown) process.exit(0); },
   idleShutdownMs: parseIdleShutdownMs(process.env.DEVSPACE_AGENTD_IDLE_TIMEOUT_MS),
 });
 

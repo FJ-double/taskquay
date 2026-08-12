@@ -49,6 +49,7 @@ export interface LocalAgentDaemonOptions {
   now?: () => number;
   paths?: LocalAgentDaemonPaths;
   onLockAcquired?: () => void | Promise<void>;
+  onClosed?: () => void;
 }
 
 export class LocalAgentDaemon {
@@ -61,6 +62,7 @@ export class LocalAgentDaemon {
   private readonly shutdownTimeoutMs: number;
   private readonly now: () => number;
   private readonly onLockAcquired?: () => void | Promise<void>;
+  private readonly onClosed?: () => void;
   private readonly sockets = new Set<Socket>();
   private server?: NetServer;
   private idleTimer?: NodeJS.Timeout;
@@ -82,6 +84,7 @@ export class LocalAgentDaemon {
     this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULT_DAEMON_SHUTDOWN_TIMEOUT_MS;
     this.now = options.now ?? Date.now;
     this.onLockAcquired = options.onLockAcquired;
+    this.onClosed = options.onClosed;
     if (!Number.isFinite(this.idleShutdownMs) || this.idleShutdownMs < 0) {
       throw new Error("Agent daemon idle shutdown must be a non-negative finite duration.");
     }
@@ -180,6 +183,7 @@ export class LocalAgentDaemon {
       writeLocalAgentDaemonLog(this.paths, "info", "daemon_stopped", {});
       this.server = undefined;
       this.authToken = undefined;
+      this.onClosed?.();
     })();
     return this.closePromise;
   }

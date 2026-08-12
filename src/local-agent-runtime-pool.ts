@@ -175,7 +175,8 @@ export class LocalAgentRuntimePool {
     this.closing = true;
     const entries = Array.from(this.entries.values());
     this.entries.clear();
-    this.closePromise = Promise.all(entries.map((entry) => this.closeEntry(entry, "server_shutdown"))).then(() => undefined);
+    this.closePromise = Promise.allSettled(entries.map((entry) => this.closeEntry(entry, "server_shutdown")))
+      .then(() => undefined);
     return this.closePromise;
   }
 
@@ -282,8 +283,31 @@ export class LocalAgentRuntimePool {
       } catch {
         return;
       }
-      if (reason !== "runtime_crashed" && reason !== "runtime_not_alive") {
+      if (reason !== "server_shutdown" && reason !== "runtime_crashed" && reason !== "runtime_not_alive") {
         await this.waitForNoActiveRuns(entry);
+      }
+      if (reason === "server_shutdown") {
+        // Shutdown is terminal for the provider runtime. Closing it first
+        // aborts stuck turns and avoids waiting forever before process cleanup.
+        // Do not release individual sessions here: that would race an active
+        // turn, and the provider runtime owns their final cleanup.
+        try {
+          await runtime.close();
+          this.log("info", "harness_runtime_closed", {
+            provider: entry.driver.provider,
+            runtimeKeyHash: hashRuntimeKey(entry.key),
+            reason,
+          });
+        } catch (error) {
+          this.log("warn", "harness_runtime_close_failed", {
+            provider: entry.driver.provider,
+            runtimeKeyHash: hashRuntimeKey(entry.key),
+            reason,
+            error: errorMessage(error),
+          });
+        }
+        entry.sessions.clear();
+        return;
       }
       await this.releaseSessions(entry, runtime, reason);
       try {

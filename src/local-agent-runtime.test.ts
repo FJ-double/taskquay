@@ -102,7 +102,7 @@ await running;
 await pool.close();
 await pool.close();
 assert.equal(runtime.closeCount, 1, "runtime close is idempotent");
-assert.deepEqual(runtime.releasedSessions, ["thread_1"]);
+assert.deepEqual(runtime.releasedSessions, [], "shutdown closes the runtime without racing session release");
 assert.equal(pool.size, 0);
 
 let clock = 0;
