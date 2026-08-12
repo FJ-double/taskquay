@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
+import { createConnection } from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { LocalAgentClient } from "./local-agent-client.js";
@@ -105,10 +106,72 @@ try {
   await rm(root, { recursive: true, force: true });
 }
 
+const ownershipStateDir = join(root, "ownership-state");
+const ownerManager = new FakeManager();
+const competingManager = new FakeManager();
+const ownerDaemon = new LocalAgentDaemon({
+  stateDir: ownershipStateDir,
+  manager: ownerManager,
+  idleShutdownMs: 60_000,
+});
+const competingDaemon = new LocalAgentDaemon({
+  stateDir: ownershipStateDir,
+  manager: competingManager,
+  idleShutdownMs: 60_000,
+});
+
+try {
+  await ownerDaemon.start();
+  const lockBefore = readFileSync(ownerDaemon.paths.lockPath, "utf8");
+  const pidBefore = readFileSync(ownerDaemon.paths.pidPath, "utf8");
+  assert.notEqual(ownerDaemon.paths.endpoint, "");
+  await assert.rejects(competingDaemon.start(), /already running/);
+  assert.equal(readFileSync(ownerDaemon.paths.lockPath, "utf8"), lockBefore);
+  assert.equal(readFileSync(ownerDaemon.paths.pidPath, "utf8"), pidBefore);
+  assert.equal(existsSync(ownerDaemon.paths.socketPath), true);
+} finally {
+  await competingDaemon.close();
+  await ownerDaemon.close();
+}
+
+const socketStateDir = join(root, "socket-state");
+const socketManager = new FakeManager();
+socketManager.activeTurnCount = 0;
+const socketDaemon = new LocalAgentDaemon({
+  stateDir: socketStateDir,
+  manager: socketManager,
+  requestReadTimeoutMs: 30,
+  shutdownTimeoutMs: 100,
+  idleShutdownMs: 60_000,
+});
+
+try {
+  await socketDaemon.start();
+  const idleSocket = createConnection(socketDaemon.paths.endpoint);
+  await onceSocket(idleSocket, "connect");
+  await onceSocket(idleSocket, "close");
+
+  const shutdownSocket = createConnection(socketDaemon.paths.endpoint);
+  await onceSocket(shutdownSocket, "connect");
+  const startedAt = Date.now();
+  await socketDaemon.close();
+  assert.ok(Date.now() - startedAt < 500, "shutdown should destroy idle client sockets before closing the server");
+} finally {
+  await socketDaemon.close();
+  await rm(root, { recursive: true, force: true });
+}
+
 async function waitFor(check: () => boolean): Promise<void> {
   const deadline = Date.now() + 2_000;
   while (!check() && Date.now() < deadline) {
     await new Promise<void>((resolve) => setTimeout(resolve, 10));
   }
   assert.equal(check(), true, "condition did not become true before timeout");
+}
+
+function onceSocket(socket: ReturnType<typeof createConnection>, event: "connect" | "close"): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    socket.once(event, () => resolve());
+    socket.once("error", reject);
+  });
 }

@@ -70,6 +70,7 @@ export class LocalAgentDaemon {
   private accepting = false;
   private stopping = false;
   private authToken?: string;
+  private ownsLock = false;
 
   constructor(options: LocalAgentDaemonOptions) {
     this.paths = options.paths ?? localAgentDaemonPaths(options.stateDir);
@@ -99,6 +100,7 @@ export class LocalAgentDaemon {
     try {
       this.lock.acquire();
       lockAcquired = true;
+      this.ownsLock = true;
       this.authToken = ensureLocalAgentDaemonSecret(this.paths);
       await this.onLockAcquired?.();
       if (process.platform !== "win32") rmSync(this.paths.socketPath, { force: true });
@@ -124,6 +126,7 @@ export class LocalAgentDaemon {
       this.authToken = undefined;
       if (lockAcquired) {
         this.lock.release();
+        this.ownsLock = false;
         removeLocalAgentDaemonFiles(this.paths);
       }
       if (error instanceof LocalAgentDaemonAlreadyRunningError) throw error;
@@ -147,6 +150,7 @@ export class LocalAgentDaemon {
 
   async close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
+    if (!this.ownsLock && !this.server) return;
     this.accepting = false;
     this.stopping = true;
     if (this.idleTimer) clearInterval(this.idleTimer);
