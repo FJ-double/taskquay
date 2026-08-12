@@ -86,7 +86,7 @@ export class LocalAgentClient {
     return result === null ? undefined : decodeAgentRecord(result);
   }
 
-  async list(scope: LocalAgentListScope = {}): Promise<LocalAgentRecord[]> {
+  async list(scope: LocalAgentListScope): Promise<LocalAgentRecord[]> {
     return decodeAgentRecordList(await this.request("agent.list", scope));
   }
 
