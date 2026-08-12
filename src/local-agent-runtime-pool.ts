@@ -28,11 +28,13 @@ interface RuntimeEntry {
   idleTimer?: NodeJS.Timeout;
   closing: boolean;
   readonly sessions: Map<string, SessionEntry>;
+  readonly activeRunWaiters: Set<() => void>;
 }
 
 interface SessionEntry {
   activeRuns: number;
   lastUsedAt: number;
+  releasePromise?: Promise<void>;
 }
 
 export interface LocalAgentRuntimePoolOptions {
@@ -87,25 +89,34 @@ export class LocalAgentRuntimePool {
     this.clearIdleTimer(entry);
     entry.activeRuns += 1;
     const sessionIds = new Set<string>();
-    const registerSession = (providerSessionId: string): void => {
+    const reserveSession = async (providerSessionId: string): Promise<void> => {
       if (!providerSessionId || sessionIds.has(providerSessionId)) return;
-      sessionIds.add(providerSessionId);
-      const session = entry.sessions.get(providerSessionId) ?? { activeRuns: 0, lastUsedAt: this.now() };
-      session.activeRuns += 1;
-      session.lastUsedAt = this.now();
-      entry.sessions.set(providerSessionId, session);
+      while (true) {
+        const existing = entry.sessions.get(providerSessionId);
+        if (existing?.releasePromise) {
+          await existing.releasePromise;
+          continue;
+        }
+        if (entry.closing) throw new Error("Local agent runtime is closing.");
+        const session = existing ?? { activeRuns: 0, lastUsedAt: this.now() };
+        sessionIds.add(providerSessionId);
+        session.activeRuns += 1;
+        session.lastUsedAt = this.now();
+        entry.sessions.set(providerSessionId, session);
+        return;
+      }
     };
-    registerSession(input.providerSessionId ?? "");
+    await reserveSession(input.providerSessionId ?? "");
     const callbacks: LocalAgentRunCallbacks = {
       onSessionId: async (providerSessionId) => {
-        registerSession(providerSessionId);
+        await reserveSession(providerSessionId);
         await inputCallbacks?.onSessionId?.(providerSessionId);
       },
     };
     const startedAt = this.now();
     try {
       const result = await runtime.run(input, callbacks);
-      registerSession(result.providerSessionId ?? "");
+      await reserveSession(result.providerSessionId ?? "");
       return result;
     } catch (error) {
       if (!runtime.isAlive()) {
@@ -137,6 +148,10 @@ export class LocalAgentRuntimePool {
         session.lastUsedAt = this.now();
       }
       entry.activeRuns -= 1;
+      if (entry.activeRuns === 0) {
+        for (const resolve of entry.activeRunWaiters) resolve();
+        entry.activeRunWaiters.clear();
+      }
       entry.lastUsedAt = this.now();
       if (entry.activeRuns === 0 && !entry.closing) this.scheduleIdleClose(entry);
     }
@@ -218,6 +233,7 @@ export class LocalAgentRuntimePool {
       lastUsedAt: this.now(),
       closing: false,
       sessions: new Map(),
+      activeRunWaiters: new Set(),
     };
     this.entries.set(key, entry);
     await createPromise;
@@ -266,6 +282,9 @@ export class LocalAgentRuntimePool {
       } catch {
         return;
       }
+      if (reason !== "runtime_crashed" && reason !== "runtime_not_alive") {
+        await this.waitForNoActiveRuns(entry);
+      }
       await this.releaseSessions(entry, runtime, reason);
       try {
         await runtime.close();
@@ -301,9 +320,27 @@ export class LocalAgentRuntimePool {
     runtime: LocalAgentRuntime,
     reason: string,
   ): Promise<void> {
-    const releases = Array.from(entry.sessions.keys()).map(async (providerSessionId) => {
+    const releases = Array.from(entry.sessions.keys()).map((providerSessionId) =>
+      this.releaseSession(entry, providerSessionId, runtime, reason));
+    await Promise.all(releases);
+    entry.sessions.clear();
+  }
+
+  private async releaseSession(
+    entry: RuntimeEntry,
+    providerSessionId: string,
+    runtime = entry.runtime,
+    reason = "idle_timeout",
+  ): Promise<void> {
+    const session = entry.sessions.get(providerSessionId);
+    if (!runtime || !session) return;
+    if (session.releasePromise) return session.releasePromise;
+    const releasePromise = (async () => {
       try {
         await runtime.releaseSession(providerSessionId);
+        if (entry.sessions.get(providerSessionId) === session && session.activeRuns === 0) {
+          entry.sessions.delete(providerSessionId);
+        }
       } catch (error) {
         this.log("warn", "harness_session_release_failed", {
           provider: entry.driver.provider,
@@ -313,28 +350,18 @@ export class LocalAgentRuntimePool {
           error: errorMessage(error),
         });
       }
-    });
-    await Promise.all(releases);
-    entry.sessions.clear();
+    })();
+    session.releasePromise = releasePromise;
+    try {
+      await releasePromise;
+    } finally {
+      if (entry.sessions.get(providerSessionId) === session) session.releasePromise = undefined;
+    }
   }
 
-  private async releaseSession(entry: RuntimeEntry, providerSessionId: string): Promise<void> {
-    const runtime = entry.runtime;
-    if (!runtime || entry.closing) return;
-    try {
-      await runtime.releaseSession(providerSessionId);
-      if (entry.sessions.get(providerSessionId)?.activeRuns === 0) {
-        entry.sessions.delete(providerSessionId);
-      }
-    } catch (error) {
-      this.log("warn", "harness_session_release_failed", {
-        provider: entry.driver.provider,
-        runtimeKeyHash: hashRuntimeKey(entry.key),
-        providerSessionIdPrefix: providerSessionId.slice(0, 8),
-        reason: "idle_timeout",
-        error: errorMessage(error),
-      });
-    }
+  private async waitForNoActiveRuns(entry: RuntimeEntry): Promise<void> {
+    if (entry.activeRuns === 0) return;
+    await new Promise<void>((resolve) => entry.activeRunWaiters.add(resolve));
   }
 
   private log(

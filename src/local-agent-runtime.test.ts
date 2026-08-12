@@ -22,12 +22,22 @@ class FakeRuntime implements LocalAgentRuntime {
   runCount = 0;
   readonly releasedSessions: string[] = [];
   private readonly pending: Array<() => void> = [];
+  releaseBlocked = false;
+  releaseStarted = false;
+  releaseInFlight = false;
+  private releaseResolve?: () => void;
 
   releaseWait(): void {
     for (const resolve of this.pending.splice(0)) resolve();
   }
 
+  finishSessionRelease(): void {
+    this.releaseResolve?.();
+    this.releaseResolve = undefined;
+  }
+
   async run(runInput: LocalAgentRunInput): Promise<LocalAgentRunResult> {
+    assert.equal(this.releaseInFlight, false, "a session turn must not overlap session release");
     this.runCount += 1;
     if (runInput.prompt === "wait") await new Promise<void>((resolve) => this.pending.push(resolve));
     return {
@@ -38,9 +48,14 @@ class FakeRuntime implements LocalAgentRuntime {
     };
   }
 
-  releaseSession(providerSessionId: string): Promise<void> {
+  async releaseSession(providerSessionId: string): Promise<void> {
+    this.releaseInFlight = true;
+    this.releaseStarted = true;
     this.releasedSessions.push(providerSessionId);
-    return Promise.resolve();
+    if (this.releaseBlocked) {
+      await new Promise<void>((resolve) => { this.releaseResolve = resolve; });
+    }
+    this.releaseInFlight = false;
   }
 
   isAlive(): boolean {
@@ -104,7 +119,17 @@ const sessionDriver: LocalAgentDriver = {
 };
 await sessionPool.run(sessionDriver, context, input);
 clock = 11;
-await sessionPool.evictIdle();
+sessionRuntime.releaseBlocked = true;
+const releasing = sessionPool.evictIdle();
+await waitFor(() => sessionRuntime.releaseStarted);
+const reused = sessionPool.run(sessionDriver, context, { ...input, providerSessionId: "thread_1", prompt: "reuse" });
+await new Promise<void>((resolve) => setImmediate(resolve));
+assert.equal(sessionRuntime.runCount, 1, "reuse waits for the in-flight session release");
+sessionRuntime.finishSessionRelease();
+await releasing;
+await reused;
+sessionRuntime.releaseBlocked = false;
+assert.equal(sessionRuntime.releaseInFlight, false);
 assert.deepEqual(sessionRuntime.releasedSessions, ["thread_1"]);
 assert.equal(sessionPool.size, 1, "releasing an idle session does not close the runtime");
 await sessionPool.close();
@@ -149,3 +174,11 @@ resolveCreation(raceRuntime);
 await pendingClose;
 await assert.rejects(pendingRun, /closed/);
 assert.equal(raceRuntime.closeCount, 1, "a runtime created during shutdown is closed");
+
+async function waitFor(check: () => boolean): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (!check() && Date.now() < deadline) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.equal(check(), true, "condition did not become true before timeout");
+}
