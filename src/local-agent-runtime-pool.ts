@@ -301,8 +301,10 @@ export class LocalAgentRuntimePool {
       if (reason === "server_shutdown") {
         // Shutdown is terminal for the provider runtime. Closing it first
         // aborts stuck turns and avoids waiting forever before process cleanup.
-        // Do not release individual sessions here: that would race an active
-        // turn, and the provider runtime owns their final cleanup.
+        // Do not start new individual releases here: that would race an active
+        // turn, and the provider runtime owns their final cleanup. Existing
+        // idle-release work is awaited so provider cleanup never overlaps it.
+        await this.waitForSessionReleases(entry);
         try {
           await runtime.close();
           this.log("info", "harness_runtime_closed", {
@@ -398,6 +400,13 @@ export class LocalAgentRuntimePool {
   private async waitForNoActiveRuns(entry: RuntimeEntry): Promise<void> {
     if (entry.activeRuns === 0) return;
     await new Promise<void>((resolve) => entry.activeRunWaiters.add(resolve));
+  }
+
+  private async waitForSessionReleases(entry: RuntimeEntry): Promise<void> {
+    const releases = Array.from(entry.sessions.values())
+      .map((session) => session.releasePromise)
+      .filter((release): release is Promise<void> => Boolean(release));
+    await Promise.all(releases);
   }
 
   private log(

@@ -134,6 +134,29 @@ assert.deepEqual(sessionRuntime.releasedSessions, ["thread_1"]);
 assert.equal(sessionPool.size, 1, "releasing an idle session does not close the runtime");
 await sessionPool.close();
 
+const shutdownReleaseRuntime = new FakeRuntime();
+const shutdownReleasePool = new LocalAgentRuntimePool({
+  now: () => clock,
+  sessionIdleTimeoutMs: 10,
+});
+const shutdownReleaseDriver: LocalAgentDriver = {
+  provider: "codex",
+  idleTimeoutMs: Number.POSITIVE_INFINITY,
+  runtimeKey: () => "shutdown-release-runtime",
+  createRuntime: async () => shutdownReleaseRuntime,
+};
+await shutdownReleasePool.run(shutdownReleaseDriver, context, input);
+shutdownReleaseRuntime.releaseBlocked = true;
+const shutdownRelease = shutdownReleasePool.evictIdle(30);
+await waitFor(() => shutdownReleaseRuntime.releaseStarted);
+const shutdown = shutdownReleasePool.close();
+await new Promise<void>((resolve) => setImmediate(resolve));
+assert.equal(shutdownReleaseRuntime.closeCount, 0, "shutdown waits for an in-flight session release");
+shutdownReleaseRuntime.finishSessionRelease();
+await shutdownRelease;
+await shutdown;
+assert.equal(shutdownReleaseRuntime.closeCount, 1);
+
 class CleanupFailureRuntime extends FakeRuntime {
   override async close(): Promise<void> {
     throw new Error("cleanup failed");
