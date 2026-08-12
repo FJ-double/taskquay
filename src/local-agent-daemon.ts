@@ -20,7 +20,7 @@ import {
   LocalAgentDaemonProtocolError,
 } from "./local-agent-daemon-protocol.js";
 import { LocalAgentConflictError, type RunOverrides, type StartLocalAgentInput } from "./local-agent-manager.js";
-import type { LocalAgentListScope, LocalAgentRecord } from "./local-agent-store.js";
+import type { LocalAgentListScope, LocalAgentRecord, LocalAgentWorkspaceScope } from "./local-agent-store.js";
 
 const MAX_REQUEST_BYTES = 512 * 1024;
 const DEFAULT_DAEMON_IDLE_SHUTDOWN_MS = 30_000;
@@ -30,8 +30,8 @@ const DEFAULT_DAEMON_SHUTDOWN_TIMEOUT_MS = 10_000;
 
 export interface LocalAgentDaemonManager {
   start(input: StartLocalAgentInput): Promise<LocalAgentRecord>;
-  continue(agentId: string, prompt: string, overrides?: RunOverrides): Promise<LocalAgentRecord>;
-  get(agentId: string): LocalAgentRecord | undefined;
+  continue(agentId: string, prompt: string, overrides?: RunOverrides, scope?: LocalAgentWorkspaceScope): Promise<LocalAgentRecord>;
+  get(agentId: string, scope?: LocalAgentWorkspaceScope): LocalAgentRecord | undefined;
   list(scope?: LocalAgentListScope): LocalAgentRecord[];
   evictIdle(now?: number): Promise<void>;
   close(): Promise<void>;
@@ -248,9 +248,9 @@ export class LocalAgentDaemon {
       case "agent.start":
         return this.manager.start(request.params);
       case "agent.continue":
-        return this.manager.continue(request.params.id, request.params.prompt, request.params.overrides);
+        return this.manager.continue(request.params.id, request.params.prompt, request.params.overrides, request.params.scope);
       case "agent.get":
-        return this.manager.get(request.params.id) ?? null;
+        return this.manager.get(request.params.id, request.params.scope) ?? null;
       case "agent.list":
         return this.manager.list(request.params);
       case "daemon.status":

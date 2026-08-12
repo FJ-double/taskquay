@@ -374,10 +374,11 @@ async function runAgentsContinue(args: string[]): Promise<void> {
   const parsed = parseLocalAgentContinueArgs(args);
   const config = loadConfig();
   const client = createLocalAgentClient(config);
+  const scope = resolveCurrentWorkspaceScope();
   const record = await client.continue(parsed.agentId, parsed.prompt, {
     model: parsed.model,
     thinking: parsed.thinking,
-  });
+  }, scope);
   console.log(formatAgentLine(record));
 }
 
@@ -387,13 +388,14 @@ async function runAgentsShow(args: string[]): Promise<void> {
 
   const config = loadConfig();
   const client = createLocalAgentClient(config);
-  let record = await client.get(id);
+  const scope = resolveCurrentWorkspaceScope();
+  let record = await client.get(id, scope);
   if (!record) throw new Error(`Unknown subagent id: ${id}`);
 
   const deadline = Date.now() + 15_000;
   while ((record.status === "starting" || record.status === "running") && Date.now() < deadline) {
     await sleep(500);
-    record = await client.get(id) ?? record;
+    record = await client.get(id, scope) ?? record;
   }
 
   console.log(formatAgentLine(record));

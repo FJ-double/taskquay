@@ -29,6 +29,11 @@ export interface CreateLocalAgentRecordInput {
   thinking?: string;
 }
 
+export interface LocalAgentWorkspaceScope {
+  workspaceId?: string;
+  workspaceRoot: string;
+}
+
 export interface LocalAgentListScope {
   workspaceId?: string;
   workspaceRoot?: string;

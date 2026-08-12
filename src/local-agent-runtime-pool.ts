@@ -106,7 +106,6 @@ export class LocalAgentRuntimePool {
         return;
       }
     };
-    await reserveSession(input.providerSessionId ?? "");
     const callbacks: LocalAgentRunCallbacks = {
       onSessionId: async (providerSessionId) => {
         await reserveSession(providerSessionId);
@@ -115,6 +114,7 @@ export class LocalAgentRuntimePool {
     };
     const startedAt = this.now();
     try {
+      await reserveSession(input.providerSessionId ?? "");
       const result = await runtime.run(input, callbacks);
       await reserveSession(result.providerSessionId ?? "");
       return result;

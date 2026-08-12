@@ -155,6 +155,11 @@ const earlyFailure = await manager.start({
 await waitFor(() => manager.get(earlyFailure.id)?.status === "error");
 assert.equal(manager.get(earlyFailure.id)?.providerSessionId, "thread_early");
 
+await assert.rejects(
+  () => manager.continue(first.id, "wrong workspace", {}, { workspaceRoot: join(root, "other") }),
+  /different workspace/,
+);
+
 const shuttingDown = await manager.start({
   target: "reviewer",
   prompt: "hold during shutdown",

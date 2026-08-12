@@ -2,6 +2,7 @@ import type {
   LocalAgentListScope,
   LocalAgentRecord,
   LocalAgentStatus,
+  LocalAgentWorkspaceScope,
 } from "./local-agent-store.js";
 import type {
   RunOverrides,
@@ -23,8 +24,8 @@ export type LocalAgentDaemonMethod =
 export type LocalAgentDaemonRequest =
   | AgentDaemonRequestBase<"hello", Record<string, never>>
   | AgentDaemonRequestBase<"agent.start", StartLocalAgentInput>
-  | AgentDaemonRequestBase<"agent.continue", { id: string; prompt: string; overrides?: RunOverrides }>
-  | AgentDaemonRequestBase<"agent.get", { id: string }>
+  | AgentDaemonRequestBase<"agent.continue", { id: string; prompt: string; scope: LocalAgentWorkspaceScope; overrides?: RunOverrides }>
+  | AgentDaemonRequestBase<"agent.get", { id: string; scope: LocalAgentWorkspaceScope }>
   | AgentDaemonRequestBase<"agent.list", LocalAgentListScope>
   | AgentDaemonRequestBase<"daemon.status", Record<string, never>>
   | AgentDaemonRequestBase<"daemon.stop", Record<string, never>>
@@ -114,7 +115,10 @@ export function decodeLocalAgentDaemonRequest(value: unknown): LocalAgentDaemonR
         protocolVersion,
         method,
         authToken,
-        params: { id: requiredString(asRecord(params)?.id, "id") },
+        params: {
+          id: requiredString(asRecord(params)?.id, "id"),
+          scope: decodeWorkspaceScope(asRecord(params)?.scope),
+        },
       } as LocalAgentDaemonRequest;
     case "agent.list":
       return {
@@ -237,17 +241,27 @@ function decodeStartInput(value: unknown): StartLocalAgentInput {
   };
 }
 
-function decodeContinueInput(value: unknown): { id: string; prompt: string; overrides?: RunOverrides } {
+function decodeContinueInput(value: unknown): { id: string; prompt: string; scope: LocalAgentWorkspaceScope; overrides?: RunOverrides } {
   const record = asRecord(value);
   const overrides = asRecord(record?.overrides);
   return {
     id: requiredString(record?.id, "id"),
     prompt: requiredString(record?.prompt, "prompt"),
+    scope: decodeWorkspaceScope(record?.scope),
     ...(overrides ? { overrides: {
       model: optionalString(overrides.model),
       thinking: optionalString(overrides.thinking),
       writeMode: decodeWriteMode(overrides.writeMode),
     } } : {}),
+  };
+}
+
+function decodeWorkspaceScope(value: unknown): LocalAgentWorkspaceScope {
+  const record = asRecord(value);
+  if (!record) throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Workspace scope is required.");
+  return {
+    workspaceId: optionalString(record.workspaceId),
+    workspaceRoot: requiredString(record.workspaceRoot, "scope.workspaceRoot"),
   };
 }
 

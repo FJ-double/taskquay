@@ -71,7 +71,7 @@ try {
   });
   assert.equal(started.id, record.id);
   assert.equal(manager.lastInput?.prompt, "Review this");
-  assert.equal((await client.get(record.id))?.id, record.id);
+  assert.equal((await client.get(record.id, { workspaceRoot: record.workspaceRoot }))?.id, record.id);
   assert.equal((await client.list())[0]?.id, record.id);
   assert.equal((await client.status()).state, "ready");
 

@@ -23,7 +23,7 @@ import {
   type LocalAgentDaemonPaths,
 } from "./local-agent-daemon-lifecycle.js";
 import type { RunOverrides, StartLocalAgentInput } from "./local-agent-manager.js";
-import type { LocalAgentListScope, LocalAgentRecord } from "./local-agent-store.js";
+import type { LocalAgentListScope, LocalAgentRecord, LocalAgentWorkspaceScope } from "./local-agent-store.js";
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 8_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -71,17 +71,18 @@ export class LocalAgentClient {
     return decodeAgentRecord(result);
   }
 
-  async continue(agentId: string, prompt: string, overrides?: RunOverrides): Promise<LocalAgentRecord> {
+  async continue(agentId: string, prompt: string, overrides: RunOverrides = {}, scope: LocalAgentWorkspaceScope): Promise<LocalAgentRecord> {
     const result = await this.request("agent.continue", {
       id: agentId,
       prompt,
-      ...(overrides ? { overrides } : {}),
+      scope,
+      ...(Object.keys(overrides).length > 0 ? { overrides } : {}),
     });
     return decodeAgentRecord(result);
   }
 
-  async get(agentId: string): Promise<LocalAgentRecord | undefined> {
-    const result = await this.request("agent.get", { id: agentId });
+  async get(agentId: string, scope: LocalAgentWorkspaceScope): Promise<LocalAgentRecord | undefined> {
+    const result = await this.request("agent.get", { id: agentId, scope });
     return result === null ? undefined : decodeAgentRecord(result);
   }
 

@@ -9,6 +9,7 @@ import {
   type LocalAgentListScope,
   type LocalAgentRecord,
   type LocalAgentStore,
+  type LocalAgentWorkspaceScope,
 } from "./local-agent-store.js";
 import {
   type LocalAgentDriver,
@@ -119,17 +120,20 @@ export class LocalAgentManager {
     agentId: string,
     prompt: string,
     overrides: RunOverrides = {},
+    scope?: LocalAgentWorkspaceScope,
   ): Promise<LocalAgentRecord> {
     this.assertAccepting();
     const record = this.store.getById(agentId);
     if (!record) throw new Error(`Unknown subagent id: ${agentId}`);
-    this.authorizeWorkspace(record.workspaceRoot);
+    if (scope) this.assertAgentWorkspace(record, scope);
     this.assertDriver(record.provider);
     return this.begin(record, prompt, overrides);
   }
 
-  get(agentId: string): LocalAgentRecord | undefined {
-    return this.store.getById(agentId);
+  get(agentId: string, scope?: LocalAgentWorkspaceScope): LocalAgentRecord | undefined {
+    const record = this.store.getById(agentId);
+    if (record && scope) this.assertAgentWorkspace(record, scope);
+    return record;
   }
 
   list(scope: LocalAgentListScope = {}): LocalAgentRecord[] {
@@ -295,6 +299,16 @@ export class LocalAgentManager {
   private authorizeWorkspace(workspaceRoot: string): string {
     if (!this.allowedRoots) return workspaceRoot;
     return assertAllowedPath(workspaceRoot, [...this.allowedRoots]);
+  }
+
+  private assertAgentWorkspace(record: LocalAgentRecord, scope: LocalAgentWorkspaceScope): void {
+    const workspaceRoot = this.authorizeWorkspace(scope.workspaceRoot);
+    if (workspaceRoot !== record.workspaceRoot) {
+      throw new Error(`Subagent ${record.id} belongs to a different workspace.`);
+    }
+    if (record.workspaceId && record.workspaceId !== scope.workspaceId) {
+      throw new Error(`Subagent ${record.id} belongs to a different workspace.`);
+    }
   }
 
   private log(
