@@ -64,6 +64,7 @@ const client = new LocalAgentClient({
   spawnDaemon: () => { void daemon.start(); },
 });
 
+let shutdownSocket: ReturnType<typeof createConnection> | undefined;
 try {
   const started = await client.run({
     target: "reviewer",
@@ -153,14 +154,16 @@ try {
   await socketDaemon.start();
   const idleSocket = createConnection(socketDaemon.paths.endpoint);
   await onceSocket(idleSocket, "connect");
-  await onceSocket(idleSocket, "close");
+  await waitFor(() => socketDaemon.status().clientConnections === 0);
+  idleSocket.destroy();
 
-  const shutdownSocket = createConnection(socketDaemon.paths.endpoint);
+  shutdownSocket = createConnection(socketDaemon.paths.endpoint);
   await onceSocket(shutdownSocket, "connect");
   const startedAt = Date.now();
   await socketDaemon.close();
   assert.ok(Date.now() - startedAt < 500, "shutdown should destroy idle client sockets before closing the server");
 } finally {
+  shutdownSocket?.destroy();
   await socketDaemon.close();
   await rm(root, { recursive: true, force: true });
 }

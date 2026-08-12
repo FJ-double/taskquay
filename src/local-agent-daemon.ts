@@ -197,6 +197,7 @@ export class LocalAgentDaemon {
       if (handled) return;
       handled = true;
       this.writeError(socket, "", "REQUEST_TIMEOUT", "Timed out waiting for a complete daemon request.");
+      socket.destroy();
     }, this.requestReadTimeoutMs);
     requestTimer.unref();
     socket.on("data", (chunk: string | Buffer) => {
@@ -278,7 +279,7 @@ export class LocalAgentDaemon {
       protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
       ok: false,
       error: { code, message },
-    }));
+    }), () => socket.destroy());
   }
 
   private assertAuthenticated(authToken: string): void {
