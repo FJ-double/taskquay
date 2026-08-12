@@ -372,6 +372,7 @@ export class LocalAgentRuntimePool {
   ): Promise<void> {
     const session = entry.sessions.get(providerSessionId);
     if (!runtime || !session) return;
+    if (entry.closing && reason === "idle_timeout") return;
     if (session.releasePromise) return session.releasePromise;
     const releasePromise = (async () => {
       try {
