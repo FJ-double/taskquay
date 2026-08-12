@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { accessSync, constants } from "node:fs";
 import { delimiter, resolve } from "node:path";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import {
@@ -101,10 +101,10 @@ function commandAvailability(
 
 function resolveCommand(command: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
   const commandHasPath = command.includes("/") || command.includes("\\");
-  if (commandHasPath) return executableExists(command, env) ? command : undefined;
+  if (commandHasPath) return executableExists(command) ? command : undefined;
 
   for (const candidate of candidateCommandPaths(command, env)) {
-    if (executableExists(candidate, env)) return candidate;
+    if (executableExists(candidate)) return candidate;
   }
   return undefined;
 }
@@ -127,17 +127,14 @@ function candidateCommandPaths(command: string, env: NodeJS.ProcessEnv): string[
   return candidates;
 }
 
-function executableExists(command: string, env: NodeJS.ProcessEnv): boolean {
-  const result = spawnSync(command, ["--version"], {
-    encoding: "utf8",
-    env,
-    windowsHide: true,
-    timeout: 5_000,
-  });
-  const code = typeof result.error === "object" && result.error && "code" in result.error
-    ? result.error.code
-    : undefined;
-  return code !== "ENOENT";
+function executableExists(command: string): boolean {
+  const mode = process.platform === "win32" ? constants.F_OK : constants.X_OK;
+  try {
+    accessSync(command, mode);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function piAvailabilityEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
