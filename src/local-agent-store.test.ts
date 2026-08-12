@@ -41,9 +41,10 @@ try {
     store.list({ workspaceRoot: join(root, "project") }).map((agent) => agent.latestResponse),
     [undefined],
   );
-  assert.deepEqual(store.list({ workspaceId: "ws_1" }).map((agent) => agent.id), [created.id]);
-  assert.deepEqual(store.list({ workspaceId: "ws_other" }), []);
-  assert.deepEqual(store.list({ workspaceRoot: join(root, "other") }), []);
+assert.deepEqual(store.list({ workspaceId: "ws_1" }).map((agent) => agent.id), [created.id]);
+assert.deepEqual(store.list({ workspaceId: "ws_other" }), []);
+assert.deepEqual(store.list({ workspaceId: "ws_1", workspaceRoot: join(root, "other") }), []);
+assert.deepEqual(store.list({ workspaceRoot: join(root, "other") }), []);
 
   const otherStore = new LocalAgentStore(root);
   stores.push(otherStore);

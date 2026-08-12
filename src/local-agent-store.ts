@@ -64,7 +64,15 @@ export class LocalAgentStore {
 
   list(scope: LocalAgentListScope = {}): LocalAgentRecord[] {
     let rows: LocalAgentRow[];
-    if (scope.workspaceId) {
+    if (scope.workspaceId && scope.workspaceRoot) {
+      rows = this.database.sqlite
+        .prepare(
+          `select * from local_agent_sessions
+           where workspace_id = ? and workspace_root = ?
+           order by updated_at desc`,
+        )
+        .all(scope.workspaceId, resolve(scope.workspaceRoot)) as LocalAgentRow[];
+    } else if (scope.workspaceId) {
       rows = this.database.sqlite
         .prepare(
           `select * from local_agent_sessions

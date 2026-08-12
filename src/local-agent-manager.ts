@@ -137,7 +137,9 @@ export class LocalAgentManager {
   }
 
   list(scope: LocalAgentListScope = {}): LocalAgentRecord[] {
-    return this.store.list(scope);
+    return this.store.list(scope.workspaceRoot
+      ? { ...scope, workspaceRoot: this.authorizeWorkspace(scope.workspaceRoot) }
+      : scope);
   }
 
   async close(): Promise<void> {
