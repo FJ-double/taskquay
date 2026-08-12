@@ -9,6 +9,7 @@ import {
   isProcessAlive,
   localAgentDaemonPaths,
   removeLocalAgentDaemonFiles,
+  ensureLocalAgentDaemonSecret,
   writeLocalAgentDaemonPid,
 } from "./local-agent-daemon-lifecycle.js";
 
@@ -23,6 +24,13 @@ try {
     () => new LocalAgentDaemonLock(paths).acquire(),
     (error: unknown) => error instanceof LocalAgentDaemonAlreadyRunningError,
   );
+  await writeFile(paths.pidPath, "999999\n", { mode: 0o600 });
+  assert.throws(
+    () => new LocalAgentDaemonLock(paths).acquire(),
+    (error: unknown) => error instanceof LocalAgentDaemonAlreadyRunningError,
+    "a stale diagnostic PID must not override the live lock owner",
+  );
+  assert.equal(ensureLocalAgentDaemonSecret(paths).length, 64);
   lock.release();
 
   await writeFile(paths.pidPath, "999999\n", { mode: 0o600 });

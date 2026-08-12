@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   chmodSync,
   closeSync,
@@ -6,6 +6,7 @@ import {
   openSync,
   readFileSync,
   rmSync,
+  statSync,
   writeSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
@@ -14,6 +15,7 @@ export const LOCAL_AGENT_DAEMON_PROTOCOL_VERSION = 1;
 export const LOCAL_AGENT_DAEMON_SOCKET_NAME = "agentd.sock";
 export const LOCAL_AGENT_DAEMON_PID_NAME = "agentd.pid";
 export const LOCAL_AGENT_DAEMON_LOCK_NAME = "agentd.lock";
+export const LOCAL_AGENT_DAEMON_SECRET_NAME = "agentd.secret";
 export const LOCAL_AGENT_DAEMON_LOG_NAME = "agentd.log";
 
 export interface LocalAgentDaemonPaths {
@@ -21,6 +23,7 @@ export interface LocalAgentDaemonPaths {
   socketPath: string;
   pidPath: string;
   lockPath: string;
+  secretPath: string;
   logPath: string;
   endpoint: string;
 }
@@ -36,6 +39,7 @@ export function localAgentDaemonPaths(
     socketPath,
     pidPath: join(resolvedStateDir, LOCAL_AGENT_DAEMON_PID_NAME),
     lockPath: join(resolvedStateDir, LOCAL_AGENT_DAEMON_LOCK_NAME),
+    secretPath: join(resolvedStateDir, LOCAL_AGENT_DAEMON_SECRET_NAME),
     logPath: join(resolvedStateDir, LOCAL_AGENT_DAEMON_LOG_NAME),
     endpoint: platform === "win32"
       ? `\\\\.\\pipe\\devspace-agentd-${hashStateDir(resolvedStateDir)}`
@@ -74,14 +78,17 @@ export class LocalAgentDaemonLock {
         return;
       } catch (error) {
         if (!isFileExistsError(error)) throw error;
-        const pid = readDaemonPid(this.paths.pidPath);
+        const pid = readDaemonPid(this.paths.lockPath);
         if (pid !== undefined && isProcessAlive(pid)) {
           throw new LocalAgentDaemonAlreadyRunningError(pid);
+        }
+        if (pid === undefined && isRecentlyCreated(this.paths.lockPath)) {
+          throw new LocalAgentDaemonAlreadyRunningError();
         }
         rmSync(this.paths.lockPath, { force: true });
       }
     }
-    throw new LocalAgentDaemonAlreadyRunningError(readDaemonPid(this.paths.pidPath));
+    throw new LocalAgentDaemonAlreadyRunningError(readDaemonPid(this.paths.lockPath));
   }
 
   release(): void {
@@ -95,6 +102,33 @@ export class LocalAgentDaemonLock {
 
 export function writeLocalAgentDaemonPid(paths: LocalAgentDaemonPaths): void {
   writeFileSecure(paths.pidPath, `${process.pid}\n`);
+}
+
+export function ensureLocalAgentDaemonSecret(paths: LocalAgentDaemonPaths): string {
+  ensureLocalAgentDaemonStateDir(paths.stateDir);
+  try {
+    const secret = readFileSync(paths.secretPath, "utf8").trim();
+    if (secret.length >= 32) return secret;
+  } catch {
+    // Create the secret below.
+  }
+
+  const secret = randomBytes(32).toString("hex");
+  try {
+    const fileDescriptor = openSync(paths.secretPath, "wx", 0o600);
+    try {
+      writeSync(fileDescriptor, `${secret}\n`);
+      chmodSync(paths.secretPath, 0o600);
+      return secret;
+    } finally {
+      closeSync(fileDescriptor);
+    }
+  } catch (error) {
+    if (!isFileExistsError(error)) throw error;
+    const existing = readFileSync(paths.secretPath, "utf8").trim();
+    if (existing.length < 32) throw new Error("Local agent daemon secret is invalid.");
+    return existing;
+  }
 }
 
 export function removeLocalAgentDaemonFiles(paths: LocalAgentDaemonPaths): void {
@@ -134,6 +168,20 @@ function writeFileSecure(path: string, content: string): void {
 
 function isFileExistsError(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === "EEXIST";
+}
+
+function isRecentlyCreated(path: string): boolean {
+  try {
+    return Date.now() - requireStat(path) < 1_000;
+  } catch {
+    return false;
+  }
+}
+
+function requireStat(path: string): number {
+  // Keep the lock recovery path synchronous so no caller can observe a
+  // second owner between reading and deciding whether to remove the lock.
+  return statSync(path).mtimeMs;
 }
 
 function hashStateDir(stateDir: string): string {

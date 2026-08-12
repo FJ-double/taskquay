@@ -10,6 +10,7 @@ import {
 const request = decodeLocalAgentDaemonRequest({
   requestId: "req_1",
   protocolVersion: 1,
+  authToken: "test-secret",
   method: "agent.start",
   params: {
     target: "reviewer",
@@ -26,6 +27,7 @@ assert.throws(
   () => decodeLocalAgentDaemonRequest({
     requestId: "req_2",
     protocolVersion: 1,
+    authToken: "test-secret",
     method: "agent.start",
     params: { target: "reviewer", prompt: "" },
   }),

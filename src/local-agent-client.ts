@@ -18,7 +18,9 @@ import {
 } from "./local-agent-daemon-protocol.js";
 import {
   LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+  ensureLocalAgentDaemonSecret,
   localAgentDaemonPaths,
+  type LocalAgentDaemonPaths,
 } from "./local-agent-daemon-lifecycle.js";
 import type { RunOverrides, StartLocalAgentInput } from "./local-agent-manager.js";
 import type { LocalAgentListScope, LocalAgentRecord } from "./local-agent-store.js";
@@ -44,6 +46,7 @@ export class LocalAgentDaemonClientError extends Error {
 
 export class LocalAgentClient {
   private readonly stateDir: string;
+  private readonly paths: LocalAgentDaemonPaths;
   private readonly endpoint: string;
   private readonly startupTimeoutMs: number;
   private readonly requestTimeoutMs: number;
@@ -52,7 +55,8 @@ export class LocalAgentClient {
 
   constructor(options: LocalAgentClientOptions) {
     this.stateDir = options.stateDir;
-    this.endpoint = options.endpoint ?? localAgentDaemonPaths(options.stateDir).endpoint;
+    this.paths = localAgentDaemonPaths(options.stateDir);
+    this.endpoint = options.endpoint ?? this.paths.endpoint;
     this.startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.spawnDaemon = options.spawnDaemon ?? (() => spawnLocalAgentDaemon(options.stateDir));
@@ -134,6 +138,7 @@ export class LocalAgentClient {
       const response = await sendRequest(this.endpoint, {
         requestId: randomUUID(),
         protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+        authToken: ensureLocalAgentDaemonSecret(this.paths),
         method: "hello",
         params: {},
       }, this.requestTimeoutMs);
@@ -159,6 +164,7 @@ export class LocalAgentClient {
     const response = await sendRequest(this.endpoint, {
       requestId: randomUUID(),
       protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+      authToken: ensureLocalAgentDaemonSecret(this.paths),
       method,
       params,
     } as LocalAgentDaemonRequest, this.requestTimeoutMs);

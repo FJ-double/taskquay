@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { appendFileSync, chmodSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Server as NetServer, type Socket } from "node:net";
 import {
@@ -5,6 +6,7 @@ import {
   LocalAgentDaemonAlreadyRunningError,
   LocalAgentDaemonLock,
   ensureLocalAgentDaemonStateDir,
+  ensureLocalAgentDaemonSecret,
   localAgentDaemonPaths,
   removeLocalAgentDaemonFiles,
   type LocalAgentDaemonPaths,
@@ -23,6 +25,8 @@ import type { LocalAgentListScope, LocalAgentRecord } from "./local-agent-store.
 const MAX_REQUEST_BYTES = 512 * 1024;
 const DEFAULT_DAEMON_IDLE_SHUTDOWN_MS = 30_000;
 const DEFAULT_IDLE_CHECK_INTERVAL_MS = 1_000;
+const DEFAULT_REQUEST_READ_TIMEOUT_MS = 5_000;
+const DEFAULT_DAEMON_SHUTDOWN_TIMEOUT_MS = 10_000;
 
 export interface LocalAgentDaemonManager {
   start(input: StartLocalAgentInput): Promise<LocalAgentRecord>;
@@ -40,6 +44,8 @@ export interface LocalAgentDaemonOptions {
   manager: LocalAgentDaemonManager;
   idleShutdownMs?: number;
   idleCheckIntervalMs?: number;
+  requestReadTimeoutMs?: number;
+  shutdownTimeoutMs?: number;
   now?: () => number;
   paths?: LocalAgentDaemonPaths;
   onLockAcquired?: () => void | Promise<void>;
@@ -51,6 +57,8 @@ export class LocalAgentDaemon {
   private readonly lock: LocalAgentDaemonLock;
   private readonly idleShutdownMs: number;
   private readonly idleCheckIntervalMs: number;
+  private readonly requestReadTimeoutMs: number;
+  private readonly shutdownTimeoutMs: number;
   private readonly now: () => number;
   private readonly onLockAcquired?: () => void | Promise<void>;
   private readonly sockets = new Set<Socket>();
@@ -61,6 +69,7 @@ export class LocalAgentDaemon {
   private startedAt?: string;
   private accepting = false;
   private stopping = false;
+  private authToken?: string;
 
   constructor(options: LocalAgentDaemonOptions) {
     this.paths = options.paths ?? localAgentDaemonPaths(options.stateDir);
@@ -68,18 +77,29 @@ export class LocalAgentDaemon {
     this.lock = new LocalAgentDaemonLock(this.paths);
     this.idleShutdownMs = options.idleShutdownMs ?? DEFAULT_DAEMON_IDLE_SHUTDOWN_MS;
     this.idleCheckIntervalMs = options.idleCheckIntervalMs ?? DEFAULT_IDLE_CHECK_INTERVAL_MS;
+    this.requestReadTimeoutMs = options.requestReadTimeoutMs ?? DEFAULT_REQUEST_READ_TIMEOUT_MS;
+    this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? DEFAULT_DAEMON_SHUTDOWN_TIMEOUT_MS;
     this.now = options.now ?? Date.now;
     this.onLockAcquired = options.onLockAcquired;
     if (!Number.isFinite(this.idleShutdownMs) || this.idleShutdownMs < 0) {
       throw new Error("Agent daemon idle shutdown must be a non-negative finite duration.");
+    }
+    if (!Number.isFinite(this.requestReadTimeoutMs) || this.requestReadTimeoutMs <= 0) {
+      throw new Error("Agent daemon request read timeout must be a positive finite duration.");
+    }
+    if (!Number.isFinite(this.shutdownTimeoutMs) || this.shutdownTimeoutMs < 0) {
+      throw new Error("Agent daemon shutdown timeout must be a non-negative finite duration.");
     }
   }
 
   async start(): Promise<LocalAgentDaemonStatus> {
     if (this.server) return this.status();
     ensureLocalAgentDaemonStateDir(this.paths.stateDir);
+    let lockAcquired = false;
     try {
       this.lock.acquire();
+      lockAcquired = true;
+      this.authToken = ensureLocalAgentDaemonSecret(this.paths);
       await this.onLockAcquired?.();
       if (process.platform !== "win32") rmSync(this.paths.socketPath, { force: true });
       const server = createServer((socket) => this.handleConnection(socket));
@@ -101,8 +121,11 @@ export class LocalAgentDaemon {
       return this.status();
     } catch (error) {
       this.server = undefined;
-      this.lock.release();
-      removeLocalAgentDaemonFiles(this.paths);
+      this.authToken = undefined;
+      if (lockAcquired) {
+        this.lock.release();
+        removeLocalAgentDaemonFiles(this.paths);
+      }
       if (error instanceof LocalAgentDaemonAlreadyRunningError) throw error;
       throw error;
     }
@@ -132,9 +155,11 @@ export class LocalAgentDaemon {
         activeTurns: this.manager.activeTurnCount,
         runtimeCount: this.manager.runtimeCount,
       });
+      for (const socket of this.sockets) socket.destroy();
+      this.sockets.clear();
       const [serverResult, managerResult] = await Promise.allSettled([
-        closeServer(this.server),
-        this.manager.close(),
+        withTimeout(closeServer(this.server), this.shutdownTimeoutMs, "daemon socket shutdown"),
+        withTimeout(this.manager.close(), this.shutdownTimeoutMs, "daemon manager shutdown"),
       ]);
       if (serverResult.status === "rejected") {
         writeLocalAgentDaemonLog(this.paths, "warn", "daemon_socket_close_failed", {
@@ -146,12 +171,11 @@ export class LocalAgentDaemon {
           error: errorMessage(managerResult.reason),
         });
       }
-      for (const socket of this.sockets) socket.destroy();
-      this.sockets.clear();
       removeLocalAgentDaemonFiles(this.paths);
       this.lock.release();
       writeLocalAgentDaemonLog(this.paths, "info", "daemon_stopped", {});
       this.server = undefined;
+      this.authToken = undefined;
     })();
     return this.closePromise;
   }
@@ -161,6 +185,12 @@ export class LocalAgentDaemon {
     socket.setEncoding("utf8");
     let buffer = "";
     let handled = false;
+    const requestTimer = setTimeout(() => {
+      if (handled) return;
+      handled = true;
+      this.writeError(socket, "", "REQUEST_TIMEOUT", "Timed out waiting for a complete daemon request.");
+    }, this.requestReadTimeoutMs);
+    requestTimer.unref();
     socket.on("data", (chunk: string | Buffer) => {
       if (handled) return;
       buffer += chunk.toString();
@@ -172,11 +202,13 @@ export class LocalAgentDaemon {
       const newline = buffer.indexOf("\n");
       if (newline === -1) return;
       handled = true;
+      clearTimeout(requestTimer);
       const line = buffer.slice(0, newline);
       void this.handleLine(socket, line);
     });
     socket.on("error", () => undefined);
     socket.on("close", () => this.sockets.delete(socket));
+    socket.on("error", () => clearTimeout(requestTimer));
   }
 
   private async handleLine(socket: Socket, line: string): Promise<void> {
@@ -205,6 +237,7 @@ export class LocalAgentDaemon {
         `Unsupported daemon protocol version ${request.protocolVersion}; expected ${LOCAL_AGENT_DAEMON_PROTOCOL_VERSION}.`,
       );
     }
+    this.assertAuthenticated(request.authToken);
     if (!this.accepting && request.method !== "hello" && request.method !== "daemon.status") {
       throw new Error("Local agent daemon is stopping.");
     }
@@ -238,6 +271,13 @@ export class LocalAgentDaemon {
       ok: false,
       error: { code, message },
     }));
+  }
+
+  private assertAuthenticated(authToken: string): void {
+    const expected = this.authToken;
+    if (!expected || !safeEqual(authToken, expected)) {
+      throw new LocalAgentDaemonProtocolError("UNAUTHORIZED", "Invalid local agent daemon credentials.");
+    }
   }
 
   private async maintainIdle(): Promise<void> {
@@ -274,6 +314,30 @@ async function closeServer(server: NetServer | undefined): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve());
   });
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, operation: string): Promise<T> {
+  if (timeoutMs === 0) {
+    throw new Error(`${operation} timed out.`);
+  }
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${operation} timed out.`)), timeoutMs);
+        timer.unref();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function safeEqual(actual: string, expected: string): boolean {
+  const actualBuffer = Buffer.from(actual);
+  const expectedBuffer = Buffer.from(expected);
+  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
 function readRequestId(value: unknown): string {

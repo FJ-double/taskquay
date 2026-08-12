@@ -36,6 +36,7 @@ interface AgentDaemonRequestBase<
 > {
   requestId: string;
   protocolVersion: number;
+  authToken: string;
   method: M;
   params: P;
 }
@@ -82,6 +83,7 @@ export function decodeLocalAgentDaemonRequest(value: unknown): LocalAgentDaemonR
   const record = asRecord(value);
   const requestId = requiredString(record?.requestId, "requestId");
   const protocolVersion = requiredInteger(record?.protocolVersion, "protocolVersion");
+  const authToken = requiredString(record?.authToken, "authToken");
   const method = requiredString(record?.method, "method") as LocalAgentDaemonMethod;
   const params = record?.params;
 
@@ -89,11 +91,12 @@ export function decodeLocalAgentDaemonRequest(value: unknown): LocalAgentDaemonR
     case "hello":
     case "daemon.status":
     case "daemon.stop":
-      return { requestId, protocolVersion, method, params: decodeEmptyParams(params) } as LocalAgentDaemonRequest;
+      return { requestId, protocolVersion, authToken, method, params: decodeEmptyParams(params) } as LocalAgentDaemonRequest;
     case "agent.start":
       return {
         requestId,
         protocolVersion,
+        authToken,
         method,
         params: decodeStartInput(params),
       } as LocalAgentDaemonRequest;
@@ -101,6 +104,7 @@ export function decodeLocalAgentDaemonRequest(value: unknown): LocalAgentDaemonR
       return {
         requestId,
         protocolVersion,
+        authToken,
         method,
         params: decodeContinueInput(params),
       } as LocalAgentDaemonRequest;
@@ -109,12 +113,14 @@ export function decodeLocalAgentDaemonRequest(value: unknown): LocalAgentDaemonR
         requestId,
         protocolVersion,
         method,
+        authToken,
         params: { id: requiredString(asRecord(params)?.id, "id") },
       } as LocalAgentDaemonRequest;
     case "agent.list":
       return {
         requestId,
         protocolVersion,
+        authToken,
         method,
         params: decodeListScope(params),
       } as LocalAgentDaemonRequest;
@@ -122,6 +128,7 @@ export function decodeLocalAgentDaemonRequest(value: unknown): LocalAgentDaemonR
       return {
         requestId,
         protocolVersion,
+        authToken,
         method,
         params: decodeLogsParams(params),
       } as LocalAgentDaemonRequest;
