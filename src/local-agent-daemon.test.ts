@@ -189,9 +189,33 @@ async function waitFor(check: () => boolean): Promise<void> {
   assert.equal(check(), true, "condition did not become true before timeout");
 }
 
-function onceSocket(socket: ReturnType<typeof createConnection>, event: "connect" | "close"): Promise<void> {
+function onceSocket(
+  socket: ReturnType<typeof createConnection>,
+  event: "connect" | "close",
+  timeoutMs = 2_000,
+): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    socket.once(event, () => resolve());
-    socket.once("error", reject);
+    const onEvent = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Socket did not emit ${event} within ${timeoutMs}ms.`));
+    }, timeoutMs);
+    timeout.unref();
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      socket.off(event, onEvent);
+      socket.off("error", onError);
+    };
+
+    socket.once(event, onEvent);
+    socket.once("error", onError);
   });
 }
