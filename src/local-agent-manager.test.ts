@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { Result, type Result as BetterResult } from "better-result";
+import { Panic, Result, type Result as BetterResult } from "better-result";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -121,6 +121,27 @@ const manager = new LocalAgentManager({
   loadProfiles: async () => [profile, disabledProfile],
   allowedRoots: [root],
 });
+
+const defectStore = new LocalAgentStore(join(root, "defect-state"));
+const defectManager = new LocalAgentManager({
+  store: defectStore,
+  drivers: [driver],
+  pool: new LocalAgentRuntimePool(),
+  loadProfiles: async () => {
+    throw new TypeError("profile loader defect");
+  },
+  allowedRoots: [root],
+});
+await assert.rejects(
+  defectManager.start({
+    target: "reviewer",
+    prompt: "inspect",
+    workspaceId: scope.workspaceId,
+    workspaceRoot: root,
+  }),
+  (error: unknown) => Panic.is(error) && error.cause instanceof TypeError,
+);
+await defectManager.close();
 
 const outside = await manager.start({
   target: "reviewer",
