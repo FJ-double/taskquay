@@ -383,7 +383,9 @@ export async function captureAgentProviderResult<T>(input: {
 export function isProgrammerDefect(error: unknown): boolean {
   return error instanceof TypeError
     || error instanceof ReferenceError
-    || error instanceof SyntaxError;
+    || error instanceof SyntaxError
+    || error instanceof RangeError
+    || (error instanceof Error && error.name === "AssertionError");
 }
 
 function isAbortError(error: unknown): boolean {

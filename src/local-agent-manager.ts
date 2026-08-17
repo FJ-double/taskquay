@@ -157,6 +157,10 @@ export class LocalAgentManager {
     if (!record) return Result.err(agentNotFound(agentId));
     const scoped = this.agentWorkspaceResult(record, scope, "continue");
     if (scoped.isErr()) return scoped;
+    const profiles = await this.loadProfilesResult(record.workspaceRoot, record.profileName);
+    if (profiles.isErr()) return profiles;
+    const profile = this.profileForRecordResult(record, profiles.value);
+    if (profile.isErr()) return profile;
     const driver = this.driverResult(record.provider, "continue", agentId);
     if (driver.isErr()) return driver;
     return this.begin(record, prompt, overrides);
@@ -274,8 +278,12 @@ export class LocalAgentManager {
         this.persistRunError(record, profiles.error, startedAt);
         return;
       }
-      const profile = profiles.value.find((candidate) => candidate.name === record.profileName);
-      const input = this.buildRunInputResult(authorizedRecord, profile, prompt, overrides);
+      const profile = this.profileForRecordResult(record, profiles.value);
+      if (profile.isErr()) {
+        this.persistRunError(record, profile.error, startedAt);
+        return;
+      }
+      const input = this.buildRunInputResult(authorizedRecord, profile.value, prompt, overrides);
       if (input.isErr()) {
         this.persistRunError(record, input.error, startedAt);
         return;
@@ -372,6 +380,7 @@ export class LocalAgentManager {
       durationMs: Math.max(0, Date.now() - startedAt),
       errorCode: error.code,
       error: error.message,
+      causeType: safeCauseType("cause" in error ? error.cause : undefined),
       persistenceFailed: persisted.isErr(),
     });
   }
@@ -404,6 +413,33 @@ export class LocalAgentManager {
       modelOverrideRequested: overrides.model !== undefined,
       thinkingOverrideRequested: overrides.thinking !== undefined,
     });
+  }
+
+  private profileForRecordResult(
+    record: LocalAgentRecord,
+    profiles: readonly LocalAgentProfile[],
+  ): BetterResult<LocalAgentProfile | undefined, AgentTargetError> {
+    if (record.profileName === record.provider) return Result.ok(undefined);
+    const profile = profiles.find((candidate) => candidate.name === record.profileName);
+    if (!profile) {
+      return Result.err(new AgentTargetError({
+        code: "UNKNOWN_TARGET",
+        target: record.profileName,
+        provider: isLocalAgentProvider(record.provider) ? record.provider : undefined,
+        retryable: false,
+        message: `Subagent profile not found: ${record.profileName}.`,
+      }));
+    }
+    if (profile.disabled) {
+      return Result.err(new AgentTargetError({
+        code: "PROVIDER_DISABLED",
+        target: profile.name,
+        provider: profile.provider,
+        retryable: false,
+        message: `Subagent profile is disabled: ${profile.name}.`,
+      }));
+    }
+    return Result.ok(profile);
   }
 
   private driverResult(
@@ -520,6 +556,15 @@ export function createLocalAgentManager(options: LocalAgentManagerOptions): Loca
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function safeCauseType(cause: unknown): string | undefined {
+  if (cause instanceof Error) return cause.name;
+  if (cause && typeof cause === "object" && "error" in cause) {
+    const nested = (cause as { error?: unknown }).error;
+    if (nested instanceof Error) return nested.name;
+  }
+  return cause === undefined ? undefined : typeof cause;
 }
 
 function agentNotFound(agentId: string): AgentTargetError {

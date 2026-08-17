@@ -158,6 +158,17 @@ const unconfigured = await manager.start({
 assert.equal(unconfigured.isErr(), true);
 if (unconfigured.isErr()) assert.equal(unconfigured.error.code, "PROVIDER_NOT_CONFIGURED");
 
+const previouslyCreatedDisabled = store.create({
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+  profileName: disabledProfile.name,
+  provider: "codex",
+});
+store.update(previouslyCreatedDisabled.id, { status: "idle" });
+const disabledContinuation = await manager.continue(previouslyCreatedDisabled.id, "inspect", {}, scope);
+assert.equal(disabledContinuation.isErr(), true);
+if (disabledContinuation.isErr()) assert.equal(disabledContinuation.error.code, "PROVIDER_DISABLED");
+
 assert.equal(getRecord(stale.id).status, "running");
 
 const mismatchedGet = manager.get(stale.id, { workspaceId: "ws_current", workspaceRoot: root });
