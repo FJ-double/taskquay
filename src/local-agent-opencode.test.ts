@@ -81,9 +81,15 @@ const second = await pool.run(driver, {
 });
 
 assert.equal(factoryCalls, 1, "OpenCode agents share one server runtime");
-assert.equal(first.providerSessionId, "session_1");
-assert.equal(second.providerSessionId, "session_2");
-assert.equal(second.finalResponse, "response:session_2");
+assert.equal(first.isOk(), true);
+assert.equal(second.isOk(), true);
+if (first.isErr()) throw first.error;
+if (second.isErr()) throw second.error;
+const firstRecord = first.value;
+const secondRecord = second.value;
+assert.equal(firstRecord.providerSessionId, "session_1");
+assert.equal(secondRecord.providerSessionId, "session_2");
+assert.equal(secondRecord.finalResponse, "response:session_2");
 assert.deepEqual(createInputs[0], {
   location: { directory: "/tmp/project" },
   agent: "devspace_allowed",
@@ -102,12 +108,12 @@ await pool.run(driver, {
 }, {
   prompt: "thinking override",
   workspaceRoot: "/tmp/project",
-  providerSessionId: first.providerSessionId ?? undefined,
+  providerSessionId: firstRecord.providerSessionId ?? undefined,
   thinking: "low",
 }, {
   onSessionId: (id) => { callbackSessionId = id; },
 });
-assert.equal(callbackSessionId, first.providerSessionId);
+assert.equal(callbackSessionId, firstRecord.providerSessionId);
 assert.deepEqual(switchInputs[0], {
   sessionID: "session_1",
   model: { providerID: "anthropic", id: "sonnet", variant: "low" },
@@ -157,21 +163,22 @@ const applicationErrorDriver = new OpencodeLocalAgentDriver(async () => ({
   client: applicationErrorClient,
   server: { close: () => undefined },
 }));
-await assert.rejects(
-  applicationErrorPool.run(applicationErrorDriver, {
-    agentId: "agt_app_error",
-    provider: "opencode",
-    workspaceRoot: "/tmp/project",
-  }, { prompt: "bad input", workspaceRoot: "/tmp/project" }),
-  /server rejected invalid input/,
-);
+const applicationFailure = await applicationErrorPool.run(applicationErrorDriver, {
+  agentId: "agt_app_error",
+  provider: "opencode",
+  workspaceRoot: "/tmp/project",
+}, { prompt: "bad input", workspaceRoot: "/tmp/project" });
+assert.equal(applicationFailure.isErr(), true);
+if (applicationFailure.isErr()) assert.equal(applicationFailure.error.code, "PROVIDER_EXECUTION_ERROR");
 assert.equal(applicationErrorPool.size, 1, "ordinary provider errors must not evict a healthy server runtime");
 const recoveredApplicationTurn = await applicationErrorPool.run(applicationErrorDriver, {
   agentId: "agt_app_error",
   provider: "opencode",
   workspaceRoot: "/tmp/project",
 }, { prompt: "valid input", workspaceRoot: "/tmp/project" });
-assert.equal(recoveredApplicationTurn.finalResponse, "ok");
+assert.equal(recoveredApplicationTurn.isOk(), true);
+if (recoveredApplicationTurn.isErr()) throw recoveredApplicationTurn.error;
+assert.equal(recoveredApplicationTurn.value.finalResponse, "ok");
 await applicationErrorPool.close();
 
 let recoveringFactoryCalls = 0;
@@ -190,17 +197,16 @@ await recoveringPool.run(recoveringDriver, {
   workspaceRoot: "/tmp/project",
 });
 healthAvailable = false;
-await assert.rejects(
-  recoveringPool.run(recoveringDriver, {
-    agentId: "agt_dead",
-    provider: "opencode",
-    workspaceRoot: "/tmp/project",
-  }, {
-    prompt: "dead runtime",
-    workspaceRoot: "/tmp/project",
-  }),
-  /health check failed/,
-);
+const deadRuntime = await recoveringPool.run(recoveringDriver, {
+  agentId: "agt_dead",
+  provider: "opencode",
+  workspaceRoot: "/tmp/project",
+}, {
+  prompt: "dead runtime",
+  workspaceRoot: "/tmp/project",
+});
+assert.equal(deadRuntime.isErr(), true);
+if (deadRuntime.isErr()) assert.equal(deadRuntime.error.code, "PROVIDER_EXECUTION_ERROR");
 assert.equal(recoveringPool.size, 0, "a failed health check removes the dead runtime immediately");
 await recoveringPool.run(recoveringDriver, {
   agentId: "agt_dead",

@@ -96,8 +96,12 @@ await pool.run(driver, context, {
   writeMode: "read_only",
 });
 assert.equal(contexts.length, 1, "one warm Pi session serves successive turns");
-assert.equal(first.providerSessionId, "pi_session_1");
-assert.equal(second.finalResponse, "response:second");
+assert.equal(first.isOk(), true);
+assert.equal(second.isOk(), true);
+if (first.isErr()) throw first.error;
+if (second.isErr()) throw second.error;
+assert.equal(first.value.providerSessionId, "pi_session_1");
+assert.equal(second.value.finalResponse, "response:second");
 assert.deepEqual(sessions[0]?.model, { id: "model" });
 assert.equal(sessions[0]?.thinking, "high");
 assert.deepEqual(sessionIds, ["pi_session_1"]);

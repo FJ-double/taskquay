@@ -1,4 +1,10 @@
 import assert from "node:assert/strict";
+import { Result, type Result as BetterResult } from "better-result";
+import {
+  AgentProviderExecutionError,
+  AgentProviderUnavailableError,
+  type AgentProviderError,
+} from "./local-agent-errors.js";
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 import type {
   LocalAgentDriver,
@@ -36,16 +42,16 @@ class FakeRuntime implements LocalAgentRuntime {
     this.releaseResolve = undefined;
   }
 
-  async run(runInput: LocalAgentRunInput): Promise<LocalAgentRunResult> {
+  async run(runInput: LocalAgentRunInput): Promise<BetterResult<LocalAgentRunResult, AgentProviderError>> {
     assert.equal(this.releaseInFlight, false, "a session turn must not overlap session release");
     this.runCount += 1;
     if (runInput.prompt === "wait") await new Promise<void>((resolve) => this.pending.push(resolve));
-    return {
+    return Result.ok({
       provider: this.provider,
       providerSessionId: "thread_1",
       finalResponse: `done:${runInput.prompt}`,
       items: [],
-    };
+    });
   }
 
   async releaseSession(providerSessionId: string): Promise<void> {
@@ -78,7 +84,7 @@ const driver: LocalAgentDriver = {
   createRuntime: async () => {
     createCount += 1;
     await Promise.resolve();
-    return runtime;
+    return Result.ok(runtime);
   },
 };
 
@@ -88,8 +94,8 @@ const [first, second] = await Promise.all([
   pool.run(driver, { ...context, agentId: "agt_other" }, { ...input, prompt: "second" }),
 ]);
 assert.equal(createCount, 1, "runtime creation is single-flight per runtime key");
-assert.equal(first.finalResponse, "done:inspect");
-assert.equal(second.finalResponse, "done:second");
+assert.equal(unwrap(first).finalResponse, "done:inspect");
+assert.equal(unwrap(second).finalResponse, "done:second");
 assert.equal(runtime.runCount, 2);
 
 const running = pool.run(driver, context, { ...input, prompt: "wait", providerSessionId: "thread_1" });
@@ -115,7 +121,7 @@ const sessionDriver: LocalAgentDriver = {
   provider: "codex",
   idleTimeoutMs: Number.POSITIVE_INFINITY,
   runtimeKey: () => "session-runtime",
-  createRuntime: async () => sessionRuntime,
+  createRuntime: async () => Result.ok(sessionRuntime),
 };
 await sessionPool.run(sessionDriver, context, input);
 clock = 11;
@@ -143,7 +149,7 @@ const shutdownReleaseDriver: LocalAgentDriver = {
   provider: "codex",
   idleTimeoutMs: Number.POSITIVE_INFINITY,
   runtimeKey: () => "shutdown-release-runtime",
-  createRuntime: async () => shutdownReleaseRuntime,
+  createRuntime: async () => Result.ok(shutdownReleaseRuntime),
 };
 await shutdownReleasePool.run(shutdownReleaseDriver, context, input);
 shutdownReleaseRuntime.releaseBlocked = true;
@@ -162,9 +168,15 @@ class CleanupFailureRuntime extends FakeRuntime {
     throw new Error("cleanup failed");
   }
 
-  override async run(): Promise<LocalAgentRunResult> {
+  override async run(): Promise<BetterResult<LocalAgentRunResult, AgentProviderError>> {
     this.alive = false;
-    throw new Error("provider failed");
+    return Result.err(new AgentProviderExecutionError({
+      code: "PROVIDER_EXECUTION_ERROR",
+      provider: this.provider,
+      operation: "run",
+      retryable: false,
+      message: "provider failed",
+    }));
   }
 }
 
@@ -173,35 +185,130 @@ const cleanupRuntime = new CleanupFailureRuntime();
 const cleanupDriver: LocalAgentDriver = {
   provider: "codex",
   runtimeKey: () => "cleanup-runtime",
-  createRuntime: async () => cleanupRuntime,
+  createRuntime: async () => Result.ok(cleanupRuntime),
 };
-await assert.rejects(
-  cleanupPool.run(cleanupDriver, context, input),
-  /provider failed/,
-  "runtime cleanup must not replace the provider error",
-);
+const cleanupFailure = await cleanupPool.run(cleanupDriver, context, input);
+assert.equal(cleanupFailure.isErr(), true);
+if (cleanupFailure.isErr()) assert.equal(cleanupFailure.error.message, "provider failed");
 
-let resolveCreation!: (runtime: LocalAgentRuntime) => void;
-const creating = new Promise<LocalAgentRuntime>((resolve) => { resolveCreation = resolve; });
+let resolveCreation!: (runtime: BetterResult<LocalAgentRuntime, AgentProviderError>) => void;
+const creating = new Promise<BetterResult<LocalAgentRuntime, AgentProviderError>>((resolve) => { resolveCreation = resolve; });
 const raceRuntime = new FakeRuntime();
 const racePool = new LocalAgentRuntimePool();
 const raceDriver: LocalAgentDriver = {
   provider: "codex",
   runtimeKey: () => "creation-race",
-  createRuntime: async () => creating,
+  createRuntime: () => creating,
 };
 const pendingRun = racePool.run(raceDriver, context, input);
 await new Promise<void>((resolve) => setImmediate(resolve));
 const pendingClose = racePool.close();
-resolveCreation(raceRuntime);
+resolveCreation(Result.ok(raceRuntime));
 await pendingClose;
 await assert.rejects(pendingRun, /closed/);
 assert.equal(raceRuntime.closeCount, 1, "a runtime created during shutdown is closed");
 
+{
+  const creationStarted = deferred<void>();
+  const finishCreation = deferred<void>();
+  let createAttempts = 0;
+  const recoveryRuntime = new FakeRuntime();
+  const creationPool = new LocalAgentRuntimePool();
+  const creationDriver: LocalAgentDriver = {
+    provider: "codex",
+    runtimeKey: () => "creation-failure",
+    async createRuntime() {
+      createAttempts += 1;
+      if (createAttempts === 1) {
+        creationStarted.resolve();
+        await finishCreation.promise;
+        return Result.err(new AgentProviderUnavailableError({
+          code: "PROVIDER_UNAVAILABLE",
+          provider: "codex",
+          operation: "create_runtime",
+          retryable: true,
+          message: "runtime creation failed",
+        }));
+      }
+      return Result.ok(recoveryRuntime);
+    },
+  };
+
+  const firstRun = creationPool.run(creationDriver, context, input);
+  await creationStarted.promise;
+  const secondRun = creationPool.run(creationDriver, context, input);
+  const failedRuns = Promise.allSettled([firstRun, secondRun]);
+  finishCreation.resolve();
+
+  const results = await failedRuns;
+  assert.equal(createAttempts, 1, "concurrent callers share one failing creation attempt");
+  assert.equal(results.every((result) => result.status === "fulfilled" && result.value.isErr()), true);
+  assert.equal(creationPool.size, 0, "a failed starting entry is removed from the pool");
+
+  await creationPool.run(creationDriver, context, input);
+  assert.equal(createAttempts, 2, "a later caller can retry after creation fails");
+  await creationPool.close();
+}
+
+{
+  class FlakyReleaseRuntime extends FakeRuntime {
+    releaseAttempts = 0;
+
+    override releaseSession(): Promise<void> {
+      this.releaseAttempts += 1;
+      if (this.releaseAttempts === 1) throw new Error("session release failed");
+      return Promise.resolve();
+    }
+  }
+
+  let releaseClock = 0;
+  const releaseRuntime = new FlakyReleaseRuntime();
+  const releasePool = new LocalAgentRuntimePool({
+    now: () => releaseClock,
+    sessionIdleTimeoutMs: 10,
+  });
+  const releaseDriver: LocalAgentDriver = {
+    provider: "codex",
+    idleTimeoutMs: Number.POSITIVE_INFINITY,
+    runtimeKey: () => "release-failure",
+    createRuntime: async () => Result.ok(releaseRuntime),
+  };
+
+  await releasePool.run(releaseDriver, context, input);
+  releaseClock = 11;
+  await releasePool.evictIdle();
+  assert.equal(releaseRuntime.releaseAttempts, 1);
+
+  await releasePool.run(releaseDriver, context, { ...input, providerSessionId: "thread_1" });
+  releaseClock = 22;
+  await releasePool.evictIdle();
+  assert.equal(
+    releaseRuntime.releaseAttempts,
+    2,
+    "a failed release returns the session to retained state so it can be reused and retried",
+  );
+  await releasePool.close();
+}
+
+function unwrap<T, E>(result: BetterResult<T, E>): T {
+  if (result.isErr()) throw result.error;
+  return result.value;
+}
 async function waitFor(check: () => boolean): Promise<void> {
   const deadline = Date.now() + 2_000;
   while (!check() && Date.now() < deadline) {
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
   assert.equal(check(), true, "condition did not become true before timeout");
+}
+
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve(value?: T): void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }

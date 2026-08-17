@@ -1,4 +1,9 @@
 import { createHash } from "node:crypto";
+import { Result, type Result as BetterResult } from "better-result";
+import {
+  AgentProviderUnavailableError,
+  type AgentProviderError,
+} from "./local-agent-errors.js";
 import type {
   LocalAgentDriver,
   LocalAgentRunCallbacks,
@@ -20,7 +25,7 @@ interface RuntimeEntry {
   readonly driver: LocalAgentDriver;
   readonly idleTimeoutMs: number;
   readonly sessionIdleTimeoutMs: number;
-  readonly createPromise: Promise<LocalAgentRuntime>;
+  readonly createPromise: Promise<BetterResult<LocalAgentRuntime, AgentProviderError>>;
   runtime?: LocalAgentRuntime;
   activeRuns: number;
   lastUsedAt: number;
@@ -70,19 +75,30 @@ export class LocalAgentRuntimePool {
     context: LocalAgentRuntimeContext,
     input: LocalAgentRunInput,
     inputCallbacks?: LocalAgentRunCallbacks,
-  ): Promise<LocalAgentRunResult> {
+  ): Promise<BetterResult<LocalAgentRunResult, AgentProviderError>> {
     if (this.closing) throw new Error("Local agent runtime pool is closed.");
 
-    let entry = await this.acquire(driver, context);
+    let acquired = await this.acquire(driver, context);
+    if (acquired.isErr()) return acquired;
+    let entry = acquired.value;
     let runtime = entry.runtime;
     if (!runtime) throw new Error("Local agent runtime was created without a runtime.");
     if (!runtime.isAlive()) {
       await this.removeAndClose(entry, "runtime_not_alive");
-      entry = await this.acquire(driver, context);
+      acquired = await this.acquire(driver, context);
+      if (acquired.isErr()) return acquired;
+      entry = acquired.value;
       runtime = entry.runtime;
       if (!runtime || !runtime.isAlive()) {
         await this.removeAndClose(entry, "runtime_not_alive");
-        throw new Error("Local agent runtime exited during startup.");
+        return Result.err(new AgentProviderUnavailableError({
+          code: "PROVIDER_UNAVAILABLE",
+          provider: driver.provider,
+          agentId: context.agentId,
+          operation: "acquire_runtime",
+          retryable: true,
+          message: "Local agent runtime exited during startup.",
+        }));
       }
     }
 
@@ -116,7 +132,30 @@ export class LocalAgentRuntimePool {
     try {
       await reserveSession(input.providerSessionId ?? "");
       const result = await runtime.run(input, callbacks);
-      await reserveSession(result.providerSessionId ?? "");
+      if (result.isErr()) {
+        if (!runtime.isAlive()) {
+          try {
+            await this.removeAndClose(entry, "runtime_crashed");
+          } catch (cleanupError) {
+            this.log("warn", "harness_runtime_close_failed", {
+              provider: driver.provider,
+              runtimeKeyHash: hashRuntimeKey(entry.key),
+              reason: "runtime_crashed",
+              error: errorMessage(cleanupError),
+            });
+          }
+          this.log("warn", "harness_runtime_crashed", {
+            provider: driver.provider,
+            runtimeKeyHash: hashRuntimeKey(entry.key),
+            agentId: context.agentId,
+            providerSessionIdPrefix: input.providerSessionId?.slice(0, 8),
+            durationMs: Math.max(0, Math.round(this.now() - startedAt)),
+            error: result.error.message,
+          });
+        }
+        return result;
+      }
+      await reserveSession(result.value.providerSessionId ?? "");
       return result;
     } catch (error) {
       if (!runtime.isAlive()) {
@@ -187,7 +226,7 @@ export class LocalAgentRuntimePool {
   private async acquire(
     driver: LocalAgentDriver,
     context: LocalAgentRuntimeContext,
-  ): Promise<RuntimeEntry> {
+  ): Promise<BetterResult<RuntimeEntry, AgentProviderError>> {
     const key = driver.runtimeKey(context);
     while (true) {
       const existing = this.entries.get(key);
@@ -201,14 +240,15 @@ export class LocalAgentRuntimePool {
               agentId: context.agentId,
             });
           }
-          await existing.createPromise;
+          const created = await existing.createPromise;
+          if (created.isErr()) return created;
           if (
             !this.closing &&
             !existing.closing &&
             this.entries.get(key) === existing &&
             existing.runtime?.isAlive()
           ) {
-            return existing;
+            return Result.ok(existing);
           }
         }
         await this.removeAndClose(existing, "runtime_not_alive");
@@ -220,7 +260,12 @@ export class LocalAgentRuntimePool {
       let entry!: RuntimeEntry;
       const createPromise = Promise.resolve()
         .then(() => driver.createRuntime(context))
-        .then((runtime) => {
+        .then((result) => {
+          if (result.isErr()) {
+            if (this.entries.get(key) === entry) this.entries.delete(key);
+            return result;
+          }
+          const runtime = result.value;
           entry.runtime = runtime;
           entry.lastUsedAt = this.now();
           this.log("info", "harness_runtime_started", {
@@ -228,7 +273,7 @@ export class LocalAgentRuntimePool {
             runtimeKeyHash: hashRuntimeKey(key),
             agentId: context.agentId,
           });
-          return runtime;
+          return result;
         })
         .catch((error) => {
           if (this.entries.get(key) === entry) this.entries.delete(key);
@@ -248,12 +293,13 @@ export class LocalAgentRuntimePool {
         activeRunWaiters: new Set(),
       };
       this.entries.set(key, entry);
-      await createPromise;
+      const created = await createPromise;
+      if (created.isErr()) return created;
       if (this.closing || entry.closing || this.entries.get(key) !== entry) {
         await this.closeEntry(entry, "pool_shutdown_during_creation");
         throw new Error("Local agent runtime pool is closed.");
       }
-      return entry;
+      return Result.ok(entry);
     }
   }
 
@@ -289,12 +335,15 @@ export class LocalAgentRuntimePool {
     entry.closing = true;
     this.clearIdleTimer(entry);
     entry.closePromise = (async () => {
-      let runtime: LocalAgentRuntime;
+      let runtime: LocalAgentRuntime | undefined;
       try {
-        runtime = await entry.createPromise;
+        const created = await entry.createPromise;
+        if (created.isErr()) return;
+        runtime = created.value;
       } catch {
         return;
       }
+      if (!runtime) return;
       if (reason !== "server_shutdown" && reason !== "runtime_crashed" && reason !== "runtime_not_alive") {
         await this.waitForNoActiveRuns(entry);
       }

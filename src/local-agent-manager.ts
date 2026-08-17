@@ -236,12 +236,30 @@ export class LocalAgentManager {
         },
       };
       const result = await this.pool.run(driver, context, input, callbacks);
+      if (result.isErr()) {
+        const current = this.store.getById(record.id);
+        if (current) {
+          this.store.update(record.id, {
+            status: "error",
+            error: result.error.message,
+          });
+        }
+        this.log("error", "agent_run_failed", {
+          provider: record.provider,
+          agentId: record.id,
+          providerSessionIdPrefix: record.providerSessionId?.slice(0, 8),
+          durationMs: Math.max(0, Date.now() - startedAt),
+          error: result.error.message,
+        });
+        return;
+      }
+      const runResult = result.value;
       const current = this.store.getById(record.id);
       if (!current) return;
       const updated = this.store.update(record.id, {
-        providerSessionId: result.providerSessionId ?? current.providerSessionId,
+        providerSessionId: runResult.providerSessionId ?? current.providerSessionId,
         status: "idle",
-        latestResponse: result.finalResponse,
+        latestResponse: runResult.finalResponse,
         error: undefined,
       });
       this.log("info", "agent_run_completed", {

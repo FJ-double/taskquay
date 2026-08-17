@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import { Result, type Result as BetterResult } from "better-result";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { LocalAgentConflictError, LocalAgentManager } from "./local-agent-manager.js";
+import {
+  AgentProviderExecutionError,
+  type AgentProviderError,
+} from "./local-agent-errors.js";
 import type { LocalAgentProfile } from "./local-agent-profiles.js";
 import type {
   LocalAgentDriver,
@@ -32,22 +37,25 @@ class FakeRuntime implements LocalAgentRuntime {
   closed = false;
   private releaseHold: (() => void) | undefined;
 
-  async run(input: LocalAgentRunInput, callbacks?: { onSessionId?: (id: string) => void | Promise<void> }): Promise<LocalAgentRunResult> {
+  async run(
+    input: LocalAgentRunInput,
+    callbacks?: { onSessionId?: (id: string) => void | Promise<void> },
+  ): Promise<BetterResult<LocalAgentRunResult, AgentProviderError>> {
     this.inputs.push(input);
     if (input.prompt.includes("early-fail")) {
       await callbacks?.onSessionId?.("thread_early");
-      throw new Error("provider failed after session creation");
+      return Result.err(providerFailure("provider failed after session creation"));
     }
-    if (input.prompt.includes("fail")) throw new Error("provider failed");
+    if (input.prompt.includes("fail")) return Result.err(providerFailure("provider failed"));
     if (input.prompt.includes("hold")) {
       await new Promise<void>((resolve) => { this.releaseHold = resolve; });
     }
-    return {
+    return Result.ok({
       provider: this.provider,
       providerSessionId: "thread_test",
       finalResponse: `response:${input.prompt}`,
       items: [],
-    };
+    });
   }
 
   release(): void {
@@ -76,9 +84,19 @@ const driver: LocalAgentDriver = {
   createRuntime: async (context) => {
     const runtime = new FakeRuntime();
     runtimes.set(context.agentId, runtime);
-    return runtime;
+    return Result.ok(runtime);
   },
 };
+
+function providerFailure(message: string): AgentProviderExecutionError {
+  return new AgentProviderExecutionError({
+    code: "PROVIDER_EXECUTION_ERROR",
+    provider: "codex",
+    operation: "run",
+    retryable: false,
+    message,
+  });
+}
 
 const store = new LocalAgentStore(stateDir);
 const stale = store.create({

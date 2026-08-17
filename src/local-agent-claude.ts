@@ -1,6 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import {
+  AgentProviderExecutionError,
+  AgentProviderProtocolError,
+  AgentProviderUnavailableError,
+  captureAgentProviderResult,
+} from "./local-agent-errors.js";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
 import type {
   LocalAgentDriver,
@@ -80,61 +86,98 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
     this.iterator = query[Symbol.asyncIterator]();
   }
 
-  async run(input: LocalAgentRunInput, callbacks?: LocalAgentRunCallbacks): Promise<LocalAgentRunResult> {
-    if (!this.isAlive()) throw new Error("Claude runtime is not running.");
-    if (this.providerSessionId) await callbacks?.onSessionId?.(this.providerSessionId);
-    const flagSettings = claudeAuthoritySettings(input.workspaceRoot, input.writeMode);
-    if (input.thinking) {
-      Object.assign(flagSettings, {
-        alwaysThinkingEnabled: true,
-        effortLevel: input.thinking,
-      });
-    }
-    await this.query.applyFlagSettings(flagSettings);
-    await this.query.setPermissionMode(claudePermissionMode(input.writeMode));
-    if (input.model && this.query.setModel) await this.query.setModel(input.model);
-    this.inputQueue.push({
-      type: "user",
-      message: { role: "user", content: input.prompt },
-      parent_tool_use_id: null,
-    });
-
-    const items: unknown[] = [];
-    for (;;) {
-      let next: IteratorResult<unknown>;
-      try {
-        next = await this.iterator.next();
-      } catch (error) {
-        this.alive = false;
-        throw error;
-      }
-      if (next.done) {
-        this.alive = false;
-        throw new Error("Claude query ended before returning a result.");
-      }
-      const message = next.value;
-      items.push(message);
-      const record = asRecord(message);
-      if (typeof record?.session_id === "string") {
-        const previousSessionId = this.providerSessionId;
-        this.providerSessionId = record.session_id;
-        if (previousSessionId !== this.providerSessionId) {
-          await callbacks?.onSessionId?.(this.providerSessionId);
+  async run(input: LocalAgentRunInput, callbacks?: LocalAgentRunCallbacks) {
+    return captureAgentProviderResult({
+      provider: "claude",
+      operation: "run",
+      run: async (): Promise<LocalAgentRunResult> => {
+        if (!this.isAlive()) {
+          throw new AgentProviderUnavailableError({
+            code: "PROVIDER_UNAVAILABLE",
+            provider: "claude",
+            operation: "run",
+            retryable: true,
+            message: "Claude runtime is not running.",
+          });
         }
-      }
-      if (record?.type !== "result") continue;
+        if (this.providerSessionId) await callbacks?.onSessionId?.(this.providerSessionId);
+        const flagSettings = claudeAuthoritySettings(input.workspaceRoot, input.writeMode);
+        if (input.thinking) {
+          Object.assign(flagSettings, {
+            alwaysThinkingEnabled: true,
+            effortLevel: input.thinking,
+          });
+        }
+        await this.query.applyFlagSettings(flagSettings);
+        await this.query.setPermissionMode(claudePermissionMode(input.writeMode));
+        if (input.model && this.query.setModel) await this.query.setModel(input.model);
+        this.inputQueue.push({
+          type: "user",
+          message: { role: "user", content: input.prompt },
+          parent_tool_use_id: null,
+        });
 
-      const resultError = claudeResultError(record);
-      if (resultError) throw new Error(resultError);
-      const finalResponse = typeof record.result === "string" ? record.result.trim() : "";
-      if (!finalResponse) throw new Error("Claude did not return a final assistant response.");
-      return {
-        provider: this.provider,
-        providerSessionId: this.providerSessionId ?? null,
-        finalResponse,
-        items,
-      };
-    }
+        const items: unknown[] = [];
+        for (;;) {
+          let next: IteratorResult<unknown>;
+          try {
+            next = await this.iterator.next();
+          } catch (error) {
+            this.alive = false;
+            throw error;
+          }
+          if (next.done) {
+            this.alive = false;
+            throw new AgentProviderProtocolError({
+              code: "PROVIDER_PROTOCOL_ERROR",
+              provider: "claude",
+              operation: "run",
+              retryable: true,
+              message: "Claude query ended before returning a result.",
+            });
+          }
+          const message = next.value;
+          items.push(message);
+          const record = asRecord(message);
+          if (typeof record?.session_id === "string") {
+            const previousSessionId = this.providerSessionId;
+            this.providerSessionId = record.session_id;
+            if (previousSessionId !== this.providerSessionId) {
+              await callbacks?.onSessionId?.(this.providerSessionId);
+            }
+          }
+          if (record?.type !== "result") continue;
+
+          const resultError = claudeResultError(record);
+          if (resultError) {
+            throw new AgentProviderExecutionError({
+              code: "PROVIDER_EXECUTION_ERROR",
+              provider: "claude",
+              operation: "run",
+              retryable: false,
+              cause: new Error(resultError),
+              message: "Claude agent turn failed.",
+            });
+          }
+          const finalResponse = typeof record.result === "string" ? record.result.trim() : "";
+          if (!finalResponse) {
+            throw new AgentProviderProtocolError({
+              code: "PROVIDER_PROTOCOL_ERROR",
+              provider: "claude",
+              operation: "run",
+              retryable: false,
+              message: "Claude did not return a final assistant response.",
+            });
+          }
+          return {
+            provider: this.provider,
+            providerSessionId: this.providerSessionId ?? null,
+            finalResponse,
+            items,
+          };
+        }
+      },
+    });
   }
 
   async releaseSession(_providerSessionId: string): Promise<void> {
@@ -168,22 +211,29 @@ export class ClaudeLocalAgentDriver implements LocalAgentDriver {
     return `claude:${context.agentId}:${authority}`;
   }
 
-  async createRuntime(context: LocalAgentRuntimeContext): Promise<LocalAgentRuntime> {
-    const inputQueue = new AsyncInputQueue<ClaudeUserMessage>();
-    const input: LocalAgentRunInput = {
-      prompt: "",
-      workspaceRoot: context.workspaceRoot,
-      providerSessionId: context.providerSessionId,
-      writeMode: context.writeMode,
-      model: context.model,
-      thinking: context.thinking,
-    };
-    const query = await this.factory({
-      context,
-      options: claudeQueryOptions(context, input, this.env),
-      prompt: inputQueue,
+  async createRuntime(context: LocalAgentRuntimeContext) {
+    return captureAgentProviderResult({
+      provider: this.provider,
+      agentId: context.agentId,
+      operation: "create_runtime",
+      run: async (): Promise<LocalAgentRuntime> => {
+        const inputQueue = new AsyncInputQueue<ClaudeUserMessage>();
+        const input: LocalAgentRunInput = {
+          prompt: "",
+          workspaceRoot: context.workspaceRoot,
+          providerSessionId: context.providerSessionId,
+          writeMode: context.writeMode,
+          model: context.model,
+          thinking: context.thinking,
+        };
+        const query = await this.factory({
+          context,
+          options: claudeQueryOptions(context, input, this.env),
+          prompt: inputQueue,
+        });
+        return new ClaudeQueryRuntime(query, inputQueue, context);
+      },
     });
-    return new ClaudeQueryRuntime(query, inputQueue, context);
   }
 }
 

@@ -1,4 +1,8 @@
-import { TaggedError } from "better-result";
+import {
+  Result,
+  TaggedError,
+  type Result as BetterResult,
+} from "better-result";
 import {
   isLocalAgentProvider,
   type LocalAgentProvider,
@@ -183,6 +187,7 @@ export function providerErrorFromCause(input: {
   cause: unknown;
 }): AgentProviderError | undefined {
   if (isAgentProviderError(input.cause)) return input.cause;
+  if (isLocalAgentError(input.cause)) return undefined;
   if (isProgrammerDefect(input.cause)) return undefined;
   if (isAbortError(input.cause)) {
     return new AgentProviderCancelledError({
@@ -215,6 +220,26 @@ export function providerErrorFromCause(input: {
     cause: input.cause,
     message: `${displayProvider(input.provider)} agent execution failed.`,
   });
+}
+
+export async function captureAgentProviderResult<T>(input: {
+  provider: LocalAgentProvider;
+  agentId?: string;
+  operation: string;
+  run: () => T | Promise<T>;
+}): Promise<BetterResult<T, AgentProviderError>> {
+  try {
+    return Result.ok(await input.run());
+  } catch (cause) {
+    const error = providerErrorFromCause({
+      provider: input.provider,
+      agentId: input.agentId,
+      operation: input.operation,
+      cause,
+    });
+    if (!error) throw cause;
+    return Result.err(error);
+  }
 }
 
 export function isProgrammerDefect(error: unknown): boolean {

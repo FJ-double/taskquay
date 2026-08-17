@@ -81,9 +81,12 @@ assert.equal(
   "full access uses a query initialized with the explicit dangerous-permission opt-in",
 );
 
-const runtime = await driver.createRuntime(context);
+const runtimeResult = await driver.createRuntime(context);
+assert.equal(runtimeResult.isOk(), true);
+if (runtimeResult.isErr()) throw runtimeResult.error;
+const runtime = runtimeResult.value;
 const sessionIds: string[] = [];
-const first = await runtime.run({
+const firstResult = await runtime.run({
   prompt: "first",
   workspaceRoot: "/tmp/project",
   model: "sonnet",
@@ -92,18 +95,25 @@ const first = await runtime.run({
 }, {
   onSessionId: (sessionId) => { sessionIds.push(sessionId); },
 });
-const second = await runtime.run({
+assert.equal(firstResult.isOk(), true);
+if (firstResult.isErr()) throw firstResult.error;
+const first = firstResult.value;
+const secondResult = await runtime.run({
   prompt: "second",
   workspaceRoot: "/tmp/project",
   thinking: "low",
   writeMode: "allowed",
 });
-await runtime.run({
+assert.equal(secondResult.isOk(), true);
+if (secondResult.isErr()) throw secondResult.error;
+const second = secondResult.value;
+const third = await runtime.run({
   prompt: "third",
   workspaceRoot: "/tmp/project",
   thinking: "high",
   writeMode: "full_access",
 });
+assert.equal(third.isOk(), true);
 assert.equal(factoryCalls, 1, "successive turns reuse one Claude query");
 assert.equal(first.providerSessionId, "claude_session_1");
 assert.equal(second.finalResponse, "response:second");
@@ -163,5 +173,26 @@ await runtime.close();
 await runtime.close();
 assert.equal(query?.closeCount, 1);
 
-await driver.createRuntime({ ...context, providerSessionId: "cold_session" });
+const coldRuntime = await driver.createRuntime({ ...context, providerSessionId: "cold_session" });
+assert.equal(coldRuntime.isOk(), true);
 assert.equal(lastOptions?.resume, "cold_session");
+
+const cancelled = await new ClaudeLocalAgentDriver(async () => {
+  throw new DOMException("cancelled", "AbortError");
+}).createRuntime(context);
+assert.equal(cancelled.isErr(), true);
+if (cancelled.isErr()) assert.equal(cancelled.error.code, "PROVIDER_CANCELLED");
+
+const execution = await new ClaudeLocalAgentDriver(async () => {
+  throw new Error("sdk failed");
+}).createRuntime(context);
+assert.equal(execution.isErr(), true);
+if (execution.isErr()) assert.equal(execution.error.code, "PROVIDER_EXECUTION_ERROR");
+
+await assert.rejects(
+  new ClaudeLocalAgentDriver(async () => {
+    throw new TypeError("internal defect");
+  }).createRuntime(context),
+  TypeError,
+  "programmer defects must not be reclassified as provider failures",
+);

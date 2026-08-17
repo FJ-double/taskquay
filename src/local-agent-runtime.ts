@@ -1,3 +1,5 @@
+import type { Result } from "better-result";
+import type { AgentProviderError } from "./local-agent-errors.js";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
 
 export type LocalAgentWriteMode = "read_only" | "allowed" | "full_access";
@@ -47,7 +49,10 @@ export interface LocalAgentRuntimeContext {
  */
 export interface LocalAgentRuntime {
   readonly provider: LocalAgentProvider;
-  run(input: LocalAgentRunInput, callbacks?: LocalAgentRunCallbacks): Promise<LocalAgentRunResult>;
+  run(
+    input: LocalAgentRunInput,
+    callbacks?: LocalAgentRunCallbacks,
+  ): Promise<Result<LocalAgentRunResult, AgentProviderError>>;
   releaseSession(providerSessionId: string): Promise<void>;
   close(): Promise<void>;
   isAlive(): boolean;
@@ -56,6 +61,6 @@ export interface LocalAgentRuntime {
 export interface LocalAgentDriver {
   readonly provider: LocalAgentProvider;
   runtimeKey(context: LocalAgentRuntimeContext): string;
-  createRuntime(context: LocalAgentRuntimeContext): Promise<LocalAgentRuntime>;
+  createRuntime(context: LocalAgentRuntimeContext): Promise<Result<LocalAgentRuntime, AgentProviderError>>;
   readonly idleTimeoutMs?: number;
 }

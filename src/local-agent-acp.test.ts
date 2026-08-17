@@ -61,7 +61,7 @@ const runtime = new AcpRuntime({
   queues,
 }, connection);
 
-const first = await runtime.run({
+const firstResult = await runtime.run({
   prompt: "first",
   workspaceRoot: "/tmp/project",
   model: "model-a",
@@ -70,7 +70,10 @@ const first = await runtime.run({
 }, {
   onSessionId: (sessionId) => { sessionIds.push(sessionId); },
 });
-const warm = await runtime.run({
+assert.equal(firstResult.isOk(), true);
+if (firstResult.isErr()) throw firstResult.error;
+const first = firstResult.value;
+const warmResult = await runtime.run({
   prompt: "warm",
   workspaceRoot: "/tmp/project",
   providerSessionId: first.providerSessionId ?? undefined,
@@ -80,6 +83,9 @@ const warm = await runtime.run({
 }, {
   onSessionId: (sessionId) => { sessionIds.push(sessionId); },
 });
+assert.equal(warmResult.isOk(), true);
+if (warmResult.isErr()) throw warmResult.error;
+const warm = warmResult.value;
 
 assert.equal(first.providerSessionId, "cursor_session_1");
 assert.equal(warm.finalResponse, "ACP response");
@@ -105,30 +111,31 @@ const resumedRuntime = new AcpRuntime({
   capabilities: { resume: true, close: false },
   queues,
 }, connection);
-const resumedPersisted = await resumedRuntime.run({
+const resumedPersistedResult = await resumedRuntime.run({
   prompt: "resumed with persisted config",
   workspaceRoot: "/tmp/project",
   providerSessionId: first.providerSessionId ?? undefined,
   model: "model-a",
   thinking: "high",
 });
+assert.equal(resumedPersistedResult.isOk(), true);
+if (resumedPersistedResult.isErr()) throw resumedPersistedResult.error;
+const resumedPersisted = resumedPersistedResult.value;
 assert.equal(resumedPersisted.finalResponse, "ACP response");
 assert.equal(
   requests.filter(({ method }) => method === "session/set_config_option").length,
   4,
   "cold resume must not require config metadata just to preserve prior model/thinking state",
 );
-await assert.rejects(
-  resumedRuntime.run({
-    prompt: "resumed",
-    workspaceRoot: "/tmp/project",
-    providerSessionId: first.providerSessionId ?? undefined,
-    model: "model-that-is-not-advertised-after-resume",
-    modelOverrideRequested: true,
-  }),
-  /cannot apply the requested model override/,
-  "a cold ACP override must fail instead of silently using the old configuration",
-);
+const resumeFailure = await resumedRuntime.run({
+  prompt: "resumed",
+  workspaceRoot: "/tmp/project",
+  providerSessionId: first.providerSessionId ?? undefined,
+  model: "model-that-is-not-advertised-after-resume",
+  modelOverrideRequested: true,
+});
+assert.equal(resumeFailure.isErr(), true);
+if (resumeFailure.isErr()) assert.equal(resumeFailure.error.code, "PROVIDER_PROTOCOL_ERROR");
 assert.equal(requests.filter(({ method }) => method === "session/resume").length, 1);
 assert.equal(requests.filter(({ method }) => method === "session/set_config_option").length, 4);
 await resumedRuntime.releaseSession("cursor_session_1");
@@ -240,7 +247,10 @@ await assert.rejects(
   /already has an active turn/,
 );
 releaseOverlappingPrompt();
-assert.equal((await firstOverlappingTurn).finalResponse, "overlap response");
+const completedOverlappingTurn = await firstOverlappingTurn;
+assert.equal(completedOverlappingTurn.isOk(), true);
+if (completedOverlappingTurn.isErr()) throw completedOverlappingTurn.error;
+assert.equal(completedOverlappingTurn.value.finalResponse, "overlap response");
 await overlapRuntime.close();
 
 let resolverCalls = 0;

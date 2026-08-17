@@ -6,6 +6,11 @@ import type {
   SessionMessagesResponse,
   SessionV2Info,
 } from "@opencode-ai/sdk/v2";
+import {
+  AgentProviderProtocolError,
+  AgentProviderUnavailableError,
+  captureAgentProviderResult,
+} from "./local-agent-errors.js";
 import type {
   LocalAgentDriver,
   LocalAgentRunCallbacks,
@@ -36,39 +41,53 @@ export class OpencodeRuntime implements LocalAgentRuntime {
     private readonly server: OpencodeServerLike,
   ) {}
 
-  async run(input: LocalAgentRunInput, callbacks?: LocalAgentRunCallbacks): Promise<LocalAgentRunResult> {
-    if (!this.alive) throw new Error("OpenCode runtime is not running.");
-    try {
-      await assertOpencodeHealthy(this.client);
-      const resumed = Boolean(input.providerSessionId);
-      const initialModel = input.model ? parseOpencodeModel(input.model, input.thinking) : undefined;
-      const sessionId = input.providerSessionId ?? await createOpencodeSession(this.client, input, initialModel);
-      await callbacks?.onSessionId?.(sessionId);
-      await this.client.v2.session.switchAgent({
-        sessionID: sessionId,
-        agent: opencodeAgentFor(input.writeMode),
-      }, { throwOnError: true });
+  async run(input: LocalAgentRunInput, callbacks?: LocalAgentRunCallbacks) {
+    return captureAgentProviderResult({
+      provider: this.provider,
+      operation: "run",
+      run: async (): Promise<LocalAgentRunResult> => {
+        if (!this.alive) {
+          throw new AgentProviderUnavailableError({
+            code: "PROVIDER_UNAVAILABLE",
+            provider: this.provider,
+            operation: "run",
+            retryable: true,
+            message: "OpenCode runtime is not running.",
+          });
+        }
+        try {
+          await assertOpencodeHealthy(this.client);
+          const resumed = Boolean(input.providerSessionId);
+          const initialModel = input.model ? parseOpencodeModel(input.model, input.thinking) : undefined;
+          const sessionId = input.providerSessionId ?? await createOpencodeSession(this.client, input, initialModel);
+          await callbacks?.onSessionId?.(sessionId);
+          await this.client.v2.session.switchAgent({
+            sessionID: sessionId,
+            agent: opencodeAgentFor(input.writeMode),
+          }, { throwOnError: true });
 
-      const model = initialModel ?? (input.thinking ? await modelWithThinking(this.client, sessionId, input.thinking) : undefined);
-      if (model && (resumed || !initialModel)) {
-        await this.client.v2.session.switchModel({ sessionID: sessionId, model }, { throwOnError: true });
-      }
-      const promptResult = await promptOpencodeSession(this.client, sessionId, input);
-      await waitForOpencodeSession(this.client, sessionId);
-      const messages = await readOpencodeMessages(this.client, sessionId);
-      const finalResponse = requireFinalResponse(
-        extractOpenCodeFinalResponse(messages) || extractOpenCodeFinalResponse(promptResult),
-      );
-      return {
-        provider: this.provider,
-        providerSessionId: sessionId,
-        finalResponse,
-        items: [promptResult, messages],
-      };
-    } catch (error) {
-      if (isOpenCodeTransportFailure(error)) this.alive = false;
-      throw error;
-    }
+          const model = initialModel ?? (input.thinking ? await modelWithThinking(this.client, sessionId, input.thinking) : undefined);
+          if (model && (resumed || !initialModel)) {
+            await this.client.v2.session.switchModel({ sessionID: sessionId, model }, { throwOnError: true });
+          }
+          const promptResult = await promptOpencodeSession(this.client, sessionId, input);
+          await waitForOpencodeSession(this.client, sessionId);
+          const messages = await readOpencodeMessages(this.client, sessionId);
+          const finalResponse = requireFinalResponse(
+            extractOpenCodeFinalResponse(messages) || extractOpenCodeFinalResponse(promptResult),
+          );
+          return {
+            provider: this.provider,
+            providerSessionId: sessionId,
+            finalResponse,
+            items: [promptResult, messages],
+          };
+        } catch (error) {
+          if (isOpenCodeTransportFailure(error)) this.alive = false;
+          throw error;
+        }
+      },
+    });
   }
 
   async releaseSession(_providerSessionId: string): Promise<void> {
@@ -97,9 +116,16 @@ export class OpencodeLocalAgentDriver implements LocalAgentDriver {
     return "opencode:default";
   }
 
-  async createRuntime(_context: LocalAgentRuntimeContext): Promise<LocalAgentRuntime> {
-    const { client, server } = await this.factory(_context);
-    return new OpencodeRuntime(client, server);
+  async createRuntime(context: LocalAgentRuntimeContext) {
+    return captureAgentProviderResult({
+      provider: this.provider,
+      agentId: context.agentId,
+      operation: "create_runtime",
+      run: async (): Promise<LocalAgentRuntime> => {
+        const { client, server } = await this.factory(context);
+        return new OpencodeRuntime(client, server);
+      },
+    });
   }
 }
 
@@ -206,7 +232,15 @@ async function modelWithThinking(
 ): Promise<ModelRef> {
   const result = await client.v2.session.get({ sessionID: sessionId }, { throwOnError: true });
   const model = result.data.data.model;
-  if (!model) throw new Error("OpenCode did not return the current session model for a thinking override.");
+  if (!model) {
+    throw new AgentProviderProtocolError({
+      code: "PROVIDER_PROTOCOL_ERROR",
+      provider: "opencode",
+      operation: "resolve_model",
+      retryable: false,
+      message: "OpenCode did not return the current session model for a thinking override.",
+    });
+  }
   return { ...model, variant: thinking };
 }
 
@@ -243,7 +277,15 @@ function parseOpencodeModel(model: string, variant?: string): ModelRef {
 }
 
 function requireSessionId(session: SessionV2Info): string {
-  if (!session.id) throw new Error("OpenCode did not return a session id.");
+  if (!session.id) {
+    throw new AgentProviderProtocolError({
+      code: "PROVIDER_PROTOCOL_ERROR",
+      provider: "opencode",
+      operation: "create_session",
+      retryable: false,
+      message: "OpenCode did not return a session id.",
+    });
+  }
   return session.id;
 }
 
@@ -330,7 +372,15 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function requireFinalResponse(response: string): string {
   const trimmed = response.trim();
-  if (!trimmed) throw new Error("OpenCode did not return a final assistant response.");
+  if (!trimmed) {
+    throw new AgentProviderProtocolError({
+      code: "PROVIDER_PROTOCOL_ERROR",
+      provider: "opencode",
+      operation: "run",
+      retryable: false,
+      message: "OpenCode did not return a final assistant response.",
+    });
+  }
   return trimmed;
 }
 

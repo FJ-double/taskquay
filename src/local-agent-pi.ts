@@ -1,5 +1,11 @@
 import { join } from "node:path";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import {
+  AgentProviderExecutionError,
+  AgentProviderProtocolError,
+  AgentProviderUnavailableError,
+  captureAgentProviderResult,
+} from "./local-agent-errors.js";
 import type {
   LocalAgentDriver,
   LocalAgentRunCallbacks,
@@ -57,30 +63,60 @@ export class PiSessionRuntime implements LocalAgentRuntime {
     });
   }
 
-  async run(input: LocalAgentRunInput, callbacks?: LocalAgentRunCallbacks): Promise<LocalAgentRunResult> {
-    if (!this.isAlive()) throw new Error("Pi runtime is not running.");
-    await callbacks?.onSessionId?.(this.session.sessionId);
-    await this.applyOverrides(input);
-    this.events = [];
-    const messageStart = this.session.messages.length;
-    this.collectingEvents = true;
-    try {
-      await this.session.prompt(input.prompt);
-    } finally {
-      this.collectingEvents = false;
-    }
-    const currentMessages = this.session.messages.slice(messageStart);
-    const finalResponse = extractPiFinalResponse({ messages: currentMessages });
-    if (!finalResponse) {
-      const providerError = extractPiProviderError(this.events) || extractPiProviderError(currentMessages);
-      throw new Error(providerError ? `Pi returned an error: ${providerError}` : "Pi did not return a final assistant response.");
-    }
-    return {
+  async run(input: LocalAgentRunInput, callbacks?: LocalAgentRunCallbacks) {
+    return captureAgentProviderResult({
       provider: this.provider,
-      providerSessionId: this.session.sessionId,
-      finalResponse,
-      items: [...this.events, ...currentMessages],
-    };
+      operation: "run",
+      run: async (): Promise<LocalAgentRunResult> => {
+        if (!this.isAlive()) {
+          throw new AgentProviderUnavailableError({
+            code: "PROVIDER_UNAVAILABLE",
+            provider: this.provider,
+            operation: "run",
+            retryable: true,
+            message: "Pi runtime is not running.",
+          });
+        }
+        await callbacks?.onSessionId?.(this.session.sessionId);
+        await this.applyOverrides(input);
+        this.events = [];
+        const messageStart = this.session.messages.length;
+        this.collectingEvents = true;
+        try {
+          await this.session.prompt(input.prompt);
+        } finally {
+          this.collectingEvents = false;
+        }
+        const currentMessages = this.session.messages.slice(messageStart);
+        const finalResponse = extractPiFinalResponse({ messages: currentMessages });
+        if (!finalResponse) {
+          const providerError = extractPiProviderError(this.events) || extractPiProviderError(currentMessages);
+          if (providerError) {
+            throw new AgentProviderExecutionError({
+              code: "PROVIDER_EXECUTION_ERROR",
+              provider: this.provider,
+              operation: "run",
+              retryable: false,
+              cause: new Error(providerError),
+              message: "Pi agent turn failed.",
+            });
+          }
+          throw new AgentProviderProtocolError({
+            code: "PROVIDER_PROTOCOL_ERROR",
+            provider: this.provider,
+            operation: "run",
+            retryable: false,
+            message: "Pi did not return a final assistant response.",
+          });
+        }
+        return {
+          provider: this.provider,
+          providerSessionId: this.session.sessionId,
+          finalResponse,
+          items: [...this.events, ...currentMessages],
+        };
+      },
+    });
   }
 
   async releaseSession(_providerSessionId: string): Promise<void> {
@@ -127,17 +163,24 @@ export class PiLocalAgentDriver implements LocalAgentDriver {
     return `pi:${context.agentId}`;
   }
 
-  async createRuntime(context: LocalAgentRuntimeContext): Promise<LocalAgentRuntime> {
-    const input: LocalAgentRunInput = {
-      prompt: "",
-      workspaceRoot: context.workspaceRoot,
-      providerSessionId: context.providerSessionId,
-      writeMode: context.writeMode,
-      model: context.model,
-      thinking: context.thinking,
-    };
-    const session = await this.factory(context, input);
-    return new PiSessionRuntime(session);
+  async createRuntime(context: LocalAgentRuntimeContext) {
+    return captureAgentProviderResult({
+      provider: this.provider,
+      agentId: context.agentId,
+      operation: "create_runtime",
+      run: async (): Promise<LocalAgentRuntime> => {
+        const input: LocalAgentRunInput = {
+          prompt: "",
+          workspaceRoot: context.workspaceRoot,
+          providerSessionId: context.providerSessionId,
+          writeMode: context.writeMode,
+          model: context.model,
+          thinking: context.thinking,
+        };
+        const session = await this.factory(context, input);
+        return new PiSessionRuntime(session);
+      },
+    });
   }
 }
 

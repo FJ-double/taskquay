@@ -3,6 +3,11 @@ import { accessSync, constants } from "node:fs";
 import { createRequire } from "node:module";
 import { delimiter, resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
+import {
+  AgentProviderProtocolError,
+  AgentProviderUnavailableError,
+  captureAgentProviderResult,
+} from "./local-agent-errors.js";
 import { terminateProcessTree } from "./process-platform.js";
 import type {
   LocalAgentDriver,
@@ -96,36 +101,56 @@ export class AcpRuntime implements LocalAgentRuntime {
     });
   }
 
-  async run(input: LocalAgentRunInput, callbacks?: LocalAgentRunCallbacks): Promise<LocalAgentRunResult> {
-    if (!this.isAlive()) throw new Error(`${this.provider} ACP runtime is not running.`);
-    const sessionId = await this.openSession(input, callbacks);
-    if (this.activeSessions.has(sessionId)) {
-      throw new Error(`${this.provider} ACP session ${sessionId} already has an active turn.`);
-    }
-    this.activeSessions.add(sessionId);
-    const queue = this.queues.get(sessionId) ?? { values: [] };
-    this.queues.set(sessionId, queue);
-    try {
-      queue.values.length = 0;
-      const response = await this.connection.agent.request("session/prompt", {
-        sessionId,
-        prompt: [{ type: "text", text: input.prompt }],
-      });
-      const updates = queue.values.splice(0);
-      const finalResponse = extractAcpText(updates);
-      if (!finalResponse) {
-        const stopReason = readString(response, "stopReason");
-        throw new Error(`${this.provider} ACP did not return a final assistant response${stopReason ? ` (${stopReason})` : ""}.`);
-      }
-      return {
-        provider: this.provider,
-        providerSessionId: sessionId,
-        finalResponse,
-        items: updates,
-      };
-    } finally {
-      this.activeSessions.delete(sessionId);
-    }
+  async run(input: LocalAgentRunInput, callbacks?: LocalAgentRunCallbacks) {
+    return captureAgentProviderResult({
+      provider: this.provider,
+      operation: "run",
+      run: async (): Promise<LocalAgentRunResult> => {
+        if (!this.isAlive()) {
+          throw new AgentProviderUnavailableError({
+            code: "PROVIDER_UNAVAILABLE",
+            provider: this.provider,
+            operation: "run",
+            retryable: true,
+            message: `${this.provider} ACP runtime is not running.`,
+          });
+        }
+        const sessionId = await this.openSession(input, callbacks);
+        if (this.activeSessions.has(sessionId)) {
+          throw new TypeError(`${this.provider} ACP session ${sessionId} already has an active turn.`);
+        }
+        this.activeSessions.add(sessionId);
+        const queue = this.queues.get(sessionId) ?? { values: [] };
+        this.queues.set(sessionId, queue);
+        try {
+          queue.values.length = 0;
+          const response = await this.connection.agent.request("session/prompt", {
+            sessionId,
+            prompt: [{ type: "text", text: input.prompt }],
+          });
+          const updates = queue.values.splice(0);
+          const finalResponse = extractAcpText(updates);
+          if (!finalResponse) {
+            throw new AgentProviderProtocolError({
+              code: "PROVIDER_PROTOCOL_ERROR",
+              provider: this.provider,
+              operation: "run",
+              retryable: false,
+              cause: response,
+              message: `${this.provider} ACP did not return a final assistant response.`,
+            });
+          }
+          return {
+            provider: this.provider,
+            providerSessionId: sessionId,
+            finalResponse,
+            items: updates,
+          };
+        } finally {
+          this.activeSessions.delete(sessionId);
+        }
+      },
+    });
   }
 
   async releaseSession(providerSessionId: string): Promise<void> {
@@ -174,7 +199,13 @@ export class AcpRuntime implements LocalAgentRuntime {
         return input.providerSessionId;
       }
       if (!this.capabilities.resume) {
-        throw new Error(`${this.provider} ACP does not advertise session resume support.`);
+        throw new AgentProviderProtocolError({
+          code: "PROVIDER_PROTOCOL_ERROR",
+          provider: this.provider,
+          operation: "resume_session",
+          retryable: false,
+          message: `${this.provider} ACP does not advertise session resume support.`,
+        });
       }
       const response = await this.connection.agent.request("session/resume", {
         sessionId: input.providerSessionId,
@@ -197,7 +228,16 @@ export class AcpRuntime implements LocalAgentRuntime {
       ...this.additionalDirectoryParams(),
     });
     const sessionId = readString(response, "sessionId");
-    if (!sessionId) throw new Error(`${this.provider} ACP did not return a session id.`);
+    if (!sessionId) {
+      throw new AgentProviderProtocolError({
+        code: "PROVIDER_PROTOCOL_ERROR",
+        provider: this.provider,
+        operation: "create_session",
+        retryable: false,
+        cause: response,
+        message: `${this.provider} ACP did not return a session id.`,
+      });
+    }
     this.cacheSessionMetadata(sessionId, response);
     this.queues.set(sessionId, { values: [] });
     this.liveSessions.add(sessionId);
@@ -227,9 +267,13 @@ export class AcpRuntime implements LocalAgentRuntime {
         .filter(Boolean)
         .join(" and ");
       if (requested) {
-        throw new Error(
-          `${this.provider} ACP cannot apply the requested ${requested} override on this session: the provider did not advertise configurable options after resume.`,
-        );
+        throw new AgentProviderProtocolError({
+          code: "PROVIDER_PROTOCOL_ERROR",
+          provider: this.provider,
+          operation: "configure_session",
+          retryable: false,
+          message: `${this.provider} ACP cannot apply the requested ${requested} override because the resumed session did not advertise configurable options.`,
+        });
       }
       // A durable resumed session keeps its previously selected provider
       // configuration. If resume does not re-advertise config options, do not
@@ -276,33 +320,54 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
     return `acp:${this.provider}:${command}:${writeMode}:${workspace}`;
   }
 
-  async createRuntime(context: LocalAgentRuntimeContext): Promise<LocalAgentRuntime> {
-    const command = this.resolveCommand();
-    if (!command) throw new Error(`${this.provider} provider is not available: executable not found.`);
-    const args = acpCommandArgs(this.provider, context);
-    const child = spawn(command, args, {
-      cwd: resolve(context.workspaceRoot),
-      env: this.env,
-      stdio: ["pipe", "pipe", "pipe"],
-      detached: process.platform !== "win32",
-      windowsHide: true,
-    });
-    let resolveStartupError!: (error: Error) => void;
-    const startupError = new Promise<Error>((resolveError) => { resolveStartupError = resolveError; });
-    const onStartupError = (error: Error) => { resolveStartupError(error); };
-    child.once("error", onStartupError);
-    if (!child.stdin || !child.stdout || !child.stderr) {
-      child.removeListener("error", onStartupError);
-      throw new Error(`${this.provider} ACP process did not expose stdio pipes.`);
-    }
+  async createRuntime(context: LocalAgentRuntimeContext) {
+    return captureAgentProviderResult({
+      provider: this.provider,
+      agentId: context.agentId,
+      operation: "create_runtime",
+      run: async (): Promise<LocalAgentRuntime> => {
+        const command = this.resolveCommand();
+        if (!command) {
+          throw new AgentProviderUnavailableError({
+            code: "PROVIDER_UNAVAILABLE",
+            provider: this.provider,
+            agentId: context.agentId,
+            operation: "create_runtime",
+            retryable: false,
+            message: `${this.provider} executable was not found.`,
+          });
+        }
+        const args = acpCommandArgs(this.provider, context);
+        const child = spawn(command, args, {
+          cwd: resolve(context.workspaceRoot),
+          env: this.env,
+          stdio: ["pipe", "pipe", "pipe"],
+          detached: process.platform !== "win32",
+          windowsHide: true,
+        });
+        let resolveStartupError!: (error: Error) => void;
+        const startupError = new Promise<Error>((resolveError) => { resolveStartupError = resolveError; });
+        const onStartupError = (error: Error) => { resolveStartupError(error); };
+        child.once("error", onStartupError);
+        if (!child.stdin || !child.stdout || !child.stderr) {
+          child.removeListener("error", onStartupError);
+          throw new AgentProviderProtocolError({
+            code: "PROVIDER_PROTOCOL_ERROR",
+            provider: this.provider,
+            agentId: context.agentId,
+            operation: "create_runtime",
+            retryable: false,
+            message: `${this.provider} ACP process did not expose stdio pipes.`,
+          });
+        }
 
-    let connection: AcpConnectionLike | undefined;
-    child.stderr.setEncoding("utf8");
-    let stderrTail = "";
-    child.stderr.on("data", (chunk: string) => {
-      stderrTail = appendTail(stderrTail, chunk, MAX_ACP_STDERR_BYTES);
-    });
-    try {
+        let connection: AcpConnectionLike | undefined;
+        child.stderr.setEncoding("utf8");
+        let stderrTail = "";
+        child.stderr.on("data", (chunk: string) => {
+          stderrTail = appendTail(stderrTail, chunk, MAX_ACP_STDERR_BYTES);
+        });
+        try {
       const { client, methods, ndJsonStream } = await import("@agentclientprotocol/sdk");
       const queues = new Map<string, AcpSessionQueue>();
       const sessionWriteModes = new Map<string, LocalAgentWriteMode>();
@@ -336,39 +401,46 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
         `${this.provider} ACP initialize timed out.`,
       );
       const capabilities = readAcpCapabilities(init);
-      const runtime = new AcpRuntime({
-        provider: this.provider,
-        command,
-        args,
-        env: this.env,
-        child,
-        capabilities,
-        queues,
-        sessionWriteModes,
-      }, connection);
-      // AcpRuntime installs the long-lived child error listener before this
-      // startup-only listener is removed, so there is no unobserved gap.
-      child.removeListener("error", onStartupError);
-      return runtime;
-    } catch (error) {
-      child.removeListener("error", onStartupError);
-      try {
-        connection?.close(error);
-      } catch {
-        // The child still needs to be terminated if the protocol failed early.
-      }
-      if (child.exitCode === null) {
-        const detached = process.platform !== "win32";
-        terminateProcessTree(child, "SIGTERM", detached);
-        if (!await waitForProcessExit(child, 1_000)) {
-          terminateProcessTree(child, "SIGKILL", detached);
+          const runtime = new AcpRuntime({
+            provider: this.provider,
+            command,
+            args,
+            env: this.env,
+            child,
+            capabilities,
+            queues,
+            sessionWriteModes,
+          }, connection);
+          // AcpRuntime installs the long-lived child error listener before this
+          // startup-only listener is removed, so there is no unobserved gap.
+          child.removeListener("error", onStartupError);
+          return runtime;
+        } catch (error) {
+          child.removeListener("error", onStartupError);
+          try {
+            connection?.close(error);
+          } catch {
+            // The child still needs to be terminated if the protocol failed early.
+          }
+          if (child.exitCode === null) {
+            const detached = process.platform !== "win32";
+            terminateProcessTree(child, "SIGTERM", detached);
+            if (!await waitForProcessExit(child, 1_000)) {
+              terminateProcessTree(child, "SIGKILL", detached);
+            }
+          }
+          throw new AgentProviderProtocolError({
+            code: "PROVIDER_PROTOCOL_ERROR",
+            provider: this.provider,
+            agentId: context.agentId,
+            operation: "create_runtime",
+            retryable: true,
+            cause: { error, stderr: stderrTail.trim() || undefined },
+            message: `${this.provider} ACP initialization failed.`,
+          });
         }
-      }
-      if (stderrTail.trim() && error instanceof Error && !error.message.includes(stderrTail.trim())) {
-        throw new Error(`${error.message}\n${stderrTail.trim()}`, { cause: error });
-      }
-      throw error;
-    }
+      },
+    });
   }
 
   private resolveCommand(): string | undefined {

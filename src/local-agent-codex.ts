@@ -1,8 +1,13 @@
 import { homedir } from "node:os";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { delimiter, join, resolve } from "node:path";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
+import {
+  AgentProviderExecutionError,
+  AgentProviderProtocolError,
+  AgentProviderUnavailableError,
+  captureAgentProviderResult,
+} from "./local-agent-errors.js";
 import { removeDevspaceNodeModulesBinFromPath } from "./local-agent-path.js";
 import { terminateProcessTree } from "./process-platform.js";
 import type {
@@ -110,28 +115,67 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
     this.rpc.notify("initialized");
   }
 
-  async run(input: LocalAgentRunInput, callbacks?: LocalAgentRunCallbacks): Promise<LocalAgentRunResult> {
-    if (!this.alive) throw new Error("codex app-server is not running.");
-    const threadResponse = await this.rpc.request(
-      input.providerSessionId ? "thread/resume" : "thread/start",
-      threadParams(input),
-    );
-    const threadId = readString(asRecord(threadResponse)?.thread, "id");
-    if (!threadId) throw new Error("codex app-server did not return a thread id.");
-
-    await callbacks?.onSessionId?.(threadId);
-    const completed = await this.rpc.runTurn(threadId, turnParams(input, threadId));
-    const parsed = parseCompletedTurn(completed.event.params, completed.items);
-    if (parsed.failure) throw new Error(`codex turn failed: ${parsed.failure}`);
-    if (!parsed.finalResponse.trim()) {
-      throw new Error("Codex did not return a final assistant response.");
-    }
-    return {
+  async run(input: LocalAgentRunInput, callbacks?: LocalAgentRunCallbacks) {
+    return captureAgentProviderResult({
       provider: this.provider,
-      providerSessionId: threadId,
-      finalResponse: parsed.finalResponse.trim(),
-      items: parsed.items,
-    };
+      operation: "run",
+      run: async (): Promise<LocalAgentRunResult> => {
+        if (!this.alive) {
+          throw new AgentProviderUnavailableError({
+            code: "PROVIDER_UNAVAILABLE",
+            provider: this.provider,
+            operation: "run",
+            retryable: true,
+            message: "Codex app-server is not running.",
+          });
+        }
+        const threadResponse = await this.rpc.request(
+          input.providerSessionId ? "thread/resume" : "thread/start",
+          threadParams(input),
+        );
+        const threadId = readString(asRecord(threadResponse)?.thread, "id");
+        if (!threadId) {
+          throw new AgentProviderProtocolError({
+            code: "PROVIDER_PROTOCOL_ERROR",
+            provider: this.provider,
+            operation: "open_thread",
+            retryable: false,
+            cause: threadResponse,
+            message: "Codex app-server did not return a thread id.",
+          });
+        }
+
+        await callbacks?.onSessionId?.(threadId);
+        const completed = await this.rpc.runTurn(threadId, turnParams(input, threadId));
+        const parsed = parseCompletedTurn(completed.event.params, completed.items);
+        if (parsed.failure) {
+          throw new AgentProviderExecutionError({
+            code: "PROVIDER_EXECUTION_ERROR",
+            provider: this.provider,
+            operation: "run",
+            retryable: false,
+            cause: completed.event.params,
+            message: "Codex agent turn failed.",
+          });
+        }
+        if (!parsed.finalResponse.trim()) {
+          throw new AgentProviderProtocolError({
+            code: "PROVIDER_PROTOCOL_ERROR",
+            provider: this.provider,
+            operation: "run",
+            retryable: false,
+            cause: completed.event.params,
+            message: "Codex did not return a final assistant response.",
+          });
+        }
+        return {
+          provider: this.provider,
+          providerSessionId: threadId,
+          finalResponse: parsed.finalResponse.trim(),
+          items: parsed.items,
+        };
+      },
+    });
   }
 
   async releaseSession(providerSessionId: string): Promise<void> {
@@ -202,26 +246,51 @@ export class CodexLocalAgentDriver implements LocalAgentDriver {
     return `codex:${executable}:${codexHome}`;
   }
 
-  async createRuntime(_context: LocalAgentRuntimeContext): Promise<LocalAgentRuntime> {
-    const command = this.resolveCommand();
-    if (!command) {
-      throw new Error("Codex provider is not available: codex executable not found.");
-    }
-    if (!isCodexAppServerSupported(command.executable, this.env)) {
-      throw new Error("Codex provider is not available: the installed codex does not support app-server.");
-    }
-    const runtime = new CodexAppServerRuntime({
-      command: command.executable,
-      env: codexCommandEnvironment(this.env),
-      version: command.version,
+  async createRuntime(_context: LocalAgentRuntimeContext) {
+    return captureAgentProviderResult({
+      provider: this.provider,
+      operation: "create_runtime",
+      run: async (): Promise<LocalAgentRuntime> => {
+        const command = this.resolveCommand();
+        if (!command) {
+          throw new AgentProviderUnavailableError({
+            code: "PROVIDER_UNAVAILABLE",
+            provider: this.provider,
+            operation: "create_runtime",
+            retryable: false,
+            message: "Codex executable was not found.",
+          });
+        }
+        if (!isCodexAppServerSupported(command.executable, this.env)) {
+          throw new AgentProviderUnavailableError({
+            code: "PROVIDER_UNAVAILABLE",
+            provider: this.provider,
+            operation: "create_runtime",
+            retryable: false,
+            message: "Installed Codex does not support app-server.",
+          });
+        }
+        const runtime = new CodexAppServerRuntime({
+          command: command.executable,
+          env: codexCommandEnvironment(this.env),
+          version: command.version,
+        });
+        try {
+          await runtime.initialize();
+          return runtime;
+        } catch (cause) {
+          await runtime.close();
+          throw new AgentProviderProtocolError({
+            code: "PROVIDER_PROTOCOL_ERROR",
+            provider: this.provider,
+            operation: "create_runtime",
+            retryable: true,
+            cause: codexAppServerError(errorMessage(cause), command.version),
+            message: "Codex app-server initialization failed.",
+          });
+        }
+      },
     });
-    try {
-      await runtime.initialize();
-      return runtime;
-    } catch (error) {
-      await runtime.close();
-      throw codexAppServerError(errorMessage(error), command.version);
-    }
   }
 
   private resolveCommand(): ResolvedCodexCommand | undefined {
