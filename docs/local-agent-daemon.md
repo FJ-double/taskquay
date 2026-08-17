@@ -33,6 +33,15 @@ provider cancellation, provider availability, workspace conflicts, daemon
 timeouts, and similar recovery categories after a background turn completes.
 Internal provider causes are kept out of the daemon payload and persisted JSON.
 
+The implementation treats `better-result` as the application-failure boundary,
+not as a replacement for every exception. Expected target, scope, provider,
+store, and daemon failures return typed Results. Sequential fallible setup uses
+`Result.gen` when it makes the success path clearer, small Result-to-Result
+transformations use `map`/`andThen`, and error policy at serialization or IPC
+boundaries uses exhaustive tagged-error matching. Programmer defects and broken
+invariants remain exceptions; cleanup and shutdown also stay best-effort so a
+secondary release failure cannot replace the primary agent failure.
+
 The daemon state directory contains the socket or pipe identity, an atomic
 lock, a PID marker, and diagnostic logs. A second client cannot start another
 daemon for the same state directory. Stale lock and socket files are recovered
