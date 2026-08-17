@@ -107,7 +107,7 @@ const resumedRuntime = new AcpRuntime({
 }, connection);
 const resumedPersisted = await resumedRuntime.run({
   prompt: "resumed with persisted config",
-  workspace: "/tmp/project",
+  workspaceRoot: "/tmp/project",
   providerSessionId: first.providerSessionId ?? undefined,
   model: "model-a",
   thinking: "high",
