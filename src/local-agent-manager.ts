@@ -99,47 +99,43 @@ export class LocalAgentManager {
   }
 
   async start(input: StartLocalAgentInput): Promise<BetterResult<LocalAgentRecord, AgentStartError>> {
-    const accepting = this.acceptingResult("start");
-    if (accepting.isErr()) return accepting;
-    const authorized = this.authorizeWorkspace(input.workspaceRoot, "start");
-    if (authorized.isErr()) return authorized;
-    const workspaceRoot = authorized.value;
-    const profiles = await this.loadProfilesResult(workspaceRoot, input.target);
-    if (profiles.isErr()) return profiles;
-    const target = resolveLocalAgentTarget(input.target, profiles.value, input.model, input.thinking);
-    if (!target) {
-      return Result.err(new AgentTargetError({
-        code: "UNKNOWN_TARGET",
-        target: input.target,
-        retryable: false,
-        message: `Unknown subagent profile or provider: ${input.target}.`,
-      }));
-    }
-    if (target.kind === "profile" && target.profile.disabled) {
-      return Result.err(new AgentTargetError({
-        code: "PROVIDER_DISABLED",
-        target: target.name,
+    const manager = this;
+    return Result.gen(async function* () {
+      yield* manager.acceptingResult("start");
+      const workspaceRoot = yield* manager.authorizeWorkspace(input.workspaceRoot, "start");
+      const profiles = yield* Result.await(manager.loadProfilesResult(workspaceRoot, input.target));
+      const target = resolveLocalAgentTarget(input.target, profiles, input.model, input.thinking);
+      if (!target) {
+        return Result.err(new AgentTargetError({
+          code: "UNKNOWN_TARGET",
+          target: input.target,
+          retryable: false,
+          message: `Unknown subagent profile or provider: ${input.target}.`,
+        }));
+      }
+      if (target.kind === "profile" && target.profile.disabled) {
+        return Result.err(new AgentTargetError({
+          code: "PROVIDER_DISABLED",
+          target: target.name,
+          provider: target.provider,
+          retryable: false,
+          message: `Subagent profile is disabled: ${target.name}.`,
+        }));
+      }
+      yield* manager.driverResult(target.provider, "start");
+      const record = yield* manager.store.createResult({
+        workspaceId: input.workspaceId,
+        workspaceRoot,
+        profileName: target.name,
         provider: target.provider,
-        retryable: false,
-        message: `Subagent profile is disabled: ${target.name}.`,
-      }));
-    }
-    const driver = this.driverResult(target.provider, "start");
-    if (driver.isErr()) return driver;
-
-    const record = this.store.createResult({
-      workspaceId: input.workspaceId,
-      workspaceRoot,
-      profileName: target.name,
-      provider: target.provider,
-      model: target.model,
-      thinking: target.thinking,
-    });
-    if (record.isErr()) return record;
-    return this.begin(record.value, input.prompt, {
-      model: target.model,
-      thinking: target.thinking,
-      writeMode: input.writeMode,
+        model: target.model,
+        thinking: target.thinking,
+      });
+      return manager.begin(record, input.prompt, {
+        model: target.model,
+        thinking: target.thinking,
+        writeMode: input.writeMode,
+      });
     });
   }
 
@@ -149,21 +145,17 @@ export class LocalAgentManager {
     overrides: RunOverrides = {},
     scope: LocalAgentWorkspaceScope,
   ): Promise<BetterResult<LocalAgentRecord, AgentContinueError>> {
-    const accepting = this.acceptingResult("continue", agentId);
-    if (accepting.isErr()) return accepting;
-    const lookup = this.store.getByIdResult(agentId);
-    if (lookup.isErr()) return lookup;
-    const record = lookup.value;
-    if (!record) return Result.err(agentNotFound(agentId));
-    const scoped = this.agentWorkspaceResult(record, scope, "continue");
-    if (scoped.isErr()) return scoped;
-    const profiles = await this.loadProfilesResult(record.workspaceRoot, record.profileName);
-    if (profiles.isErr()) return profiles;
-    const profile = this.profileForRecordResult(record, profiles.value);
-    if (profile.isErr()) return profile;
-    const driver = this.driverResult(record.provider, "continue", agentId);
-    if (driver.isErr()) return driver;
-    return this.begin(record, prompt, overrides);
+    const manager = this;
+    return Result.gen(async function* () {
+      yield* manager.acceptingResult("continue", agentId);
+      const record = yield* manager.store.getByIdResult(agentId);
+      if (!record) return Result.err(agentNotFound(agentId));
+      yield* manager.agentWorkspaceResult(record, scope, "continue");
+      const profiles = yield* Result.await(manager.loadProfilesResult(record.workspaceRoot, record.profileName));
+      yield* manager.profileForRecordResult(record, profiles);
+      yield* manager.driverResult(record.provider, "continue", agentId);
+      return manager.begin(record, prompt, overrides);
+    });
   }
 
   get(
@@ -180,12 +172,12 @@ export class LocalAgentManager {
   }
 
   list(scope: LocalAgentWorkspaceScope): BetterResult<LocalAgentRecord[], AgentListError> {
-    const authorized = this.authorizeWorkspace(scope.workspaceRoot, "list");
-    if (authorized.isErr()) return authorized;
-    return this.store.listResult({
-      workspaceId: scope.workspaceId,
-      workspaceRoot: authorized.value,
-    });
+    return this.authorizeWorkspace(scope.workspaceRoot, "list").andThen((workspaceRoot) => (
+      this.store.listResult({
+        workspaceId: scope.workspaceId,
+        workspaceRoot,
+      })
+    ));
   }
 
   async close(): Promise<void> {
