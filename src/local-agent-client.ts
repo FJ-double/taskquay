@@ -6,11 +6,14 @@ import { fileURLToPath } from "node:url";
 import { Result, type Result as BetterResult } from "better-result";
 import type { ServerConfig } from "./config.js";
 import {
+  AgentConflictError,
   AgentDaemonInvalidResponseError,
-  AgentDaemonProtocolMismatchError,
   AgentDaemonStartupError,
   AgentDaemonTimeoutError,
   AgentDaemonUnavailableError,
+  AgentScopeError,
+  AgentStoreError,
+  AgentTargetError,
   agentErrorFromPayload,
   isAgentDaemonError,
   type AgentDaemonError,
@@ -237,7 +240,17 @@ export class LocalAgentClient {
     } as LocalAgentDaemonRequest, this.requestTimeoutMs);
     if (response.isErr()) return response as BetterResult<unknown, RequestError<M>>;
     if (!response.value.ok) {
-      return Result.err(decodeRemoteError(response.value.error, method)) as BetterResult<unknown, RequestError<M>>;
+      const error = decodeRemoteError(response.value.error, method);
+      if (!isRequestError(method, error)) {
+        return Result.err(new AgentDaemonInvalidResponseError({
+          code: "DAEMON_INVALID_RESPONSE",
+          operation: method,
+          retryable: false,
+          cause: response.value.error,
+          message: "Local agent daemon returned an error that is invalid for this request.",
+        })) as BetterResult<unknown, RequestError<M>>;
+      }
+      return Result.err(error) as BetterResult<unknown, RequestError<M>>;
     }
     return Result.ok(response.value.result);
   }
@@ -425,6 +438,32 @@ function decodeRemoteError(
     cause: payload,
     message: "Local agent daemon returned an unknown error code.",
   });
+}
+
+function isRequestError(
+  method: LocalAgentDaemonRequest["method"],
+  error: LocalAgentError,
+): boolean {
+  if (isAgentDaemonError(error)) return true;
+  switch (method) {
+    case "agent.start":
+    case "agent.continue":
+      return AgentTargetError.is(error)
+        || AgentScopeError.is(error)
+        || AgentConflictError.is(error)
+        || AgentStoreError.is(error);
+    case "agent.get":
+      return AgentTargetError.is(error)
+        || AgentScopeError.is(error)
+        || AgentStoreError.is(error);
+    case "agent.list":
+      return AgentScopeError.is(error) || AgentStoreError.is(error);
+    case "hello":
+    case "daemon.status":
+    case "daemon.stop":
+    case "daemon.logs":
+      return false;
+  }
 }
 
 function delay(ms: number): Promise<void> {

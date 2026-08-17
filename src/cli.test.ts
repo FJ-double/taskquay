@@ -86,12 +86,10 @@ try {
           protocolVersion: 1,
           ok: false,
           error: {
-            code: "PROVIDER_UNAVAILABLE",
-            message: "Codex executable was not found.",
+            code: "UNKNOWN_TARGET",
+            message: "Unknown subagent profile or provider: missing.",
             retryable: false,
-            provider: "codex",
-            operation: "create_runtime",
-            target: "codex",
+            target: "missing",
           },
         }));
         return;
@@ -146,7 +144,7 @@ try {
     try {
       await execFileAsync(
         "node",
-        ["--import", "tsx", "src/cli.ts", "agents", "run", "codex", "--json", "inspect"],
+        ["--import", "tsx", "src/cli.ts", "agents", "run", "missing", "--json", "inspect"],
         {
           cwd: process.cwd(),
           encoding: "utf8",
@@ -167,13 +165,13 @@ try {
       const stdout = (error as { stdout?: string }).stdout ?? "";
       const payload = JSON.parse(stdout) as {
         ok: boolean;
-        error: { code: string; message: string; retryable: boolean; provider: string };
+        error: { code: string; message: string; retryable: boolean; target: string };
       };
       assert.equal(payload.ok, false);
-      assert.equal(payload.error.code, "PROVIDER_UNAVAILABLE");
-      assert.equal(payload.error.message, "Codex executable was not found.");
+      assert.equal(payload.error.code, "UNKNOWN_TARGET");
+      assert.equal(payload.error.message, "Unknown subagent profile or provider: missing.");
       assert.equal(payload.error.retryable, false);
-      assert.equal(payload.error.provider, "codex");
+      assert.equal(payload.error.target, "missing");
     }
   } finally {
     await new Promise<void>((resolveClose, rejectClose) => {
