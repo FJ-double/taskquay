@@ -10,6 +10,7 @@ import {
   resolveCodexCommand,
   sandboxFor,
 } from "./local-agent-codex.js";
+import { toAgentErrorPayload } from "./local-agent-errors.js";
 
 let resolverCalls = 0;
 const cachedDriver = new CodexLocalAgentDriver(
@@ -80,6 +81,10 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         output({ method: "turn/completed", params: { threadId: message.params.threadId, turn: { id: turnId, status: "failed", error: { message: "fake failure" } } } });
         return;
       }
+      if (message.params.input[0].text === "empty") {
+        output({ method: "turn/completed", params: { threadId: message.params.threadId, turn: { id: turnId, status: "completed", items: [] } } });
+        return;
+      }
       const item = { type: "agentMessage", text: "fake response " + turn };
       output({ method: "item/completed", params: { threadId: message.params.threadId, turnId, item } });
       output({ method: "turn/completed", params: { threadId: message.params.threadId, turn: { id: turnId, status: "completed", items: [item] } } });
@@ -125,6 +130,18 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     if (failed.isErr()) {
       assert.equal(failed.error.code, "PROVIDER_EXECUTION_ERROR");
       assert.equal(failed.error.provider, "codex");
+    }
+    const protocolFailure = await runtime.run({
+      prompt: "empty",
+      workspaceRoot: "/tmp/project",
+      providerSessionId: first.providerSessionId ?? undefined,
+    });
+    assert.equal(protocolFailure.isErr(), true);
+    if (protocolFailure.isErr()) {
+      assert.equal(protocolFailure.error.code, "PROVIDER_PROTOCOL_ERROR");
+      assert.equal(protocolFailure.error.provider, "codex");
+      assert.ok(protocolFailure.error.cause, "provider protocol cause remains available internally");
+      assert.equal("cause" in toAgentErrorPayload(protocolFailure.error), false);
     }
     await runtime.releaseSession("thread_new");
   } finally {

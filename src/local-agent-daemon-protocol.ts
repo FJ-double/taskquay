@@ -55,6 +55,12 @@ export interface LocalAgentDaemonStatus {
 export interface LocalAgentDaemonErrorPayload {
   code: string;
   message: string;
+  retryable?: boolean;
+  provider?: string;
+  agentId?: string;
+  workspaceId?: string;
+  operation?: string;
+  target?: string;
 }
 
 export type LocalAgentDaemonResponse =
@@ -156,6 +162,12 @@ export function decodeLocalAgentDaemonResponse(value: unknown): LocalAgentDaemon
       error: {
         code: requiredString(error?.code, "error.code"),
         message: requiredString(error?.message, "error.message"),
+        retryable: optionalBoolean(error?.retryable),
+        provider: optionalString(error?.provider),
+        agentId: optionalString(error?.agentId),
+        workspaceId: optionalString(error?.workspaceId),
+        operation: optionalString(error?.operation),
+        target: optionalString(error?.target),
       },
     };
   }
@@ -178,6 +190,8 @@ export function decodeAgentRecord(value: unknown): LocalAgentRecord {
     status,
     latestResponse: optionalContentString(record?.latestResponse),
     error: optionalContentString(record?.error),
+    errorCode: optionalString(record?.errorCode),
+    errorRetryable: optionalBoolean(record?.errorRetryable),
     createdAt: requiredString(record?.createdAt, "createdAt"),
     updatedAt: requiredString(record?.updatedAt, "updatedAt"),
   };
@@ -318,6 +332,10 @@ function optionalString(value: unknown): string | undefined {
 function optionalContentString(value: unknown): string | undefined {
   if (typeof value !== "string" || !value.trim()) return undefined;
   return value;
+}
+
+function optionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

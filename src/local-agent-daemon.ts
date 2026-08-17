@@ -2,6 +2,14 @@ import { timingSafeEqual } from "node:crypto";
 import { appendFileSync, chmodSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Server as NetServer, type Socket } from "node:net";
 import {
+  AgentDaemonInternalError,
+  AgentDaemonInvalidResponseError,
+  AgentDaemonProtocolMismatchError,
+  AgentDaemonUnavailableError,
+  isLocalAgentError,
+  toAgentErrorPayload,
+} from "./local-agent-errors.js";
+import {
   LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
   LocalAgentDaemonAlreadyRunningError,
   LocalAgentDaemonLock,
@@ -15,6 +23,7 @@ import {
   decodeLocalAgentDaemonRequest,
   encodeLocalAgentDaemonResponse,
   type LocalAgentDaemonRequest,
+  type LocalAgentDaemonErrorPayload,
   type LocalAgentDaemonResponse,
   type LocalAgentDaemonStatus,
   LocalAgentDaemonProtocolError,
@@ -204,7 +213,12 @@ export class LocalAgentDaemon {
     const requestTimer = setTimeout(() => {
       if (handled) return;
       handled = true;
-      this.writeError(socket, "", "REQUEST_TIMEOUT", "Timed out waiting for a complete daemon request.");
+      this.writeError(socket, "", {
+        code: "DAEMON_INVALID_RESPONSE",
+        message: "Timed out waiting for a complete daemon request.",
+        retryable: false,
+        operation: "request",
+      });
       socket.destroy();
     }, this.requestReadTimeoutMs);
     requestTimer.unref();
@@ -213,7 +227,12 @@ export class LocalAgentDaemon {
       buffer += chunk.toString();
       if (Buffer.byteLength(buffer, "utf8") > MAX_REQUEST_BYTES) {
         handled = true;
-        this.writeError(socket, "", "REQUEST_TOO_LARGE", "Daemon request is too large.");
+        this.writeError(socket, "", {
+          code: "DAEMON_INVALID_RESPONSE",
+          message: "Daemon request is too large.",
+          retryable: false,
+          operation: "request",
+        });
         return;
       }
       const newline = buffer.indexOf("\n");
@@ -243,7 +262,7 @@ export class LocalAgentDaemon {
       }));
       if (request.method === "daemon.stop") setImmediate(() => { void this.close(); });
     } catch (error) {
-      this.writeError(socket, requestId, errorCode(error), errorMessage(error));
+      this.writeError(socket, requestId, daemonErrorPayload(error));
     }
   }
 
@@ -256,7 +275,12 @@ export class LocalAgentDaemon {
     }
     this.assertAuthenticated(request.authToken);
     if (!this.accepting && request.method !== "hello" && request.method !== "daemon.status") {
-      throw new Error("Local agent daemon is stopping.");
+      throw new AgentDaemonUnavailableError({
+        code: "DAEMON_UNAVAILABLE",
+        operation: request.method,
+        retryable: true,
+        message: "Local agent daemon is stopping.",
+      });
     }
 
     switch (request.method) {
@@ -286,12 +310,12 @@ export class LocalAgentDaemon {
     }
   }
 
-  private writeError(socket: Socket, requestId: string, code: string, message: string): void {
+  private writeError(socket: Socket, requestId: string, error: LocalAgentDaemonErrorPayload): void {
     socket.end(encodeLocalAgentDaemonResponse({
       requestId,
       protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
       ok: false,
-      error: { code, message },
+      error,
     }), () => socket.destroy());
   }
 
@@ -368,12 +392,6 @@ function readRequestId(value: unknown): string {
   return typeof requestId === "string" ? requestId : "";
 }
 
-function errorCode(error: unknown): string {
-  if (error instanceof LocalAgentDaemonProtocolError) return error.code;
-  if (errorMessage(error).includes("is stopping")) return "DAEMON_STOPPING";
-  return "AGENT_ERROR";
-}
-
 export function writeLocalAgentDaemonLog(
   paths: LocalAgentDaemonPaths,
   level: "info" | "warn" | "error",
@@ -400,6 +418,35 @@ export function readLocalAgentDaemonLogs(paths: LocalAgentDaemonPaths, lines = 2
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function daemonErrorPayload(error: unknown): LocalAgentDaemonErrorPayload {
+  if (isLocalAgentError(error)) return toAgentErrorPayload(error);
+  if (error instanceof LocalAgentDaemonProtocolError) {
+    if (error.code === "PROTOCOL_MISMATCH") {
+      return toAgentErrorPayload(new AgentDaemonProtocolMismatchError({
+        code: "DAEMON_PROTOCOL_MISMATCH",
+        operation: "request",
+        retryable: false,
+        cause: error,
+        message: error.message,
+      }));
+    }
+    return toAgentErrorPayload(new AgentDaemonInvalidResponseError({
+      code: "DAEMON_INVALID_RESPONSE",
+      operation: "request",
+      retryable: false,
+      cause: error,
+      message: error.message,
+    }));
+  }
+  return toAgentErrorPayload(new AgentDaemonInternalError({
+    code: "DAEMON_INTERNAL_ERROR",
+    operation: "request",
+    retryable: false,
+    cause: error,
+    message: "Local agent daemon encountered an unexpected internal failure.",
+  }));
 }
 
 function unwrapManagerResult<T, E>(result: Result<T, E>): T {

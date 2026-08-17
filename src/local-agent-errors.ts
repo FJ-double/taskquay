@@ -106,12 +106,17 @@ export class AgentDaemonInvalidResponseError extends TaggedError(
   "AgentDaemonInvalidResponseError",
 )<AgentDaemonErrorFields & { code: "DAEMON_INVALID_RESPONSE" }>() {}
 
+export class AgentDaemonInternalError extends TaggedError(
+  "AgentDaemonInternalError",
+)<AgentDaemonErrorFields & { code: "DAEMON_INTERNAL_ERROR" }>() {}
+
 export type AgentDaemonError =
   | AgentDaemonUnavailableError
   | AgentDaemonStartupError
   | AgentDaemonTimeoutError
   | AgentDaemonProtocolMismatchError
-  | AgentDaemonInvalidResponseError;
+  | AgentDaemonInvalidResponseError
+  | AgentDaemonInternalError;
 
 export class AgentStoreError extends TaggedError("AgentStoreError")<{
   code: "AGENT_STORE_ERROR";
@@ -120,13 +125,13 @@ export class AgentStoreError extends TaggedError("AgentStoreError")<{
   cause: unknown;
   message: string;
 }>() {
-  constructor(operation: string, cause: unknown) {
+  constructor(operation: string, cause: unknown, message?: string) {
     super({
       code: "AGENT_STORE_ERROR",
       operation,
       retryable: false,
       cause,
-      message: `Subagent persistence operation failed: ${operation}.`,
+      message: message ?? `Subagent persistence operation failed: ${operation}.`,
     });
   }
 }
@@ -163,7 +168,8 @@ export function isAgentDaemonError(error: unknown): error is AgentDaemonError {
     || AgentDaemonStartupError.is(error)
     || AgentDaemonTimeoutError.is(error)
     || AgentDaemonProtocolMismatchError.is(error)
-    || AgentDaemonInvalidResponseError.is(error);
+    || AgentDaemonInvalidResponseError.is(error)
+    || AgentDaemonInternalError.is(error);
 }
 
 export function isLocalAgentError(error: unknown): error is LocalAgentError {
@@ -191,6 +197,125 @@ export function toAgentErrorPayload(error: LocalAgentError): AgentErrorPayload {
   if ("operation" in error && typeof error.operation === "string") payload.operation = error.operation;
   if ("target" in error && typeof error.target === "string") payload.target = error.target;
   return payload;
+}
+
+export function agentErrorFromPayload(payload: {
+  code: string;
+  message: string;
+  retryable?: boolean;
+  provider?: string;
+  agentId?: string;
+  workspaceId?: string;
+  operation?: string;
+  target?: string;
+}): LocalAgentError | undefined {
+  const retryable = payload.retryable ?? false;
+  const provider = payload.provider && isLocalAgentProvider(payload.provider)
+    ? payload.provider
+    : undefined;
+  switch (payload.code) {
+    case "UNKNOWN_TARGET":
+    case "AGENT_NOT_FOUND":
+    case "PROVIDER_DISABLED":
+    case "PROVIDER_NOT_CONFIGURED":
+    case "TARGET_RESOLUTION_FAILED":
+      return new AgentTargetError({
+        code: payload.code,
+        target: payload.target ?? payload.agentId ?? payload.provider ?? "unknown",
+        provider,
+        operation: payload.operation,
+        retryable,
+        message: payload.message,
+      });
+    case "AGENT_CONFLICT":
+      return new AgentConflictError({
+        code: payload.code,
+        agentId: payload.agentId,
+        operation: payload.operation ?? "request",
+        retryable,
+        message: payload.message,
+      });
+    case "WORKSPACE_MISMATCH":
+    case "WORKSPACE_NOT_ALLOWED":
+    case "WORKSPACE_SCOPE_REQUIRED":
+      return new AgentScopeError({
+        code: payload.code,
+        agentId: payload.agentId,
+        workspaceId: payload.workspaceId,
+        operation: payload.operation ?? "request",
+        retryable,
+        message: payload.message,
+      });
+    case "PROVIDER_UNAVAILABLE":
+    case "PROVIDER_CANCELLED":
+    case "PROVIDER_PROTOCOL_ERROR":
+    case "PROVIDER_EXECUTION_ERROR": {
+      if (!provider) return undefined;
+      const fields = {
+        provider,
+        agentId: payload.agentId,
+        operation: payload.operation ?? "run",
+        retryable,
+        message: payload.message,
+      };
+      if (payload.code === "PROVIDER_UNAVAILABLE") {
+        return new AgentProviderUnavailableError({ code: payload.code, ...fields });
+      }
+      if (payload.code === "PROVIDER_CANCELLED") {
+        return new AgentProviderCancelledError({ code: payload.code, ...fields });
+      }
+      if (payload.code === "PROVIDER_PROTOCOL_ERROR") {
+        return new AgentProviderProtocolError({ code: payload.code, ...fields });
+      }
+      return new AgentProviderExecutionError({ code: payload.code, ...fields });
+    }
+    case "AGENT_STORE_ERROR":
+      return new AgentStoreError(payload.operation ?? "request", undefined, payload.message);
+    case "DAEMON_UNAVAILABLE":
+      return new AgentDaemonUnavailableError({
+        code: payload.code,
+        operation: payload.operation ?? "request",
+        retryable,
+        message: payload.message,
+      });
+    case "DAEMON_STARTUP_FAILURE":
+      return new AgentDaemonStartupError({
+        code: payload.code,
+        operation: payload.operation ?? "startup",
+        retryable,
+        message: payload.message,
+      });
+    case "DAEMON_TIMEOUT":
+      return new AgentDaemonTimeoutError({
+        code: payload.code,
+        operation: payload.operation ?? "request",
+        retryable,
+        message: payload.message,
+      });
+    case "DAEMON_PROTOCOL_MISMATCH":
+      return new AgentDaemonProtocolMismatchError({
+        code: payload.code,
+        operation: payload.operation ?? "hello",
+        retryable,
+        message: payload.message,
+      });
+    case "DAEMON_INVALID_RESPONSE":
+      return new AgentDaemonInvalidResponseError({
+        code: payload.code,
+        operation: payload.operation ?? "request",
+        retryable,
+        message: payload.message,
+      });
+    case "DAEMON_INTERNAL_ERROR":
+      return new AgentDaemonInternalError({
+        code: payload.code,
+        operation: payload.operation ?? "request",
+        retryable,
+        message: payload.message,
+      });
+    default:
+      return undefined;
+  }
 }
 
 export function providerErrorFromCause(input: {

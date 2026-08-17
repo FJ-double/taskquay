@@ -4,6 +4,7 @@ import {
   decodeLocalAgentDaemonRequest,
   decodeLocalAgentDaemonResponse,
   encodeLocalAgentDaemonRequest,
+  encodeLocalAgentDaemonResponse,
   LocalAgentDaemonProtocolError,
 } from "./local-agent-daemon-protocol.js";
 
@@ -72,3 +73,41 @@ const response = decodeLocalAgentDaemonResponse({
   result: record,
 });
 assert.equal(response.ok, true);
+
+const errorResponse = decodeLocalAgentDaemonResponse(JSON.parse(encodeLocalAgentDaemonResponse({
+  requestId: "req_error",
+  protocolVersion: 1,
+  ok: false,
+  error: {
+    code: "PROVIDER_UNAVAILABLE",
+    message: "Codex executable was not found.",
+    retryable: false,
+    provider: "codex",
+    agentId: "agt_1234",
+    operation: "create_runtime",
+  },
+}))) ;
+assert.equal(errorResponse.ok, false);
+if (!errorResponse.ok) {
+  assert.equal(errorResponse.error.code, "PROVIDER_UNAVAILABLE");
+  assert.equal(errorResponse.error.retryable, false);
+  assert.equal(errorResponse.error.provider, "codex");
+  assert.equal(errorResponse.error.agentId, "agt_1234");
+  assert.equal(errorResponse.error.operation, "create_runtime");
+}
+
+const failedRecord = decodeAgentRecord({
+  id: "agt_error",
+  workspaceId: "ws_error",
+  workspaceRoot: "/tmp/project",
+  profileName: "reviewer",
+  provider: "codex",
+  status: "error",
+  error: "Timed out waiting for the local agent daemon.",
+  errorCode: "DAEMON_TIMEOUT",
+  errorRetryable: true,
+  createdAt: "now",
+  updatedAt: "now",
+});
+assert.equal(failedRecord.errorCode, "DAEMON_TIMEOUT");
+assert.equal(failedRecord.errorRetryable, true);

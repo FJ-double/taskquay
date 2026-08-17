@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
 import { Result } from "better-result";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
-import { createConnection } from "node:net";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { createConnection, createServer as createNetServer } from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { daemonExecArgv, LocalAgentClient } from "./local-agent-client.js";
 import { LocalAgentDaemon, type LocalAgentDaemonManager } from "./local-agent-daemon.js";
+import {
+  ensureLocalAgentDaemonSecret,
+  localAgentDaemonPaths,
+} from "./local-agent-daemon-lifecycle.js";
+import { encodeLocalAgentDaemonResponse } from "./local-agent-daemon-protocol.js";
 import type { RunOverrides, StartLocalAgentInput } from "./local-agent-manager.js";
 import type { LocalAgentRecord } from "./local-agent-store.js";
 
@@ -84,7 +89,9 @@ for (const diagnostic of [
   () => missingDaemonClient.stop(),
   () => missingDaemonClient.logs(),
 ]) {
-  await assert.rejects(diagnostic, /Local agent daemon is not running/);
+  const result = await diagnostic();
+  assert.equal(result.isErr(), true);
+  if (result.isErr()) assert.equal(result.error.code, "DAEMON_UNAVAILABLE");
 }
 assert.equal(diagnosticSpawnCount, 0, "daemon diagnostics must not start a missing daemon");
 
@@ -103,19 +110,20 @@ assert.deepEqual(
 
 let shutdownSocket: ReturnType<typeof createConnection> | undefined;
 try {
-  const started = await client.run({
+  const started = unwrap(await client.run({
     target: "reviewer",
     prompt: "Review this",
     workspaceId: record.workspaceId!,
     workspaceRoot: join(root, "project"),
-  });
+  }));
   assert.equal(started.id, record.id);
   assert.equal(manager.lastInput?.prompt, "Review this");
-  assert.equal((await client.get(record.id, { workspaceId: record.workspaceId!, workspaceRoot: record.workspaceRoot }))?.id, record.id);
-  assert.equal((await client.list({ workspaceId: record.workspaceId!, workspaceRoot: record.workspaceRoot }))[0]?.id, record.id);
-  assert.equal((await client.status()).state, "ready");
+  const recordScope = { workspaceId: record.workspaceId!, workspaceRoot: record.workspaceRoot };
+  assert.equal(unwrap(await client.get(record.id, recordScope)).id, record.id);
+  assert.equal(unwrap(await client.list(recordScope))[0]?.id, record.id);
+  assert.equal(unwrap(await client.status()).state, "ready");
 
-  await client.stop();
+  unwrap(await client.stop());
   await waitFor(() => manager.closed && !existsSync(daemon.paths.socketPath));
 } finally {
   await daemon.close();
@@ -138,7 +146,7 @@ const idleClient = new LocalAgentClient({
 });
 
 try {
-  await idleClient.ensureReady();
+  unwrap(await idleClient.ensureReady());
   await waitFor(() => idleManager.closed && !existsSync(idleDaemon.paths.socketPath));
 } finally {
   await idleDaemon.close();
@@ -182,10 +190,75 @@ try {
     stateDir: ownershipStateDir,
     spawnDaemon: () => { throw new Error("the winning daemon should already be reachable"); },
   });
-  assert.equal((await ownerClient.status()).pid, process.pid);
+  assert.equal(unwrap(await ownerClient.status()).pid, process.pid);
 } finally {
   await competingDaemon.close();
   await ownerDaemon.close();
+}
+
+const startupFailureClient = new LocalAgentClient({
+  stateDir: join(root, "startup-failure-state"),
+  startupTimeoutMs: 20,
+  requestTimeoutMs: 10,
+  spawnDaemon: () => { throw new Error("spawn failed"); },
+});
+const startupFailure = await startupFailureClient.ensureReady();
+assert.equal(startupFailure.isErr(), true);
+if (startupFailure.isErr()) assert.equal(startupFailure.error.code, "DAEMON_STARTUP_FAILURE");
+
+const timeoutStateDir = join(root, "request-timeout-state");
+await mkdir(timeoutStateDir, { recursive: true });
+const timeoutPaths = localAgentDaemonPaths(timeoutStateDir);
+ensureLocalAgentDaemonSecret(timeoutPaths);
+const timeoutServer = createNetServer((socket) => {
+  let buffer = "";
+  socket.setEncoding("utf8");
+  socket.on("data", (chunk: string | Buffer) => {
+    buffer += chunk.toString();
+    const newline = buffer.indexOf("\n");
+    if (newline === -1) return;
+    const request = JSON.parse(buffer.slice(0, newline)) as { requestId: string; method: string };
+    if (request.method !== "hello") return;
+    socket.end(encodeLocalAgentDaemonResponse({
+      requestId: request.requestId,
+      protocolVersion: 1,
+      ok: true,
+      result: {
+        state: "ready",
+        protocolVersion: 1,
+        pid: process.pid,
+        endpoint: timeoutPaths.endpoint,
+        startedAt: "now",
+        activeTurns: 0,
+        runtimeCount: 0,
+        clientConnections: 1,
+      },
+    }));
+  });
+});
+await new Promise<void>((resolveListen, rejectListen) => {
+  timeoutServer.once("error", rejectListen);
+  timeoutServer.listen(timeoutPaths.endpoint, resolveListen);
+});
+try {
+  const timeoutClient = new LocalAgentClient({
+    stateDir: timeoutStateDir,
+    endpoint: timeoutPaths.endpoint,
+    requestTimeoutMs: 20,
+    spawnDaemon: () => { throw new Error("existing daemon should be used"); },
+  });
+  const timedOut = await timeoutClient.status();
+  assert.equal(timedOut.isErr(), true);
+  if (timedOut.isErr()) assert.equal(timedOut.error.code, "DAEMON_TIMEOUT");
+} finally {
+  await new Promise<void>((resolveClose, rejectClose) => {
+    timeoutServer.close((error) => error ? rejectClose(error) : resolveClose());
+  });
+}
+
+function unwrap<T, E>(result: import("better-result").Result<T, E>): T {
+  if (result.isErr()) throw result.error;
+  return result.value;
 }
 
 const socketStateDir = join(root, "socket-state");

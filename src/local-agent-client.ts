@@ -3,7 +3,19 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createConnection } from "node:net";
 import { fileURLToPath } from "node:url";
+import { Result, type Result as BetterResult } from "better-result";
 import type { ServerConfig } from "./config.js";
+import {
+  AgentDaemonInvalidResponseError,
+  AgentDaemonProtocolMismatchError,
+  AgentDaemonStartupError,
+  AgentDaemonTimeoutError,
+  AgentDaemonUnavailableError,
+  agentErrorFromPayload,
+  isAgentDaemonError,
+  type AgentDaemonError,
+  type LocalAgentError,
+} from "./local-agent-errors.js";
 import {
   decodeAgentRecord,
   decodeAgentRecordList,
@@ -12,6 +24,7 @@ import {
   decodeLocalAgentDaemonResponse,
   encodeLocalAgentDaemonRequest,
   LocalAgentDaemonProtocolError,
+  type LocalAgentDaemonErrorPayload,
   type LocalAgentDaemonRequest,
   type LocalAgentDaemonResponse,
   type LocalAgentDaemonStatus,
@@ -23,12 +36,26 @@ import {
   readLocalAgentDaemonSecret,
   type LocalAgentDaemonPaths,
 } from "./local-agent-daemon-lifecycle.js";
-import type { RunOverrides, StartLocalAgentInput } from "./local-agent-manager.js";
+import type {
+  AgentContinueError,
+  AgentListError,
+  AgentLookupError,
+  AgentStartError,
+  RunOverrides,
+  StartLocalAgentInput,
+} from "./local-agent-manager.js";
 import type { LocalAgentRecord, LocalAgentWorkspaceScope } from "./local-agent-store.js";
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 8_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const RETRY_DELAY_MS = 40;
+
+type RequestError<M extends LocalAgentDaemonRequest["method"]> =
+  M extends "agent.start" ? AgentStartError | AgentDaemonError
+    : M extends "agent.continue" ? AgentContinueError | AgentDaemonError
+      : M extends "agent.get" ? AgentLookupError | AgentDaemonError
+        : M extends "agent.list" ? AgentListError | AgentDaemonError
+          : AgentDaemonError;
 
 export interface LocalAgentClientOptions {
   stateDir: string;
@@ -38,13 +65,6 @@ export interface LocalAgentClientOptions {
   endpoint?: string;
 }
 
-export class LocalAgentDaemonClientError extends Error {
-  constructor(readonly code: string, message: string) {
-    super(message);
-    this.name = "LocalAgentDaemonClientError";
-  }
-}
-
 export class LocalAgentClient {
   private readonly stateDir: string;
   private readonly paths: LocalAgentDaemonPaths;
@@ -52,7 +72,7 @@ export class LocalAgentClient {
   private readonly startupTimeoutMs: number;
   private readonly requestTimeoutMs: number;
   private readonly spawnDaemon: () => void;
-  private startupPromise?: Promise<LocalAgentDaemonStatus>;
+  private startupPromise?: Promise<BetterResult<LocalAgentDaemonStatus, AgentDaemonError>>;
 
   constructor(options: LocalAgentClientOptions) {
     this.stateDir = options.stateDir;
@@ -63,47 +83,65 @@ export class LocalAgentClient {
     this.spawnDaemon = options.spawnDaemon ?? (() => spawnLocalAgentDaemon(options.stateDir));
   }
 
-  async run(input: StartLocalAgentInput): Promise<LocalAgentRecord> {
+  async run(
+    input: StartLocalAgentInput,
+  ): Promise<BetterResult<LocalAgentRecord, AgentStartError | AgentDaemonError>> {
     return this.start(input);
   }
 
-  async start(input: StartLocalAgentInput): Promise<LocalAgentRecord> {
+  async start(
+    input: StartLocalAgentInput,
+  ): Promise<BetterResult<LocalAgentRecord, AgentStartError | AgentDaemonError>> {
     const result = await this.request("agent.start", input);
-    return decodeAgentRecord(result);
+    return decodeRequestResult(result, "agent.start", decodeAgentRecord);
   }
 
-  async continue(agentId: string, prompt: string, overrides: RunOverrides = {}, scope: LocalAgentWorkspaceScope): Promise<LocalAgentRecord> {
+  async continue(
+    agentId: string,
+    prompt: string,
+    overrides: RunOverrides = {},
+    scope: LocalAgentWorkspaceScope,
+  ): Promise<BetterResult<LocalAgentRecord, AgentContinueError | AgentDaemonError>> {
     const result = await this.request("agent.continue", {
       id: agentId,
       prompt,
       scope,
       ...(Object.keys(overrides).length > 0 ? { overrides } : {}),
     });
-    return decodeAgentRecord(result);
+    return decodeRequestResult(result, "agent.continue", decodeAgentRecord);
   }
 
-  async get(agentId: string, scope: LocalAgentWorkspaceScope): Promise<LocalAgentRecord | undefined> {
+  async get(
+    agentId: string,
+    scope: LocalAgentWorkspaceScope,
+  ): Promise<BetterResult<LocalAgentRecord, AgentLookupError | AgentDaemonError>> {
     const result = await this.request("agent.get", { id: agentId, scope });
-    return result === null ? undefined : decodeAgentRecord(result);
+    return decodeRequestResult(result, "agent.get", decodeAgentRecord);
   }
 
-  async list(scope: LocalAgentWorkspaceScope): Promise<LocalAgentRecord[]> {
-    return decodeAgentRecordList(await this.request("agent.list", scope));
+  async list(
+    scope: LocalAgentWorkspaceScope,
+  ): Promise<BetterResult<LocalAgentRecord[], AgentListError | AgentDaemonError>> {
+    const result = await this.request("agent.list", scope);
+    return decodeRequestResult(result, "agent.list", decodeAgentRecordList);
   }
 
-  async status(): Promise<LocalAgentDaemonStatus> {
-    return decodeDaemonStatus(await this.requestExisting("daemon.status", {}));
+  async status(): Promise<BetterResult<LocalAgentDaemonStatus, AgentDaemonError>> {
+    const result = await this.requestExisting("daemon.status", {});
+    return decodeRequestResult(result, "daemon.status", decodeDaemonStatus);
   }
 
-  async stop(): Promise<LocalAgentDaemonStatus> {
-    return decodeDaemonStatus(await this.requestExisting("daemon.stop", {}));
+  async stop(): Promise<BetterResult<LocalAgentDaemonStatus, AgentDaemonError>> {
+    const result = await this.requestExisting("daemon.stop", {});
+    return decodeRequestResult(result, "daemon.stop", decodeDaemonStatus);
   }
 
-  async logs(lines = 200): Promise<string> {
-    return decodeDaemonLogs(await this.requestExisting("daemon.logs", { lines }));
+  async logs(lines = 200): Promise<BetterResult<string, AgentDaemonError>> {
+    const result = await this.requestExisting("daemon.logs", { lines });
+    return decodeRequestResult(result, "daemon.logs", decodeDaemonLogs);
   }
 
-  async ensureReady(): Promise<LocalAgentDaemonStatus> {
+  async ensureReady(): Promise<BetterResult<LocalAgentDaemonStatus, AgentDaemonError>> {
     if (this.startupPromise) return this.startupPromise;
     this.startupPromise = this.ensureReadyInternal().finally(() => {
       this.startupPromise = undefined;
@@ -111,58 +149,85 @@ export class LocalAgentClient {
     return this.startupPromise;
   }
 
-  private async ensureReadyInternal(): Promise<LocalAgentDaemonStatus> {
+  private async ensureReadyInternal(): Promise<BetterResult<LocalAgentDaemonStatus, AgentDaemonError>> {
     const existing = await this.tryHello();
-    if (existing) return existing;
+    if (existing.isErr()) return existing;
+    if (existing.value) return Result.ok(existing.value);
 
-    this.spawnDaemon();
+    try {
+      this.spawnDaemon();
+    } catch (cause) {
+      return Result.err(new AgentDaemonStartupError({
+        code: "DAEMON_STARTUP_FAILURE",
+        operation: "startup",
+        retryable: true,
+        cause,
+        message: `Unable to start the local agent daemon in ${this.stateDir}.`,
+      }));
+    }
     const deadline = Date.now() + this.startupTimeoutMs;
-    let lastError: unknown;
+    let lastError: AgentDaemonError | undefined;
     while (Date.now() < deadline) {
       await delay(RETRY_DELAY_MS);
-      try {
-        const ready = await this.tryHello();
-        if (ready) return ready;
-      } catch (error) {
-        lastError = error;
-        if (error instanceof LocalAgentDaemonClientError && error.code === "PROTOCOL_MISMATCH") throw error;
+      const ready = await this.tryHello();
+      if (ready.isErr()) {
+        lastError = ready.error;
+        if (
+          ready.error.code === "DAEMON_PROTOCOL_MISMATCH"
+          || ready.error.code === "DAEMON_INVALID_RESPONSE"
+        ) return ready;
+        continue;
       }
+      if (ready.value) return Result.ok(ready.value);
     }
-    const suffix = lastError instanceof Error ? `: ${lastError.message}` : "";
-    throw new LocalAgentDaemonClientError(
-      "DAEMON_START_FAILED",
-      `Unable to start the local agent daemon in ${this.stateDir}${suffix}`,
-    );
+    return Result.err(new AgentDaemonStartupError({
+      code: "DAEMON_STARTUP_FAILURE",
+      operation: "startup",
+      retryable: true,
+      cause: lastError,
+      message: `Unable to start the local agent daemon in ${this.stateDir}.`,
+    }));
   }
 
-  private async tryHello(): Promise<LocalAgentDaemonStatus | undefined> {
-    try {
-      const response = await sendRequest(this.endpoint, {
-        requestId: randomUUID(),
-        protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
-        authToken: ensureLocalAgentDaemonSecret(this.paths),
-        method: "hello",
-        params: {},
-      }, this.requestTimeoutMs);
-      if (!response.ok) {
-        if (response.error.code === "PROTOCOL_MISMATCH") {
-          throw new LocalAgentDaemonClientError(response.error.code, response.error.message);
-        }
-        return undefined;
-      }
-      const status = decodeDaemonStatus(response.result);
-      return status.state === "ready" ? status : undefined;
-    } catch (error) {
-      if (error instanceof LocalAgentDaemonClientError && error.code === "PROTOCOL_MISMATCH") throw error;
-      return undefined;
+  private async tryHello(): Promise<BetterResult<LocalAgentDaemonStatus | undefined, AgentDaemonError>> {
+    const response = await sendRequest(this.endpoint, {
+      requestId: randomUUID(),
+      protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+      authToken: ensureLocalAgentDaemonSecret(this.paths),
+      method: "hello",
+      params: {},
+    }, this.requestTimeoutMs);
+    if (response.isErr()) {
+      if (
+        response.error.code === "DAEMON_UNAVAILABLE"
+        || response.error.code === "DAEMON_TIMEOUT"
+      ) return Result.ok(undefined);
+      return response;
     }
+    if (!response.value.ok) {
+      const error = decodeRemoteError(response.value.error, "hello");
+      if (!isAgentDaemonError(error)) {
+        return Result.err(new AgentDaemonInvalidResponseError({
+          code: "DAEMON_INVALID_RESPONSE",
+          operation: "hello",
+          retryable: false,
+          cause: response.value.error,
+          message: "Local agent daemon returned an invalid hello error.",
+        }));
+      }
+      return error.code === "DAEMON_UNAVAILABLE" ? Result.ok(undefined) : Result.err(error);
+    }
+    const decoded = decodeValue(response.value.result, "hello", decodeDaemonStatus);
+    if (decoded.isErr()) return decoded;
+    return Result.ok(decoded.value.state === "ready" ? decoded.value : undefined);
   }
 
   private async request<M extends LocalAgentDaemonRequest["method"]>(
     method: M,
     params: Extract<LocalAgentDaemonRequest, { method: M }>['params'],
-  ): Promise<unknown> {
-    await this.ensureReady();
+  ): Promise<BetterResult<unknown, RequestError<M>>> {
+    const ready = await this.ensureReady();
+    if (ready.isErr()) return ready as BetterResult<unknown, RequestError<M>>;
     const response = await sendRequest(this.endpoint, {
       requestId: randomUUID(),
       protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
@@ -170,37 +235,46 @@ export class LocalAgentClient {
       method,
       params,
     } as LocalAgentDaemonRequest, this.requestTimeoutMs);
-    if (!response.ok) {
-      throw new LocalAgentDaemonClientError(response.error.code, response.error.message);
+    if (response.isErr()) return response as BetterResult<unknown, RequestError<M>>;
+    if (!response.value.ok) {
+      return Result.err(decodeRemoteError(response.value.error, method)) as BetterResult<unknown, RequestError<M>>;
     }
-    return response.result;
+    return Result.ok(response.value.result);
   }
 
   private async requestExisting<M extends LocalAgentDaemonRequest["method"]>(
     method: M,
     params: Extract<LocalAgentDaemonRequest, { method: M }>['params'],
-  ): Promise<unknown> {
+  ): Promise<BetterResult<unknown, AgentDaemonError>> {
     const authToken = readLocalAgentDaemonSecret(this.paths);
     if (!authToken) {
-      throw new LocalAgentDaemonClientError("DAEMON_UNAVAILABLE", "Local agent daemon is not running.");
+      return Result.err(new AgentDaemonUnavailableError({
+        code: "DAEMON_UNAVAILABLE",
+        operation: method,
+        retryable: true,
+        message: "Local agent daemon is not running.",
+      }));
     }
-    try {
-      const response = await sendRequest(this.endpoint, {
-        requestId: randomUUID(),
-        protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
-        authToken,
-        method,
-        params,
-      } as LocalAgentDaemonRequest, this.requestTimeoutMs);
-      if (!response.ok) {
-        throw new LocalAgentDaemonClientError(response.error.code, response.error.message);
-      }
-      return response.result;
-    } catch (error) {
-      if (error instanceof LocalAgentDaemonClientError && error.code === "PROTOCOL_MISMATCH") throw error;
-      if (error instanceof LocalAgentDaemonClientError && error.code === "DAEMON_UNAVAILABLE") throw error;
-      throw new LocalAgentDaemonClientError("DAEMON_UNAVAILABLE", "Local agent daemon is not running.");
+    const response = await sendRequest(this.endpoint, {
+      requestId: randomUUID(),
+      protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+      authToken,
+      method,
+      params,
+    } as LocalAgentDaemonRequest, this.requestTimeoutMs);
+    if (response.isErr()) return response;
+    if (!response.value.ok) {
+      const error = decodeRemoteError(response.value.error, method);
+      if (isAgentDaemonError(error)) return Result.err(error);
+      return Result.err(new AgentDaemonInvalidResponseError({
+        code: "DAEMON_INVALID_RESPONSE",
+        operation: method,
+        retryable: false,
+        cause: response.value.error,
+        message: "Local agent daemon returned an invalid daemon-control error.",
+      }));
     }
+    return Result.ok(response.value.result);
   }
 }
 
@@ -244,21 +318,29 @@ async function sendRequest(
   endpoint: string,
   request: LocalAgentDaemonRequest,
   timeoutMs: number,
-): Promise<LocalAgentDaemonResponse> {
-  return new Promise((resolve, reject) => {
+): Promise<BetterResult<LocalAgentDaemonResponse, AgentDaemonError>> {
+  return new Promise((resolve) => {
     const socket = createConnection(endpoint);
     let buffer = "";
     let settled = false;
     const timer = setTimeout(() => {
-      finish(new LocalAgentDaemonClientError("REQUEST_TIMEOUT", "Timed out waiting for the local agent daemon."), true);
+      finish(Result.err(new AgentDaemonTimeoutError({
+        code: "DAEMON_TIMEOUT",
+        operation: request.method,
+        retryable: true,
+        message: "Timed out waiting for the local agent daemon.",
+      })), true);
     }, timeoutMs);
 
-    const finish = (error?: unknown, destroy = false) => {
+    const finish = (
+      result: BetterResult<LocalAgentDaemonResponse, AgentDaemonError>,
+      destroy = false,
+    ) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       if (destroy) socket.destroy();
-      if (error) reject(error);
+      resolve(result);
     };
 
     socket.setEncoding("utf8");
@@ -271,22 +353,77 @@ async function sendRequest(
         if (response.requestId !== request.requestId) {
           throw new LocalAgentDaemonProtocolError("INVALID_RESPONSE", "Daemon response request id did not match.");
         }
-        settled = true;
-        clearTimeout(timer);
-        resolve(response);
+        finish(Result.ok(response));
         socket.end();
-      } catch (error) {
-        finish(error, true);
+      } catch (cause) {
+        finish(Result.err(new AgentDaemonInvalidResponseError({
+          code: "DAEMON_INVALID_RESPONSE",
+          operation: request.method,
+          retryable: false,
+          cause,
+          message: "Local agent daemon returned an invalid response.",
+        })), true);
       }
     });
-    socket.once("error", (error) => finish(new LocalAgentDaemonClientError(
-      (error as NodeJS.ErrnoException).code ?? "DAEMON_UNAVAILABLE",
-      error.message,
-    )));
+    socket.once("error", (cause) => finish(Result.err(new AgentDaemonUnavailableError({
+      code: "DAEMON_UNAVAILABLE",
+      operation: request.method,
+      retryable: true,
+      cause,
+      message: "Local agent daemon is unavailable.",
+    }))));
     socket.once("close", () => {
-      if (!settled) finish(new LocalAgentDaemonClientError("DAEMON_UNAVAILABLE", "Local agent daemon closed the connection."));
+      if (!settled) {
+        finish(Result.err(new AgentDaemonUnavailableError({
+          code: "DAEMON_UNAVAILABLE",
+          operation: request.method,
+          retryable: true,
+          message: "Local agent daemon closed the connection.",
+        })));
+      }
     });
     socket.once("connect", () => socket.write(encodeLocalAgentDaemonRequest(request)));
+  });
+}
+
+function decodeRequestResult<T, E extends LocalAgentError>(
+  result: BetterResult<unknown, E>,
+  operation: string,
+  decode: (value: unknown) => T,
+): BetterResult<T, E | AgentDaemonInvalidResponseError> {
+  if (result.isErr()) return result;
+  return decodeValue(result.value, operation, decode);
+}
+
+function decodeValue<T>(
+  value: unknown,
+  operation: string,
+  decode: (value: unknown) => T,
+): BetterResult<T, AgentDaemonInvalidResponseError> {
+  try {
+    return Result.ok(decode(value));
+  } catch (cause) {
+    return Result.err(new AgentDaemonInvalidResponseError({
+      code: "DAEMON_INVALID_RESPONSE",
+      operation,
+      retryable: false,
+      cause,
+      message: "Local agent daemon returned an invalid response.",
+    }));
+  }
+}
+
+function decodeRemoteError(
+  payload: LocalAgentDaemonErrorPayload,
+  operation: string,
+): LocalAgentError {
+  const decoded = agentErrorFromPayload(payload);
+  return decoded ?? new AgentDaemonInvalidResponseError({
+    code: "DAEMON_INVALID_RESPONSE",
+    operation,
+    retryable: false,
+    cause: payload,
+    message: "Local agent daemon returned an unknown error code.",
   });
 }
 
