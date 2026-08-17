@@ -11,7 +11,9 @@ import {
   ensureLocalAgentDaemonSecret,
   localAgentDaemonPaths,
 } from "./local-agent-daemon-lifecycle.js";
-import { encodeLocalAgentDaemonResponse } from "./local-agent-daemon-protocol.js";
+import {
+  encodeLocalAgentDaemonResponse,
+} from "./local-agent-daemon-protocol.js";
 import type { RunOverrides, StartLocalAgentInput } from "./local-agent-manager.js";
 import type { LocalAgentRecord } from "./local-agent-store.js";
 
@@ -311,10 +313,31 @@ const socketDaemon = new LocalAgentDaemon({
 
 try {
   await socketDaemon.start();
-  const idleSocket = createConnection(socketDaemon.paths.endpoint);
-  await onceSocket(idleSocket, "connect");
+  const timedOutRequest = await sendRawRequest(socketDaemon.paths.endpoint);
+  assert.equal(timedOutRequest.ok, false);
+  if (!timedOutRequest.ok) {
+    assert.equal(timedOutRequest.error.code, "DAEMON_TIMEOUT");
+    assert.equal(timedOutRequest.error.retryable, true);
+  }
   await waitFor(() => socketDaemon.status().clientConnections === 0);
-  idleSocket.destroy();
+
+  const unauthorized = await sendRawRequest(socketDaemon.paths.endpoint, JSON.stringify({
+    requestId: "unauthorized",
+    protocolVersion: 1,
+    authToken: "wrong-secret",
+    method: "hello",
+    params: {},
+  }) + "\n");
+  assert.equal(unauthorized.ok, false);
+  if (!unauthorized.ok) assert.equal(unauthorized.error.code, "DAEMON_UNAUTHORIZED");
+
+  const malformed = await sendRawRequest(socketDaemon.paths.endpoint, "{not-json}\n");
+  assert.equal(malformed.ok, false);
+  if (!malformed.ok) assert.equal(malformed.error.code, "DAEMON_INVALID_REQUEST");
+
+  const oversized = await sendRawRequest(socketDaemon.paths.endpoint, "x".repeat(512 * 1024 + 1));
+  assert.equal(oversized.ok, false);
+  if (!oversized.ok) assert.equal(oversized.error.code, "DAEMON_INVALID_REQUEST");
 
   shutdownSocket = createConnection(socketDaemon.paths.endpoint);
   await onceSocket(shutdownSocket, "connect");
@@ -336,6 +359,40 @@ async function waitFor(check: () => boolean): Promise<void> {
   }
   assert.equal(check(), true, "condition did not become true before timeout");
 }
+
+async function sendRawRequest(
+  endpoint: string,
+  payload?: string,
+): Promise<RawDaemonResponse> {
+  const socket = createConnection(endpoint);
+  socket.setEncoding("utf8");
+  const connected = onceSocket(socket, "connect");
+  let buffer = "";
+  const response = new Promise<RawDaemonResponse>((resolveResponse, rejectResponse) => {
+    socket.on("data", (chunk: string | Buffer) => {
+      buffer += chunk.toString();
+      const newline = buffer.indexOf("\n");
+      if (newline === -1) return;
+      try {
+        resolveResponse(JSON.parse(buffer.slice(0, newline)) as RawDaemonResponse);
+      } catch (error) {
+        rejectResponse(error);
+      }
+    });
+    socket.once("error", rejectResponse);
+  });
+  await connected;
+  if (payload !== undefined) socket.write(payload);
+  try {
+    return await response;
+  } finally {
+    socket.destroy();
+  }
+}
+
+type RawDaemonResponse =
+  | { ok: true }
+  | { ok: false; error: { code?: string; retryable?: boolean } };
 
 function onceSocket(
   socket: ReturnType<typeof createConnection>,

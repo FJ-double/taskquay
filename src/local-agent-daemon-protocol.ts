@@ -226,8 +226,8 @@ export function decodeDaemonLogs(value: unknown): string {
 }
 
 export class LocalAgentDaemonProtocolError extends Error {
-  constructor(readonly code: string, message: string) {
-    super(message);
+  constructor(readonly code: string, message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "LocalAgentDaemonProtocolError";
   }
 }

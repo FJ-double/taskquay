@@ -3,8 +3,11 @@ import { appendFileSync, chmodSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Server as NetServer, type Socket } from "node:net";
 import {
   AgentDaemonInternalError,
+  AgentDaemonInvalidRequestError,
   AgentDaemonInvalidResponseError,
   AgentDaemonProtocolMismatchError,
+  AgentDaemonTimeoutError,
+  AgentDaemonUnauthorizedError,
   AgentDaemonUnavailableError,
   isLocalAgentError,
   toAgentErrorPayload,
@@ -213,12 +216,12 @@ export class LocalAgentDaemon {
     const requestTimer = setTimeout(() => {
       if (handled) return;
       handled = true;
-      this.writeError(socket, "", {
-        code: "DAEMON_INVALID_RESPONSE",
+      this.writeError(socket, "", toAgentErrorPayload(new AgentDaemonTimeoutError({
+        code: "DAEMON_TIMEOUT",
         message: "Timed out waiting for a complete daemon request.",
-        retryable: false,
+        retryable: true,
         operation: "request",
-      });
+      })));
       socket.destroy();
     }, this.requestReadTimeoutMs);
     requestTimer.unref();
@@ -227,12 +230,12 @@ export class LocalAgentDaemon {
       buffer += chunk.toString();
       if (Buffer.byteLength(buffer, "utf8") > MAX_REQUEST_BYTES) {
         handled = true;
-        this.writeError(socket, "", {
-          code: "DAEMON_INVALID_RESPONSE",
+        this.writeError(socket, "", toAgentErrorPayload(new AgentDaemonInvalidRequestError({
+          code: "DAEMON_INVALID_REQUEST",
           message: "Daemon request is too large.",
           retryable: false,
           operation: "request",
-        });
+        })));
         return;
       }
       const newline = buffer.indexOf("\n");
@@ -250,7 +253,12 @@ export class LocalAgentDaemon {
   private async handleLine(socket: Socket, line: string): Promise<void> {
     let requestId = "";
     try {
-      const parsed: unknown = JSON.parse(line);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch (cause) {
+        throw new LocalAgentDaemonProtocolError("INVALID_REQUEST", "Daemon request is not valid JSON.", { cause });
+      }
       requestId = readRequestId(parsed);
       const request = decodeLocalAgentDaemonRequest(parsed);
       const response = await this.dispatch(request);
@@ -432,8 +440,17 @@ function daemonErrorPayload(error: unknown): LocalAgentDaemonErrorPayload {
         message: error.message,
       }));
     }
-    return toAgentErrorPayload(new AgentDaemonInvalidResponseError({
-      code: "DAEMON_INVALID_RESPONSE",
+    if (error.code === "UNAUTHORIZED") {
+      return toAgentErrorPayload(new AgentDaemonUnauthorizedError({
+        code: "DAEMON_UNAUTHORIZED",
+        operation: "request",
+        retryable: false,
+        cause: error,
+        message: error.message,
+      }));
+    }
+    return toAgentErrorPayload(new AgentDaemonInvalidRequestError({
+      code: "DAEMON_INVALID_REQUEST",
       operation: "request",
       retryable: false,
       cause: error,

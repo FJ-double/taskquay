@@ -103,6 +103,14 @@ export class AgentDaemonProtocolMismatchError extends TaggedError(
   "AgentDaemonProtocolMismatchError",
 )<AgentDaemonErrorFields & { code: "DAEMON_PROTOCOL_MISMATCH" }>() {}
 
+export class AgentDaemonUnauthorizedError extends TaggedError(
+  "AgentDaemonUnauthorizedError",
+)<AgentDaemonErrorFields & { code: "DAEMON_UNAUTHORIZED" }>() {}
+
+export class AgentDaemonInvalidRequestError extends TaggedError(
+  "AgentDaemonInvalidRequestError",
+)<AgentDaemonErrorFields & { code: "DAEMON_INVALID_REQUEST" }>() {}
+
 export class AgentDaemonInvalidResponseError extends TaggedError(
   "AgentDaemonInvalidResponseError",
 )<AgentDaemonErrorFields & { code: "DAEMON_INVALID_RESPONSE" }>() {}
@@ -116,6 +124,8 @@ export type AgentDaemonError =
   | AgentDaemonStartupError
   | AgentDaemonTimeoutError
   | AgentDaemonProtocolMismatchError
+  | AgentDaemonUnauthorizedError
+  | AgentDaemonInvalidRequestError
   | AgentDaemonInvalidResponseError
   | AgentDaemonInternalError;
 
@@ -169,6 +179,8 @@ export function isAgentDaemonError(error: unknown): error is AgentDaemonError {
     || AgentDaemonStartupError.is(error)
     || AgentDaemonTimeoutError.is(error)
     || AgentDaemonProtocolMismatchError.is(error)
+    || AgentDaemonUnauthorizedError.is(error)
+    || AgentDaemonInvalidRequestError.is(error)
     || AgentDaemonInvalidResponseError.is(error)
     || AgentDaemonInternalError.is(error);
 }
@@ -195,6 +207,8 @@ export function toAgentErrorPayload(error: LocalAgentError): AgentErrorPayload {
     AgentDaemonStartupError: daemonErrorPayload,
     AgentDaemonTimeoutError: daemonErrorPayload,
     AgentDaemonProtocolMismatchError: daemonErrorPayload,
+    AgentDaemonUnauthorizedError: daemonErrorPayload,
+    AgentDaemonInvalidRequestError: daemonErrorPayload,
     AgentDaemonInvalidResponseError: daemonErrorPayload,
     AgentDaemonInternalError: daemonErrorPayload,
     AgentStoreError: storeErrorPayload,
@@ -298,6 +312,20 @@ export function agentErrorFromPayload(payload: {
       return new AgentDaemonProtocolMismatchError({
         code: payload.code,
         operation: payload.operation ?? "hello",
+        retryable,
+        message: payload.message,
+      });
+    case "DAEMON_UNAUTHORIZED":
+      return new AgentDaemonUnauthorizedError({
+        code: payload.code,
+        operation: payload.operation ?? "request",
+        retryable,
+        message: payload.message,
+      });
+    case "DAEMON_INVALID_REQUEST":
+      return new AgentDaemonInvalidRequestError({
+        code: payload.code,
+        operation: payload.operation ?? "request",
         retryable,
         message: payload.message,
       });

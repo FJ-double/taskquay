@@ -6,9 +6,11 @@ import { fileURLToPath } from "node:url";
 import { matchError, Result, type Result as BetterResult } from "better-result";
 import type { ServerConfig } from "./config.js";
 import {
+  AgentDaemonInvalidRequestError,
   AgentDaemonInvalidResponseError,
   AgentDaemonStartupError,
   AgentDaemonTimeoutError,
+  AgentDaemonUnauthorizedError,
   AgentDaemonUnavailableError,
   agentErrorFromPayload,
   isAgentDaemonError,
@@ -490,6 +492,8 @@ function isRequestError(
     AgentDaemonStartupError: () => "daemon" as const,
     AgentDaemonTimeoutError: () => "daemon" as const,
     AgentDaemonProtocolMismatchError: () => "daemon" as const,
+    AgentDaemonUnauthorizedError: () => "daemon" as const,
+    AgentDaemonInvalidRequestError: () => "daemon" as const,
     AgentDaemonInvalidResponseError: () => "daemon" as const,
     AgentDaemonInternalError: () => "daemon" as const,
     AgentStoreError: () => "store" as const,
