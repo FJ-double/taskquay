@@ -16,6 +16,7 @@ import {
   AgentTargetError,
   agentErrorFromPayload,
   isAgentDaemonError,
+  isProgrammerDefect,
   type AgentDaemonError,
   type LocalAgentError,
 } from "./local-agent-errors.js";
@@ -193,10 +194,12 @@ export class LocalAgentClient {
   }
 
   private async tryHello(): Promise<BetterResult<LocalAgentDaemonStatus | undefined, AgentDaemonError>> {
+    const authToken = this.authTokenResult("hello");
+    if (authToken.isErr()) return authToken;
     const response = await sendRequest(this.endpoint, {
       requestId: randomUUID(),
       protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
-      authToken: ensureLocalAgentDaemonSecret(this.paths),
+      authToken: authToken.value,
       method: "hello",
       params: {},
     }, this.requestTimeoutMs);
@@ -231,10 +234,12 @@ export class LocalAgentClient {
   ): Promise<BetterResult<unknown, RequestError<M>>> {
     const ready = await this.ensureReady();
     if (ready.isErr()) return ready as BetterResult<unknown, RequestError<M>>;
+    const authToken = this.authTokenResult(method);
+    if (authToken.isErr()) return authToken as BetterResult<unknown, RequestError<M>>;
     const response = await sendRequest(this.endpoint, {
       requestId: randomUUID(),
       protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
-      authToken: ensureLocalAgentDaemonSecret(this.paths),
+      authToken: authToken.value,
       method,
       params,
     } as LocalAgentDaemonRequest, this.requestTimeoutMs);
@@ -259,8 +264,9 @@ export class LocalAgentClient {
     method: M,
     params: Extract<LocalAgentDaemonRequest, { method: M }>['params'],
   ): Promise<BetterResult<unknown, AgentDaemonError>> {
-    const authToken = readLocalAgentDaemonSecret(this.paths);
-    if (!authToken) {
+    const authToken = this.existingAuthTokenResult(method);
+    if (authToken.isErr()) return authToken;
+    if (!authToken.value) {
       return Result.err(new AgentDaemonUnavailableError({
         code: "DAEMON_UNAVAILABLE",
         operation: method,
@@ -271,7 +277,7 @@ export class LocalAgentClient {
     const response = await sendRequest(this.endpoint, {
       requestId: randomUUID(),
       protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
-      authToken,
+      authToken: authToken.value,
       method,
       params,
     } as LocalAgentDaemonRequest, this.requestTimeoutMs);
@@ -288,6 +294,40 @@ export class LocalAgentClient {
       }));
     }
     return Result.ok(response.value.result);
+  }
+
+  private authTokenResult(
+    operation: string,
+  ): BetterResult<string, AgentDaemonUnavailableError> {
+    try {
+      return Result.ok(ensureLocalAgentDaemonSecret(this.paths));
+    } catch (cause) {
+      if (isProgrammerDefect(cause)) throw cause;
+      return Result.err(new AgentDaemonUnavailableError({
+        code: "DAEMON_UNAVAILABLE",
+        operation,
+        retryable: false,
+        cause,
+        message: "Local agent daemon credentials are unavailable.",
+      }));
+    }
+  }
+
+  private existingAuthTokenResult(
+    operation: string,
+  ): BetterResult<string | undefined, AgentDaemonUnavailableError> {
+    try {
+      return Result.ok(readLocalAgentDaemonSecret(this.paths));
+    } catch (cause) {
+      if (isProgrammerDefect(cause)) throw cause;
+      return Result.err(new AgentDaemonUnavailableError({
+        code: "DAEMON_UNAVAILABLE",
+        operation,
+        retryable: false,
+        cause,
+        message: "Local agent daemon credentials are unavailable.",
+      }));
+    }
   }
 }
 
