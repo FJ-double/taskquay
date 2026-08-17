@@ -9,6 +9,9 @@ import {
   const availability = checkLocalAgentProviderAvailability("codex");
   assert.equal(availability.name, "codex");
   assert.equal(typeof availability.available, "boolean");
+  if (availability.available) {
+    assert.match(availability.note ?? "", /app-server support is verified on first run/);
+  }
 }
 
 {
@@ -38,8 +41,8 @@ import {
 
 assert.equal(
   formatLocalAgentProviderAvailabilitySummary([
-    { name: "codex", available: true },
+    { name: "codex", available: true, note: "executable detected; app-server support is verified on first run" },
     { name: "pi", available: false, reason: "pi executable not found" },
   ]),
-  "available: codex; unavailable: pi (pi executable not found)",
+  "available: codex (executable detected; app-server support is verified on first run); unavailable: pi (pi executable not found)",
 );

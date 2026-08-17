@@ -9,6 +9,7 @@ export interface LocalAgentProviderAvailability {
   name: LocalAgentProvider;
   available: boolean;
   reason?: string;
+  note?: string;
 }
 
 export function getLocalAgentProviderAvailabilitySnapshot(
@@ -53,7 +54,7 @@ export function formatLocalAgentProviderAvailabilitySummary(
 ): string {
   const available = providers
     .filter((provider) => provider.available)
-    .map((provider) => provider.name);
+    .map(formatAvailableProvider);
   const unavailable = providers
     .filter((provider) => !provider.available)
     .map((provider) => `${provider.name} (${provider.reason ?? "unavailable"})`);
@@ -80,7 +81,13 @@ function packageAvailability(
 }
 
 function codexAvailability(env: NodeJS.ProcessEnv): LocalAgentProviderAvailability {
-  return commandAvailability("codex", env.CODEX_COMMAND ?? "codex", env);
+  const availability = commandAvailability("codex", env.CODEX_COMMAND ?? "codex", env);
+  return availability.available
+    ? {
+        ...availability,
+        note: "executable detected; app-server support is verified on first run",
+      }
+    : availability;
 }
 
 function commandAvailability(
@@ -103,7 +110,7 @@ function resolveCommand(command: string, env: NodeJS.ProcessEnv): string | undef
   const path = env.PATH;
   if (!path) return undefined;
   const extensions = process.platform === "win32"
-    ? (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)
+    ? ["", ...(env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)]
     : [""];
   for (const directory of path.split(delimiter)) {
     if (!directory) continue;
@@ -113,6 +120,10 @@ function resolveCommand(command: string, env: NodeJS.ProcessEnv): string | undef
     }
   }
   return undefined;
+}
+
+function formatAvailableProvider(provider: LocalAgentProviderAvailability): string {
+  return provider.note ? `${provider.name} (${provider.note})` : provider.name;
 }
 
 function executableExists(command: string): boolean {

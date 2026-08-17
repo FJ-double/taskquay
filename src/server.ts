@@ -236,6 +236,10 @@ function formatUnavailableAgentProvider(provider: LocalAgentProviderAvailability
   return `${provider.name} (${provider.reason ?? "unavailable"})`;
 }
 
+function formatAvailableAgentProvider(provider: LocalAgentProviderAvailability): string {
+  return provider.note ? `${provider.name} (${provider.note})` : provider.name;
+}
+
 function resultOutputSchema(extra: z.ZodRawShape = {}): z.ZodRawShape {
   return {
     result: z
@@ -879,7 +883,7 @@ export function createMcpServer(
               ? `Available skills: ${visibleSkills.map((skill) => skill.name).join(", ")}`
               : undefined,
             visibleAgentProviders.some((provider) => provider.available)
-              ? `Available subagent providers: ${visibleAgentProviders.filter((provider) => provider.available).map((provider) => provider.name).join(", ")}`
+              ? `Available subagent providers: ${visibleAgentProviders.filter((provider) => provider.available).map(formatAvailableAgentProvider).join(", ")}`
               : undefined,
             visibleAgentProviders.some((provider) => !provider.available)
               ? `Unavailable subagent providers: ${visibleAgentProviders.filter((provider) => !provider.available).map(formatUnavailableAgentProvider).join(", ")}`
