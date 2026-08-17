@@ -144,7 +144,15 @@ export class PiSessionRuntime implements LocalAgentRuntime {
     this.session.setActiveToolsByName([...piToolsForWriteMode(input.writeMode)]);
     if (input.model) {
       const model = resolvePiModel(this.session.modelRegistry, input.model);
-      if (!model) throw new Error(`Pi model not found: ${input.model}`);
+      if (!model) {
+        throw new AgentProviderProtocolError({
+          code: "PROVIDER_PROTOCOL_ERROR",
+          provider: "pi",
+          operation: "configure_model",
+          retryable: false,
+          message: `Pi model not found: ${input.model}.`,
+        });
+      }
       await this.session.setModel(model as never);
     }
     if (input.thinking) {

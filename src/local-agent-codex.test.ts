@@ -130,6 +130,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     if (failed.isErr()) {
       assert.equal(failed.error.code, "PROVIDER_EXECUTION_ERROR");
       assert.equal(failed.error.provider, "codex");
+      assert.equal(failed.error.retryable, false);
     }
     const protocolFailure = await runtime.run({
       prompt: "empty",
@@ -140,6 +141,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     if (protocolFailure.isErr()) {
       assert.equal(protocolFailure.error.code, "PROVIDER_PROTOCOL_ERROR");
       assert.equal(protocolFailure.error.provider, "codex");
+      assert.equal(protocolFailure.error.retryable, false);
       assert.ok(protocolFailure.error.cause, "provider protocol cause remains available internally");
       assert.equal("cause" in toAgentErrorPayload(protocolFailure.error), false);
     }
@@ -153,4 +155,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
 
 const unavailable = await new CodexLocalAgentDriver({}, () => undefined).createRuntime(cachedContext);
 assert.equal(unavailable.isErr(), true);
-if (unavailable.isErr()) assert.equal(unavailable.error.code, "PROVIDER_UNAVAILABLE");
+if (unavailable.isErr()) {
+  assert.equal(unavailable.error.code, "PROVIDER_UNAVAILABLE");
+  assert.equal(unavailable.error.retryable, false);
+}

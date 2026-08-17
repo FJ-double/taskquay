@@ -138,3 +138,22 @@ assert.equal(contexts.length, 2, "cold continuation creates a new AgentSession")
 assert.equal(contexts[1]?.providerSessionId, "pi_session_1");
 assert.deepEqual(sessions[1]?.activeTools, ["read", "grep", "find", "ls", "edit", "write", "bash"]);
 await pool.close();
+
+const missingModelSession = new FakePiSession();
+Object.defineProperty(missingModelSession, "modelRegistry", { value: { find: () => undefined } });
+const missingModelDriver = new PiLocalAgentDriver(async () => missingModelSession);
+const missingModelRuntime = await missingModelDriver.createRuntime(context);
+assert.equal(missingModelRuntime.isOk(), true);
+if (missingModelRuntime.isErr()) throw missingModelRuntime.error;
+const missingModel = await missingModelRuntime.value.run({
+  prompt: "inspect",
+  workspaceRoot: "/tmp/project",
+  model: "provider/missing-model",
+});
+assert.equal(missingModel.isErr(), true);
+if (missingModel.isErr()) {
+  assert.equal(missingModel.error.code, "PROVIDER_PROTOCOL_ERROR");
+  assert.equal(missingModel.error.retryable, false);
+  assert.match(missingModel.error.message, /provider\/missing-model/);
+}
+await missingModelRuntime.value.close();

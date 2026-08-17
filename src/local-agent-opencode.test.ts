@@ -169,7 +169,10 @@ const applicationFailure = await applicationErrorPool.run(applicationErrorDriver
   workspaceRoot: "/tmp/project",
 }, { prompt: "bad input", workspaceRoot: "/tmp/project" });
 assert.equal(applicationFailure.isErr(), true);
-if (applicationFailure.isErr()) assert.equal(applicationFailure.error.code, "PROVIDER_EXECUTION_ERROR");
+if (applicationFailure.isErr()) {
+  assert.equal(applicationFailure.error.code, "PROVIDER_EXECUTION_ERROR");
+  assert.equal(applicationFailure.error.retryable, false);
+}
 assert.equal(applicationErrorPool.size, 1, "ordinary provider errors must not evict a healthy server runtime");
 const recoveredApplicationTurn = await applicationErrorPool.run(applicationErrorDriver, {
   agentId: "agt_app_error",
@@ -206,7 +209,10 @@ const deadRuntime = await recoveringPool.run(recoveringDriver, {
   workspaceRoot: "/tmp/project",
 });
 assert.equal(deadRuntime.isErr(), true);
-if (deadRuntime.isErr()) assert.equal(deadRuntime.error.code, "PROVIDER_UNAVAILABLE");
+if (deadRuntime.isErr()) {
+  assert.equal(deadRuntime.error.code, "PROVIDER_UNAVAILABLE");
+  assert.equal(deadRuntime.error.retryable, true);
+}
 assert.equal(recoveringPool.size, 0, "a failed health check removes the dead runtime immediately");
 await recoveringPool.run(recoveringDriver, {
   agentId: "agt_dead",

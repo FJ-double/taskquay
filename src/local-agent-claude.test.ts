@@ -189,6 +189,26 @@ const execution = await new ClaudeLocalAgentDriver(async () => {
 assert.equal(execution.isErr(), true);
 if (execution.isErr()) assert.equal(execution.error.code, "PROVIDER_EXECUTION_ERROR");
 
+const brokenStreamQuery: ClaudeQueryLike = {
+  [Symbol.asyncIterator]() {
+    return {
+      next: async () => { throw new Error("stream disconnected"); },
+    };
+  },
+  close() {},
+  async setPermissionMode() {},
+  async applyFlagSettings() {},
+};
+const brokenStreamRuntimeResult = await new ClaudeLocalAgentDriver(async () => brokenStreamQuery).createRuntime(context);
+assert.equal(brokenStreamRuntimeResult.isOk(), true);
+if (brokenStreamRuntimeResult.isErr()) throw brokenStreamRuntimeResult.error;
+const brokenStream = await brokenStreamRuntimeResult.value.run({ prompt: "fail", workspaceRoot: "/tmp/project" });
+assert.equal(brokenStream.isErr(), true);
+if (brokenStream.isErr()) {
+  assert.equal(brokenStream.error.code, "PROVIDER_UNAVAILABLE");
+  assert.equal(brokenStream.error.retryable, true);
+}
+
 await assert.rejects(
   new ClaudeLocalAgentDriver(async () => {
     throw new TypeError("internal defect");

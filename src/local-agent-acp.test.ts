@@ -286,11 +286,12 @@ const missingCommandDriver = new AcpLocalAgentDriver(
   process.env,
   () => join(tmpdir(), "devspace-definitely-missing-acp-command"),
 );
-await assert.rejects(
-  missingCommandDriver.createRuntime(cachedContext),
-  (error: unknown) => error instanceof Error && "code" in error && error.code === "ENOENT",
-  "ACP spawn failures must reject through createRuntime instead of becoming unhandled child errors",
-);
+const missingCommand = await missingCommandDriver.createRuntime(cachedContext);
+assert.equal(missingCommand.isErr(), true);
+if (missingCommand.isErr()) {
+  assert.equal(missingCommand.error.code, "PROVIDER_PROTOCOL_ERROR");
+  assert.equal(missingCommand.error.retryable, true);
+}
 
 if (process.platform === "win32") {
   const shimRoot = await mkdtemp(join(tmpdir(), "devspace-acp-shim-test-"));

@@ -6,6 +6,7 @@ import {
   AgentProviderProtocolError,
   AgentProviderUnavailableError,
   captureAgentProviderResult,
+  isProgrammerDefect,
 } from "./local-agent-errors.js";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
 import type {
@@ -124,7 +125,15 @@ export class ClaudeQueryRuntime implements LocalAgentRuntime {
             next = await this.iterator.next();
           } catch (error) {
             this.alive = false;
-            throw error;
+            if (isProgrammerDefect(error)) throw error;
+            throw new AgentProviderUnavailableError({
+              code: "PROVIDER_UNAVAILABLE",
+              provider: "claude",
+              operation: "run",
+              retryable: true,
+              cause: error,
+              message: "Claude query stream failed.",
+            });
           }
           if (next.done) {
             this.alive = false;

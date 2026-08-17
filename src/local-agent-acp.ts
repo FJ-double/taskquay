@@ -7,6 +7,7 @@ import {
   AgentProviderProtocolError,
   AgentProviderUnavailableError,
   captureAgentProviderResult,
+  isProgrammerDefect,
 } from "./local-agent-errors.js";
 import { terminateProcessTree } from "./process-platform.js";
 import type {
@@ -368,39 +369,39 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
           stderrTail = appendTail(stderrTail, chunk, MAX_ACP_STDERR_BYTES);
         });
         try {
-      const { client, methods, ndJsonStream } = await import("@agentclientprotocol/sdk");
-      const queues = new Map<string, AcpSessionQueue>();
-      const sessionWriteModes = new Map<string, LocalAgentWriteMode>();
-      const app = client({ name: "DevSpace" })
-        .onRequest(methods.client.session.requestPermission, (context) => {
-          const writeMode = sessionWriteModes.get(context.params.sessionId);
-          const selected = selectAcpPermissionOption(context.params.options, writeMode, this.provider);
-          return selected
-            ? { outcome: { outcome: "selected", optionId: selected.optionId } }
-            : { outcome: { outcome: "cancelled" } };
-        })
-        .onNotification(methods.client.session.update, (context) => {
-          const sessionId = context.params.sessionId;
-          const queue = queues.get(sessionId);
-          if (queue) appendAcpQueueValue(queue, context.params);
-        });
-      const stream = ndJsonStream(
-        Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-        Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
-      );
-      connection = app.connect(stream) as unknown as AcpConnectionLike;
-      const init = await withTimeout(Promise.race([
-        connection.agent.request(methods.agent.initialize, {
-          protocolVersion: 1,
-          clientInfo: { name: "DevSpace", version: DEVSPACE_VERSION },
-          clientCapabilities: {},
-        }),
-        startupError.then((error) => { throw error; }),
-      ]),
-        ACP_INITIALIZE_TIMEOUT_MS,
-        `${this.provider} ACP initialize timed out.`,
-      );
-      const capabilities = readAcpCapabilities(init);
+          const { client, methods, ndJsonStream } = await import("@agentclientprotocol/sdk");
+          const queues = new Map<string, AcpSessionQueue>();
+          const sessionWriteModes = new Map<string, LocalAgentWriteMode>();
+          const app = client({ name: "DevSpace" })
+            .onRequest(methods.client.session.requestPermission, (context) => {
+              const writeMode = sessionWriteModes.get(context.params.sessionId);
+              const selected = selectAcpPermissionOption(context.params.options, writeMode, this.provider);
+              return selected
+                ? { outcome: { outcome: "selected", optionId: selected.optionId } }
+                : { outcome: { outcome: "cancelled" } };
+            })
+            .onNotification(methods.client.session.update, (context) => {
+              const sessionId = context.params.sessionId;
+              const queue = queues.get(sessionId);
+              if (queue) appendAcpQueueValue(queue, context.params);
+            });
+          const stream = ndJsonStream(
+            Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
+            Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
+          );
+          connection = app.connect(stream) as unknown as AcpConnectionLike;
+          const init = await withTimeout(Promise.race([
+            connection.agent.request(methods.agent.initialize, {
+              protocolVersion: 1,
+              clientInfo: { name: "DevSpace", version: DEVSPACE_VERSION },
+              clientCapabilities: {},
+            }),
+            startupError.then((error) => { throw error; }),
+          ]),
+          ACP_INITIALIZE_TIMEOUT_MS,
+          `${this.provider} ACP initialize timed out.`,
+          );
+          const capabilities = readAcpCapabilities(init);
           const runtime = new AcpRuntime({
             provider: this.provider,
             command,
@@ -429,6 +430,7 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
               terminateProcessTree(child, "SIGKILL", detached);
             }
           }
+          if (isProgrammerDefect(error)) throw error;
           throw new AgentProviderProtocolError({
             code: "PROVIDER_PROTOCOL_ERROR",
             provider: this.provider,

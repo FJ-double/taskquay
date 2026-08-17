@@ -3,6 +3,7 @@ import { Result, type Result as BetterResult } from "better-result";
 import {
   AgentProviderExecutionError,
   AgentProviderUnavailableError,
+  captureAgentProviderResult,
   type AgentProviderError,
 } from "./local-agent-errors.js";
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
@@ -20,6 +21,19 @@ const context: LocalAgentRuntimeContext = {
   workspaceRoot: "/tmp/project",
 };
 const input: LocalAgentRunInput = { prompt: "inspect", workspaceRoot: "/tmp/project" };
+
+for (const [code, retryable] of [["ENOENT", false], ["ECONNREFUSED", true], ["ENOTFOUND", true]] as const) {
+  const classified = await captureAgentProviderResult({
+    provider: "codex",
+    operation: "connect",
+    run: () => { throw Object.assign(new Error(code), { code }); },
+  });
+  assert.equal(classified.isErr(), true);
+  if (classified.isErr()) {
+    assert.equal(classified.error.code, "PROVIDER_UNAVAILABLE");
+    assert.equal(classified.error.retryable, retryable);
+  }
+}
 
 class FakeRuntime implements LocalAgentRuntime {
   readonly provider = "codex" as const;

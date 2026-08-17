@@ -340,13 +340,14 @@ export function providerErrorFromCause(input: {
       message: `${displayProvider(input.provider)} agent turn was cancelled.`,
     });
   }
-  if (isUnavailableCause(input.cause)) {
+  const unavailable = unavailableCauseKind(input.cause);
+  if (unavailable) {
     return new AgentProviderUnavailableError({
       code: "PROVIDER_UNAVAILABLE",
       provider: input.provider,
       agentId: input.agentId,
       operation: input.operation,
-      retryable: false,
+      retryable: unavailable === "transient",
       cause: input.cause,
       message: `${displayProvider(input.provider)} provider is unavailable.`,
     });
@@ -399,10 +400,12 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
-function isUnavailableCause(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
+function unavailableCauseKind(error: unknown): "permanent" | "transient" | undefined {
+  if (!error || typeof error !== "object") return undefined;
   const code = "code" in error ? String((error as { code?: unknown }).code) : "";
-  return code === "ENOENT" || code === "ECONNREFUSED" || code === "ENOTFOUND";
+  if (code === "ENOENT") return "permanent";
+  if (code === "ECONNREFUSED" || code === "ENOTFOUND") return "transient";
+  return undefined;
 }
 
 function displayProvider(provider: LocalAgentProvider): string {
