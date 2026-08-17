@@ -309,7 +309,9 @@ if (process.platform === "win32") {
     );
     await writeFile(command, `@ECHO OFF\r\n"${process.execPath}" "${recorder}" %*\r\n`);
     const shimDriver = new AcpLocalAgentDriver("copilot", process.env, () => command);
-    await assert.rejects(shimDriver.createRuntime({ ...cachedContext, provider: "copilot", workspaceRoot }));
+    const shimStartup = await shimDriver.createRuntime({ ...cachedContext, provider: "copilot", workspaceRoot });
+    assert.equal(shimStartup.isErr(), true);
+    if (shimStartup.isErr()) assert.equal(shimStartup.error.code, "PROVIDER_PROTOCOL_ERROR");
     const forwarded = JSON.parse(await readFile(marker, "utf8")) as string[];
     assert.equal(
       forwarded.filter((argument) => argument === resolve(workspaceRoot)).length,
