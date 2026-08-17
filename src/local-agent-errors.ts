@@ -1,4 +1,5 @@
 import {
+  matchError,
   Result,
   TaggedError,
   type Result as BetterResult,
@@ -182,21 +183,22 @@ export function isLocalAgentError(error: unknown): error is LocalAgentError {
 }
 
 export function toAgentErrorPayload(error: LocalAgentError): AgentErrorPayload {
-  const payload: AgentErrorPayload = {
-    code: error.code,
-    message: error.message,
-    retryable: error.retryable,
-  };
-  if (
-    "provider" in error
-    && typeof error.provider === "string"
-    && isLocalAgentProvider(error.provider)
-  ) payload.provider = error.provider;
-  if ("agentId" in error && typeof error.agentId === "string") payload.agentId = error.agentId;
-  if ("workspaceId" in error && typeof error.workspaceId === "string") payload.workspaceId = error.workspaceId;
-  if ("operation" in error && typeof error.operation === "string") payload.operation = error.operation;
-  if ("target" in error && typeof error.target === "string") payload.target = error.target;
-  return payload;
+  return matchError(error, {
+    AgentTargetError: targetErrorPayload,
+    AgentConflictError: conflictErrorPayload,
+    AgentScopeError: scopeErrorPayload,
+    AgentProviderUnavailableError: providerErrorPayload,
+    AgentProviderCancelledError: providerErrorPayload,
+    AgentProviderProtocolError: providerErrorPayload,
+    AgentProviderExecutionError: providerErrorPayload,
+    AgentDaemonUnavailableError: daemonErrorPayload,
+    AgentDaemonStartupError: daemonErrorPayload,
+    AgentDaemonTimeoutError: daemonErrorPayload,
+    AgentDaemonProtocolMismatchError: daemonErrorPayload,
+    AgentDaemonInvalidResponseError: daemonErrorPayload,
+    AgentDaemonInternalError: daemonErrorPayload,
+    AgentStoreError: storeErrorPayload,
+  });
 }
 
 export function agentErrorFromPayload(payload: {
@@ -412,4 +414,65 @@ function displayProvider(provider: LocalAgentProvider): string {
     case "cursor": return "Cursor";
     case "copilot": return "Copilot";
   }
+}
+
+function targetErrorPayload(error: AgentTargetError): AgentErrorPayload {
+  return {
+    code: error.code,
+    message: error.message,
+    retryable: error.retryable,
+    target: error.target,
+    ...(error.provider ? { provider: error.provider } : {}),
+    ...(error.operation ? { operation: error.operation } : {}),
+  };
+}
+
+function conflictErrorPayload(error: AgentConflictError): AgentErrorPayload {
+  return {
+    code: error.code,
+    message: error.message,
+    retryable: error.retryable,
+    operation: error.operation,
+    ...(error.agentId ? { agentId: error.agentId } : {}),
+  };
+}
+
+function scopeErrorPayload(error: AgentScopeError): AgentErrorPayload {
+  return {
+    code: error.code,
+    message: error.message,
+    retryable: error.retryable,
+    operation: error.operation,
+    ...(error.agentId ? { agentId: error.agentId } : {}),
+    ...(error.workspaceId ? { workspaceId: error.workspaceId } : {}),
+  };
+}
+
+function providerErrorPayload(error: AgentProviderError): AgentErrorPayload {
+  return {
+    code: error.code,
+    message: error.message,
+    retryable: error.retryable,
+    provider: error.provider,
+    operation: error.operation,
+    ...(error.agentId ? { agentId: error.agentId } : {}),
+  };
+}
+
+function daemonErrorPayload(error: AgentDaemonError): AgentErrorPayload {
+  return {
+    code: error.code,
+    message: error.message,
+    retryable: error.retryable,
+    operation: error.operation,
+  };
+}
+
+function storeErrorPayload(error: AgentStoreError): AgentErrorPayload {
+  return {
+    code: error.code,
+    message: error.message,
+    retryable: error.retryable,
+    operation: error.operation,
+  };
 }
