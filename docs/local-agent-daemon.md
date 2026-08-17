@@ -26,6 +26,12 @@ Communication uses a private Unix domain socket on Linux/macOS or a named pipe
 on Windows. The endpoint is not exposed through the public MCP HTTP port.
 Provider session identifiers and logical agent records are durable; live
 provider runtimes are disposable and may be recreated after a daemon restart.
+Expected subagent failures cross the daemon boundary as structured error codes,
+not message-string conventions. Agent records in `error` state retain the safe
+message plus `errorCode` and `errorRetryable` fields so callers can distinguish
+provider cancellation, provider availability, workspace conflicts, daemon
+timeouts, and similar recovery categories after a background turn completes.
+Internal provider causes are kept out of the daemon payload and persisted JSON.
 
 The daemon state directory contains the socket or pipe identity, an atomic
 lock, a PID marker, and diagnostic logs. A second client cannot start another
@@ -42,6 +48,11 @@ devspace agents daemon status
 devspace agents daemon stop
 devspace agents daemon logs
 ```
+
+Agent commands accept `--json` when a machine-readable response is needed.
+Immediate failures are emitted as `{ ok: false, error: { code, message,
+retryable, ... } }`; successful `show`, `ls`, `run`, and `continue` output keeps
+the structured error fields on agent records when present.
 
 Agent identity is explicit at the client boundary. `agents run` starts a new
 logical agent from a profile or provider; `agents continue <id>` continues an
