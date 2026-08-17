@@ -80,6 +80,22 @@ try {
       const newline = buffer.indexOf("\n");
       if (newline === -1) return;
       const request = JSON.parse(buffer.slice(0, newline)) as { requestId: string; method: string };
+      if (request.method === "agent.start") {
+        socket.end(encodeLocalAgentDaemonResponse({
+          requestId: request.requestId,
+          protocolVersion: 1,
+          ok: false,
+          error: {
+            code: "PROVIDER_UNAVAILABLE",
+            message: "Codex executable was not found.",
+            retryable: false,
+            provider: "codex",
+            operation: "create_runtime",
+            target: "codex",
+          },
+        }));
+        return;
+      }
       const result = request.method === "agent.list"
         ? [current]
         : request.method === "hello"
@@ -126,6 +142,39 @@ try {
     assert.match(output, new RegExp(`${current.id} idle reviewer codex gpt-5\\.4 thinking=high`));
     assert.doesNotMatch(output, /profile reviewer/);
     assert.doesNotMatch(output, new RegExp(other.id));
+
+    try {
+      await execFileAsync(
+        "node",
+        ["--import", "tsx", "src/cli.ts", "agents", "run", "codex", "--json", "inspect"],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            DEVSPACE_CONFIG_DIR: configDir,
+            DEVSPACE_ALLOWED_ROOTS: projectRoot,
+            DEVSPACE_STATE_DIR: stateDir,
+            DEVSPACE_WORKSPACE_ID: "ws_current",
+            DEVSPACE_WORKSPACE_ROOT: projectRoot,
+            DEVSPACE_SUBAGENTS: "1",
+            DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
+          },
+        },
+      );
+      assert.fail("structured CLI errors should exit non-zero");
+    } catch (error) {
+      const stdout = (error as { stdout?: string }).stdout ?? "";
+      const payload = JSON.parse(stdout) as {
+        ok: boolean;
+        error: { code: string; message: string; retryable: boolean; provider: string };
+      };
+      assert.equal(payload.ok, false);
+      assert.equal(payload.error.code, "PROVIDER_UNAVAILABLE");
+      assert.equal(payload.error.message, "Codex executable was not found.");
+      assert.equal(payload.error.retryable, false);
+      assert.equal(payload.error.provider, "codex");
+    }
   } finally {
     await new Promise<void>((resolveClose, rejectClose) => {
       daemon.close((error) => error ? rejectClose(error) : resolveClose());

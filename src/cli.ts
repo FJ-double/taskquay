@@ -2,6 +2,7 @@
 import { createRequire } from "node:module";
 import { stdin as input, stdout as output } from "node:process";
 import { resolve } from "node:path";
+import type { Result as BetterResult } from "better-result";
 import * as prompts from "@clack/prompts";
 import { getShellConfig } from "@earendil-works/pi-coding-agent";
 import { satisfies } from "semver";
@@ -14,6 +15,7 @@ import {
   parseLocalAgentRunArgs,
 } from "./local-agent-targets.js";
 import { createLocalAgentClient } from "./local-agent-client.js";
+import { toAgentErrorPayload, type LocalAgentError } from "./local-agent-errors.js";
 import type { LocalAgentRecord } from "./local-agent-store.js";
 import {
   ensureDevspaceDefaultSkills,
@@ -311,22 +313,24 @@ function printHelp(): void {
 
 async function runAgentsCommand(args: string[]): Promise<void> {
   const [subcommand, ...rest] = args;
+  const json = rest.includes("--json");
+  const commandArgs = rest.filter((arg) => arg !== "--json");
   switch (subcommand) {
     case "ls":
     case "list":
-      await runAgentsList();
+      await runAgentsList(json);
       return;
     case "run":
-      await runAgentsRun(rest);
+      await runAgentsRun(commandArgs, json);
       return;
     case "continue":
-      await runAgentsContinue(rest);
+      await runAgentsContinue(commandArgs, json);
       return;
     case "show":
-      await runAgentsShow(rest);
+      await runAgentsShow(commandArgs, json);
       return;
     case "daemon":
-      await runAgentsDaemon(rest);
+      await runAgentsDaemon(commandArgs, json);
       return;
     case undefined:
     case "help":
@@ -339,10 +343,17 @@ async function runAgentsCommand(args: string[]): Promise<void> {
   }
 }
 
-async function runAgentsList(): Promise<void> {
+async function runAgentsList(json: boolean): Promise<void> {
   const config = loadConfig();
   const client = createLocalAgentClient(config);
-  const agents = await client.list(resolveCurrentWorkspaceScope());
+  const result = await client.list(resolveCurrentWorkspaceScope());
+  const agents = presentAgentResult(result, json);
+  if (!agents) return;
+
+  if (json) {
+    console.log(JSON.stringify(agents, null, 2));
+    return;
+  }
 
   if (agents.length === 0) {
     console.log("No subagent sessions found for this workspace.");
@@ -354,12 +365,12 @@ async function runAgentsList(): Promise<void> {
   }
 }
 
-async function runAgentsRun(args: string[]): Promise<void> {
+async function runAgentsRun(args: string[], json: boolean): Promise<void> {
   const parsed = parseLocalAgentRunArgs(args);
   const config = loadConfig();
   const scope = resolveCurrentWorkspaceScope();
   const client = createLocalAgentClient(config);
-  const record = await client.start({
+  const result = await client.start({
     target: parsed.target,
     prompt: parsed.prompt,
     workspaceRoot: scope.workspaceRoot,
@@ -367,35 +378,55 @@ async function runAgentsRun(args: string[]): Promise<void> {
     model: parsed.model,
     thinking: parsed.thinking,
   });
+  const record = presentAgentResult(result, json);
+  if (!record) return;
+  if (json) {
+    console.log(JSON.stringify(record, null, 2));
+    return;
+  }
   console.log(formatAgentLine(record));
 }
 
-async function runAgentsContinue(args: string[]): Promise<void> {
+async function runAgentsContinue(args: string[], json: boolean): Promise<void> {
   const parsed = parseLocalAgentContinueArgs(args);
   const config = loadConfig();
   const client = createLocalAgentClient(config);
   const scope = resolveCurrentWorkspaceScope();
-  const record = await client.continue(parsed.agentId, parsed.prompt, {
+  const result = await client.continue(parsed.agentId, parsed.prompt, {
     model: parsed.model,
     thinking: parsed.thinking,
   }, scope);
+  const record = presentAgentResult(result, json);
+  if (!record) return;
+  if (json) {
+    console.log(JSON.stringify(record, null, 2));
+    return;
+  }
   console.log(formatAgentLine(record));
 }
 
-async function runAgentsShow(args: string[]): Promise<void> {
+async function runAgentsShow(args: string[], json: boolean): Promise<void> {
   const [id] = args;
   if (!id) throw new Error("Usage: devspace agents show <id>");
 
   const config = loadConfig();
   const client = createLocalAgentClient(config);
   const scope = resolveCurrentWorkspaceScope();
-  let record = await client.get(id, scope);
-  if (!record) throw new Error(`Unknown subagent id: ${id}`);
+  const initial = await client.get(id, scope);
+  let record = presentAgentResult(initial, json);
+  if (!record) return;
 
   const deadline = Date.now() + 15_000;
   while ((record.status === "starting" || record.status === "running") && Date.now() < deadline) {
     await sleep(500);
-    record = await client.get(id, scope) ?? record;
+    const refreshed = presentAgentResult(await client.get(id, scope), json);
+    if (!refreshed) return;
+    record = refreshed;
+  }
+
+  if (json) {
+    console.log(JSON.stringify(record, null, 2));
+    return;
   }
 
   console.log(formatAgentLine(record));
@@ -412,21 +443,27 @@ async function runAgentsShow(args: string[]): Promise<void> {
   }
 }
 
-async function runAgentsDaemon(args: string[]): Promise<void> {
+async function runAgentsDaemon(args: string[], json: boolean): Promise<void> {
   const [subcommand] = args;
   const config = loadConfig();
   const client = createLocalAgentClient(config);
   switch (subcommand) {
-    case "status":
-      console.log(JSON.stringify(await client.status(), null, 2));
+    case "status": {
+      const status = presentAgentResult(await client.status(), json);
+      if (!status) return;
+      console.log(JSON.stringify(status, null, 2));
       return;
-    case "stop":
-      await client.stop();
-      console.log("Local agent daemon stop requested.");
+    }
+    case "stop": {
+      const status = presentAgentResult(await client.stop(), json);
+      if (!status) return;
+      console.log(json ? JSON.stringify(status, null, 2) : "Local agent daemon stop requested.");
       return;
+    }
     case "logs": {
-      const output = await client.logs();
-      console.log(output || "No local agent daemon logs found.");
+      const logs = presentAgentResult(await client.logs(), json);
+      if (logs === undefined) return;
+      console.log(json ? JSON.stringify({ logs }, null, 2) : (logs || "No local agent daemon logs found."));
       return;
     }
     default:
@@ -458,6 +495,19 @@ function formatAgentLine(agent: Pick<
   return `${agent.id} ${agent.status} ${agent.profileName} ${agent.provider}${model}${thinking}`;
 }
 
+function presentAgentResult<T, E extends LocalAgentError>(
+  result: BetterResult<T, E>,
+  json: boolean,
+): T | undefined {
+  if (result.isOk()) return result.value;
+  if (json) {
+    console.log(JSON.stringify({ ok: false, error: toAgentErrorPayload(result.error) }, null, 2));
+    process.exitCode = 1;
+    return undefined;
+  }
+  throw new Error(result.error.message);
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
@@ -468,11 +518,11 @@ function printAgentsHelp(): void {
       "DevSpace agents",
       "",
       "Usage:",
-      "  devspace agents ls",
-      "  devspace agents run <profile-or-provider> [--model <model>] [--thinking <level>] <prompt>",
-      "  devspace agents continue <id> [--model <model>] [--thinking <level>] <prompt>",
-      "  devspace agents show <id>",
-      "  devspace agents daemon <status|stop|logs>",
+      "  devspace agents ls [--json]",
+      "  devspace agents run <profile-or-provider> [--model <model>] [--thinking <level>] [--json] <prompt>",
+      "  devspace agents continue <id> [--model <model>] [--thinking <level>] [--json] <prompt>",
+      "  devspace agents show <id> [--json]",
+      "  devspace agents daemon <status|stop|logs> [--json]",
     ].join("\n"),
   );
 }
