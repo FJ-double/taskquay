@@ -107,11 +107,21 @@ async function defaultOpencodeFactory(): Promise<{ client: OpencodeClientLike; s
   const { createOpencode } = await import("@opencode-ai/sdk/v2");
   return createOpencode({ config: {
     agent: {
-      devspace_read_only: { permission: opencodePermissionFor("read_only") },
-      devspace_allowed: { permission: opencodePermissionFor("allowed") },
-      devspace_full_access: { permission: opencodePermissionFor("full_access") },
+      devspace_read_only: opencodeAgentConfig("read_only"),
+      devspace_allowed: opencodeAgentConfig("allowed"),
+      devspace_full_access: opencodeAgentConfig("full_access"),
     },
   } });
+}
+
+export function opencodeAgentConfig(writeMode: LocalAgentRunInput["writeMode"]): {
+  mode: "primary";
+  permission: PermissionConfig;
+} {
+  return {
+    mode: "primary",
+    permission: opencodePermissionFor(writeMode),
+  };
 }
 
 async function createOpencodeSession(
@@ -146,6 +156,7 @@ export function opencodePermissionFor(writeMode: LocalAgentRunInput["writeMode"]
     grep: "allow",
     list: "allow",
     bash: allowed ? "allow" : "deny",
+    task: "deny",
     external_directory: unrestricted ? "allow" : "deny",
   };
 }
@@ -162,9 +173,23 @@ async function assertOpencodeHealthy(client: OpencodeClientLike): Promise<void> 
 
 function isOpenCodeTransportFailure(error: unknown): boolean {
   if (error instanceof OpencodeHealthError) return true;
-  if (!(error instanceof Error)) return true;
-  const message = error.message.toLowerCase();
-  return message.includes("fetch") || message.includes("econn") || message.includes("socket") || message.includes("health") || message.includes("network") || message.includes("server");
+  const code = transportErrorCode(error);
+  return code === "ECONNREFUSED"
+    || code === "ECONNRESET"
+    || code === "EPIPE"
+    || code === "ENETDOWN"
+    || code === "ENETUNREACH"
+    || code === "ETIMEDOUT";
+}
+
+function transportErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const code = (error as NodeJS.ErrnoException).code;
+  if (typeof code === "string") return code;
+  const cause = (error as Error & { cause?: unknown }).cause;
+  return cause && typeof cause === "object" && typeof (cause as NodeJS.ErrnoException).code === "string"
+    ? (cause as NodeJS.ErrnoException).code
+    : undefined;
 }
 
 class OpencodeHealthError extends Error {

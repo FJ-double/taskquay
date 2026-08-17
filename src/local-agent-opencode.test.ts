@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  opencodeAgentConfig,
   OpencodeLocalAgentDriver,
   opencodeAgentFor,
   opencodePermissionFor,
@@ -121,10 +122,57 @@ assert.deepEqual(opencodePermissionFor("allowed"), {
   grep: "allow",
   list: "allow",
   bash: "allow",
+  task: "deny",
   external_directory: "deny",
 });
 const readOnlyPermissions = opencodePermissionFor("read_only");
 assert.equal(typeof readOnlyPermissions === "object" ? readOnlyPermissions.bash : undefined, "deny");
+for (const writeMode of ["read_only", "allowed", "full_access"] as const) {
+  const config = opencodeAgentConfig(writeMode);
+  assert.equal(config.mode, "primary");
+  assert.equal(typeof config.permission === "object" ? config.permission.task : undefined, "deny");
+}
+
+let promptFailureCount = 0;
+const applicationErrorClient = {
+  v2: {
+    session: {
+      async create() { return { data: { data: { id: "session_app_error" } } }; },
+      async switchAgent() {},
+      async prompt() {
+        promptFailureCount += 1;
+        if (promptFailureCount === 1) throw new Error("server rejected invalid input");
+        return {};
+      },
+      async wait() {},
+      async messages() {
+        return { data: { data: [{ info: { role: "assistant" }, parts: [{ type: "text", text: "ok" }] }] } };
+      },
+    },
+    health: { async get() { return { data: { healthy: true } }; } },
+  },
+} as unknown as OpencodeClientLike;
+const applicationErrorPool = new LocalAgentRuntimePool();
+const applicationErrorDriver = new OpencodeLocalAgentDriver(async () => ({
+  client: applicationErrorClient,
+  server: { close: () => undefined },
+}));
+await assert.rejects(
+  applicationErrorPool.run(applicationErrorDriver, {
+    agentId: "agt_app_error",
+    provider: "opencode",
+    workspace: "/tmp/project",
+  }, { prompt: "bad input", workspace: "/tmp/project" }),
+  /server rejected invalid input/,
+);
+assert.equal(applicationErrorPool.size, 1, "ordinary provider errors must not evict a healthy server runtime");
+const recoveredApplicationTurn = await applicationErrorPool.run(applicationErrorDriver, {
+  agentId: "agt_app_error",
+  provider: "opencode",
+  workspace: "/tmp/project",
+}, { prompt: "valid input", workspace: "/tmp/project" });
+assert.equal(recoveredApplicationTurn.finalResponse, "ok");
+await applicationErrorPool.close();
 
 let recoveringFactoryCalls = 0;
 const recoveringDriver = new OpencodeLocalAgentDriver(async () => {
