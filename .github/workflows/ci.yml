@@ -45,6 +45,8 @@ jobs:
         run: npm run typecheck
 
       - name: Test
+        env:
+          DEVSPACE_REQUIRE_PI_SANDBOX: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}
         run: npm test
 
       - name: Build
