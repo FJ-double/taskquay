@@ -297,8 +297,8 @@ function printHelp(): void {
       "  devspace config get      Print persisted config",
       "  devspace config set publicBaseUrl <url|null>",
       "  devspace agents ls       List subagent sessions",
-      "  devspace agents run <profile-or-provider> [--model <model>] <prompt>",
-      "  devspace agents continue <id> [--model <model>] <prompt>",
+      "  devspace agents run <profile-or-provider> [--model <model>] [--thinking <level>] <prompt>",
+      "  devspace agents continue <id> [--model <model>] [--thinking <level>] <prompt>",
       "  devspace agents show <id>",
       "  devspace agents daemon <status|stop|logs>",
       "  devspace -v, --version   Print the installed version",
@@ -422,11 +422,13 @@ async function runAgentsDaemon(args: string[]): Promise<void> {
       return;
     case "stop":
       await client.stop();
-      console.log("Local agent daemon stopped.");
+      console.log("Local agent daemon stop requested.");
       return;
-    case "logs":
-      console.log(await client.logs());
+    case "logs": {
+      const output = await client.logs();
+      console.log(output || "No local agent daemon logs found.");
       return;
+    }
     default:
       throw new Error("Usage: devspace agents daemon <status|stop|logs>");
   }

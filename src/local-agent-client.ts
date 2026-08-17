@@ -20,6 +20,7 @@ import {
   LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
   ensureLocalAgentDaemonSecret,
   localAgentDaemonPaths,
+  readLocalAgentDaemonSecret,
   type LocalAgentDaemonPaths,
 } from "./local-agent-daemon-lifecycle.js";
 import type { RunOverrides, StartLocalAgentInput } from "./local-agent-manager.js";
@@ -91,15 +92,15 @@ export class LocalAgentClient {
   }
 
   async status(): Promise<LocalAgentDaemonStatus> {
-    return decodeDaemonStatus(await this.request("daemon.status", {}));
+    return decodeDaemonStatus(await this.requestExisting("daemon.status", {}));
   }
 
   async stop(): Promise<LocalAgentDaemonStatus> {
-    return decodeDaemonStatus(await this.request("daemon.stop", {}));
+    return decodeDaemonStatus(await this.requestExisting("daemon.stop", {}));
   }
 
   async logs(lines = 200): Promise<string> {
-    return decodeDaemonLogs(await this.request("daemon.logs", { lines }));
+    return decodeDaemonLogs(await this.requestExisting("daemon.logs", { lines }));
   }
 
   async ensureReady(): Promise<LocalAgentDaemonStatus> {
@@ -173,6 +174,33 @@ export class LocalAgentClient {
       throw new LocalAgentDaemonClientError(response.error.code, response.error.message);
     }
     return response.result;
+  }
+
+  private async requestExisting<M extends LocalAgentDaemonRequest["method"]>(
+    method: M,
+    params: Extract<LocalAgentDaemonRequest, { method: M }>['params'],
+  ): Promise<unknown> {
+    const authToken = readLocalAgentDaemonSecret(this.paths);
+    if (!authToken) {
+      throw new LocalAgentDaemonClientError("DAEMON_UNAVAILABLE", "Local agent daemon is not running.");
+    }
+    try {
+      const response = await sendRequest(this.endpoint, {
+        requestId: randomUUID(),
+        protocolVersion: LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+        authToken,
+        method,
+        params,
+      } as LocalAgentDaemonRequest, this.requestTimeoutMs);
+      if (!response.ok) {
+        throw new LocalAgentDaemonClientError(response.error.code, response.error.message);
+      }
+      return response.result;
+    } catch (error) {
+      if (error instanceof LocalAgentDaemonClientError && error.code === "PROTOCOL_MISMATCH") throw error;
+      if (error instanceof LocalAgentDaemonClientError && error.code === "DAEMON_UNAVAILABLE") throw error;
+      throw new LocalAgentDaemonClientError("DAEMON_UNAVAILABLE", "Local agent daemon is not running.");
+    }
   }
 }
 

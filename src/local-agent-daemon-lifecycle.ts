@@ -147,6 +147,15 @@ export function ensureLocalAgentDaemonSecret(paths: LocalAgentDaemonPaths): stri
   }
 }
 
+export function readLocalAgentDaemonSecret(paths: LocalAgentDaemonPaths): string | undefined {
+  try {
+    const secret = readFileSync(paths.secretPath, "utf8").trim();
+    return isDaemonSecret(secret) ? secret : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function removeLocalAgentDaemonFiles(paths: LocalAgentDaemonPaths): void {
   rmSync(paths.pidPath, { force: true });
   if (process.platform !== "win32") rmSync(paths.socketPath, { force: true });

@@ -64,6 +64,23 @@ const client = new LocalAgentClient({
   spawnDaemon: () => { void daemon.start(); },
 });
 
+const missingDaemonStateDir = join(root, "missing-daemon-state");
+let diagnosticSpawnCount = 0;
+const missingDaemonClient = new LocalAgentClient({
+  stateDir: missingDaemonStateDir,
+  startupTimeoutMs: 50,
+  requestTimeoutMs: 50,
+  spawnDaemon: () => { diagnosticSpawnCount += 1; },
+});
+for (const diagnostic of [
+  () => missingDaemonClient.status(),
+  () => missingDaemonClient.stop(),
+  () => missingDaemonClient.logs(),
+]) {
+  await assert.rejects(diagnostic, /Local agent daemon is not running/);
+}
+assert.equal(diagnosticSpawnCount, 0, "daemon diagnostics must not start a missing daemon");
+
 let shutdownSocket: ReturnType<typeof createConnection> | undefined;
 try {
   const started = await client.run({
