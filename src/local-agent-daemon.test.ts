@@ -256,6 +256,43 @@ try {
   });
 }
 
+const invalidStateDir = join(root, "invalid-response-state");
+await mkdir(invalidStateDir, { recursive: true });
+const invalidPaths = localAgentDaemonPaths(invalidStateDir);
+const invalidServer = createNetServer((socket) => {
+  let buffer = "";
+  socket.setEncoding("utf8");
+  socket.on("data", (chunk: string | Buffer) => {
+    buffer += chunk.toString();
+    if (!buffer.includes("\n")) return;
+    socket.end(encodeLocalAgentDaemonResponse({
+      requestId: "wrong_request_id",
+      protocolVersion: 1,
+      ok: true,
+      result: {},
+    }));
+  });
+});
+await new Promise<void>((resolveListen, rejectListen) => {
+  invalidServer.once("error", rejectListen);
+  invalidServer.listen(invalidPaths.endpoint, resolveListen);
+});
+try {
+  const invalidClient = new LocalAgentClient({
+    stateDir: invalidStateDir,
+    endpoint: invalidPaths.endpoint,
+    requestTimeoutMs: 50,
+    spawnDaemon: () => { throw new Error("existing daemon should be used"); },
+  });
+  const invalid = await invalidClient.ensureReady();
+  assert.equal(invalid.isErr(), true);
+  if (invalid.isErr()) assert.equal(invalid.error.code, "DAEMON_INVALID_RESPONSE");
+} finally {
+  await new Promise<void>((resolveClose, rejectClose) => {
+    invalidServer.close((error) => error ? rejectClose(error) : resolveClose());
+  });
+}
+
 function unwrap<T, E>(result: import("better-result").Result<T, E>): T {
   if (result.isErr()) throw result.error;
   return result.value;
