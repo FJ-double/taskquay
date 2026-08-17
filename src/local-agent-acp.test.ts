@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -270,6 +270,45 @@ assert.deepEqual(acpCommandArgs("copilot", { ...cachedContext, writeMode: "read_
 assert.deepEqual(acpCommandArgs("copilot", { ...cachedContext, writeMode: "full_access" }), [
   "--acp", "--no-sandbox", "--allow-all", "-C", resolvedProject,
 ]);
+
+const missingCommandDriver = new AcpLocalAgentDriver(
+  "cursor",
+  process.env,
+  () => join(tmpdir(), "devspace-definitely-missing-acp-command"),
+);
+await assert.rejects(
+  missingCommandDriver.createRuntime(cachedContext),
+  (error: unknown) => error instanceof Error && "code" in error && error.code === "ENOENT",
+  "ACP spawn failures must reject through createRuntime instead of becoming unhandled child errors",
+);
+
+if (process.platform === "win32") {
+  const shimRoot = await mkdtemp(join(tmpdir(), "devspace-acp-shim-test-"));
+  const binDir = join(shimRoot, "node_modules", ".bin");
+  const marker = join(shimRoot, "args.json");
+  const recorder = join(binDir, "record-args.cjs");
+  const command = join(binDir, "copilot.cmd");
+  const workspaceRoot = join(shimRoot, "workspace & harmless");
+  try {
+    await mkdir(binDir, { recursive: true });
+    await mkdir(workspaceRoot, { recursive: true });
+    await writeFile(
+      recorder,
+      `require("node:fs").writeFileSync(${JSON.stringify(marker)}, JSON.stringify(process.argv.slice(2)));\n`,
+    );
+    await writeFile(command, `@ECHO OFF\r\n"${process.execPath}" "${recorder}" %*\r\n`);
+    const shimDriver = new AcpLocalAgentDriver("copilot", process.env, () => command);
+    await assert.rejects(shimDriver.createRuntime({ ...cachedContext, provider: "copilot", workspaceRoot }));
+    const forwarded = JSON.parse(await readFile(marker, "utf8")) as string[];
+    assert.equal(
+      forwarded.filter((argument) => argument === resolve(workspaceRoot)).length,
+      2,
+      "Windows command shims must receive workspace paths containing shell metacharacters as literal arguments",
+    );
+  } finally {
+    await rm(shimRoot, { recursive: true, force: true });
+  }
+}
 
 if (process.platform !== "win32") {
   const commandRoot = await mkdtemp(join(tmpdir(), "devspace-acp-command-test-"));

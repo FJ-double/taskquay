@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import { createRequire } from "node:module";
 import { delimiter, resolve } from "node:path";
@@ -20,6 +20,7 @@ const MAX_ACP_QUEUE_ITEMS = 10_000;
 const MAX_ACP_STDERR_BYTES = 32 * 1024;
 const ACP_INITIALIZE_TIMEOUT_MS = 10_000;
 const require = createRequire(import.meta.url);
+const spawn = require("cross-spawn") as typeof import("node:child_process").spawn;
 const DEVSPACE_VERSION = readDevspaceVersion();
 
 const ACP_COMMANDS: Record<AcpProvider, [string, ...string[]]> = {
@@ -284,10 +285,14 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
       env: this.env,
       stdio: ["pipe", "pipe", "pipe"],
       detached: process.platform !== "win32",
-      shell: process.platform === "win32" && isWindowsShellCommand(command),
       windowsHide: true,
     });
+    let resolveStartupError!: (error: Error) => void;
+    const startupError = new Promise<Error>((resolveError) => { resolveStartupError = resolveError; });
+    const onStartupError = (error: Error) => { resolveStartupError(error); };
+    child.once("error", onStartupError);
     if (!child.stdin || !child.stdout || !child.stderr) {
+      child.removeListener("error", onStartupError);
       throw new Error(`${this.provider} ACP process did not expose stdio pipes.`);
     }
 
@@ -319,17 +324,19 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
         Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
       );
       connection = app.connect(stream) as unknown as AcpConnectionLike;
-      const init = await withTimeout(
+      const init = await withTimeout(Promise.race([
         connection.agent.request(methods.agent.initialize, {
           protocolVersion: 1,
           clientInfo: { name: "DevSpace", version: DEVSPACE_VERSION },
           clientCapabilities: {},
         }),
+        startupError.then((error) => { throw error; }),
+      ]),
         ACP_INITIALIZE_TIMEOUT_MS,
         `${this.provider} ACP initialize timed out.`,
       );
       const capabilities = readAcpCapabilities(init);
-      return new AcpRuntime({
+      const runtime = new AcpRuntime({
         provider: this.provider,
         command,
         args,
@@ -339,7 +346,12 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
         queues,
         sessionWriteModes,
       }, connection);
+      // AcpRuntime installs the long-lived child error listener before this
+      // startup-only listener is removed, so there is no unobserved gap.
+      child.removeListener("error", onStartupError);
+      return runtime;
     } catch (error) {
+      child.removeListener("error", onStartupError);
       try {
         connection?.close(error);
       } catch {
@@ -578,10 +590,6 @@ function appendTail(current: string, chunk: string, maxBytes: number): string {
   const next = current + chunk;
   if (Buffer.byteLength(next, "utf8") <= maxBytes) return next;
   return Buffer.from(next, "utf8").subarray(-maxBytes).toString("utf8");
-}
-
-function isWindowsShellCommand(command: string): boolean {
-  return /\.(?:bat|cmd)$/i.test(command);
 }
 
 function executableExists(command: string): boolean {
