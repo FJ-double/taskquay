@@ -37,6 +37,13 @@ profile is needed. Built-in providers are listed by `open_workspace`.
 `continue <id> "<prompt>"` sends a follow-up to an existing agent. Do not use
 `run <id>` for continuation.
 
+Continuation supports the same per-turn model and thinking overrides:
+
+```bash
+devspace agents continue <id> --model <model> "<prompt>"
+devspace agents continue <id> --thinking <level> "<prompt>"
+```
+
 `show <id>` prints status and the latest response. If the agent is still
 running, `show` waits briefly. If there is still no final response, call `show`
 again later.
