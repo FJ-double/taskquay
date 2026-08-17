@@ -9,6 +9,8 @@ export interface LocalAgentRunInput {
   writeMode?: LocalAgentWriteMode;
   model?: string;
   thinking?: string;
+  modelOverrideRequested?: boolean;
+  thinkingOverrideRequested?: boolean;
 }
 
 export interface LocalAgentRunResult {

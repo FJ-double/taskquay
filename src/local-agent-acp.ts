@@ -218,13 +218,22 @@ export class AcpRuntime implements LocalAgentRuntime {
   ): Promise<void> {
     const metadata = response ?? this.sessionMetadata.get(sessionId);
     const canConfigure = isNewSession || hasAcpConfigOptions(metadata);
-    if (!canConfigure && (input.model || input.thinking)) {
-      const requested = [input.model ? "model" : undefined, input.thinking ? "thinking" : undefined]
+    if (!canConfigure) {
+      const requested = [
+        input.model && input.modelOverrideRequested ? "model" : undefined,
+        input.thinking && input.thinkingOverrideRequested ? "thinking" : undefined,
+      ]
         .filter(Boolean)
         .join(" and ");
-      throw new Error(
-        `${this.provider} ACP cannot apply the requested ${requested} override on this session: the provider did not advertise configurable options after resume.`,
-      );
+      if (requested) {
+        throw new Error(
+          `${this.provider} ACP cannot apply the requested ${requested} override on this session: the provider did not advertise configurable options after resume.`,
+        );
+      }
+      // A durable resumed session keeps its previously selected provider
+      // configuration. If resume does not re-advertise config options, do not
+      // force a redundant set operation for persisted model/thinking values.
+      return;
     }
     if (input.model) {
       const config = resolveAcpModelConfigUpdate(metadata, input.model, this.provider, sessionId);

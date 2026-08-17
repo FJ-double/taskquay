@@ -290,6 +290,8 @@ export class LocalAgentManager {
       writeMode: overrides.writeMode ?? "allowed",
       model: record.model ?? profile?.model,
       thinking: record.thinking ?? profile?.thinking,
+      modelOverrideRequested: overrides.model !== undefined,
+      thinkingOverrideRequested: overrides.thinking !== undefined,
     };
   }
 

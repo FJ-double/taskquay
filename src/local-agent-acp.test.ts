@@ -105,12 +105,26 @@ const resumedRuntime = new AcpRuntime({
   capabilities: { resume: true, close: false },
   queues,
 }, connection);
+const resumedPersisted = await resumedRuntime.run({
+  prompt: "resumed with persisted config",
+  workspace: "/tmp/project",
+  providerSessionId: first.providerSessionId ?? undefined,
+  model: "model-a",
+  thinking: "high",
+});
+assert.equal(resumedPersisted.finalResponse, "ACP response");
+assert.equal(
+  requests.filter(({ method }) => method === "session/set_config_option").length,
+  4,
+  "cold resume must not require config metadata just to preserve prior model/thinking state",
+);
 await assert.rejects(
   resumedRuntime.run({
     prompt: "resumed",
     workspace: "/tmp/project",
     providerSessionId: first.providerSessionId ?? undefined,
     model: "model-that-is-not-advertised-after-resume",
+    modelOverrideRequested: true,
   }),
   /cannot apply the requested model override/,
   "a cold ACP override must fail instead of silently using the old configuration",
