@@ -24,7 +24,7 @@ const manager = new LocalAgentManager({
   store,
   drivers: createLocalAgentDrivers(),
   pool: new LocalAgentRuntimePool({ logger: log }),
-  loadProfiles: (workspaceRoot) => loadLocalAgentProfiles(config, workspaceRoot),
+  loadProfiles: (workspaceRoot) => loadLocalAgentProfiles(config, workspaceRoot, { includeDisabled: true }),
   agentDir: config.agentDir,
   allowedRoots: config.allowedRoots,
   logger: log,

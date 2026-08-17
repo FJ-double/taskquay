@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Result } from "better-result";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createConnection } from "node:net";
@@ -27,9 +28,9 @@ class FakeManager implements LocalAgentDaemonManager {
   closed = false;
   lastInput?: StartLocalAgentInput;
 
-  async start(input: StartLocalAgentInput): Promise<LocalAgentRecord> {
+  async start(input: StartLocalAgentInput) {
     this.lastInput = input;
-    return record;
+    return Result.ok(record);
   }
 
   async continue(
@@ -37,16 +38,16 @@ class FakeManager implements LocalAgentDaemonManager {
     _prompt: string,
     _overrides: RunOverrides | undefined,
     _scope: { workspaceId: string; workspaceRoot: string },
-  ): Promise<LocalAgentRecord> {
-    return { ...record, status: "running" };
+  ) {
+    return Result.ok({ ...record, status: "running" } as LocalAgentRecord);
   }
 
-  get(id: string, _scope: { workspaceId: string; workspaceRoot: string }): LocalAgentRecord | undefined {
-    return id === record.id ? record : undefined;
+  get(_id: string, _scope: { workspaceId: string; workspaceRoot: string }) {
+    return Result.ok(record);
   }
 
-  list(_scope: { workspaceId: string; workspaceRoot: string }): LocalAgentRecord[] {
-    return [record];
+  list(_scope: { workspaceId: string; workspaceRoot: string }) {
+    return Result.ok([record]);
   }
 
   async evictIdle(): Promise<void> {}

@@ -19,7 +19,15 @@ import {
   type LocalAgentDaemonStatus,
   LocalAgentDaemonProtocolError,
 } from "./local-agent-daemon-protocol.js";
-import { LocalAgentConflictError, type RunOverrides, type StartLocalAgentInput } from "./local-agent-manager.js";
+import type { Result } from "better-result";
+import type {
+  AgentContinueError,
+  AgentListError,
+  AgentLookupError,
+  AgentStartError,
+  RunOverrides,
+  StartLocalAgentInput,
+} from "./local-agent-manager.js";
 import type { LocalAgentRecord, LocalAgentWorkspaceScope } from "./local-agent-store.js";
 
 const MAX_REQUEST_BYTES = 512 * 1024;
@@ -29,10 +37,10 @@ const DEFAULT_REQUEST_READ_TIMEOUT_MS = 5_000;
 const DEFAULT_DAEMON_SHUTDOWN_TIMEOUT_MS = 10_000;
 
 export interface LocalAgentDaemonManager {
-  start(input: StartLocalAgentInput): Promise<LocalAgentRecord>;
-  continue(agentId: string, prompt: string, overrides: RunOverrides | undefined, scope: LocalAgentWorkspaceScope): Promise<LocalAgentRecord>;
-  get(agentId: string, scope: LocalAgentWorkspaceScope): LocalAgentRecord | undefined;
-  list(scope: LocalAgentWorkspaceScope): LocalAgentRecord[];
+  start(input: StartLocalAgentInput): Promise<Result<LocalAgentRecord, AgentStartError>>;
+  continue(agentId: string, prompt: string, overrides: RunOverrides | undefined, scope: LocalAgentWorkspaceScope): Promise<Result<LocalAgentRecord, AgentContinueError>>;
+  get(agentId: string, scope: LocalAgentWorkspaceScope): Result<LocalAgentRecord, AgentLookupError>;
+  list(scope: LocalAgentWorkspaceScope): Result<LocalAgentRecord[], AgentListError>;
   evictIdle(now?: number): Promise<void>;
   close(): Promise<void>;
   readonly activeTurnCount: number;
@@ -255,13 +263,18 @@ export class LocalAgentDaemon {
       case "hello":
         return this.status();
       case "agent.start":
-        return this.manager.start(request.params);
+        return unwrapManagerResult(await this.manager.start(request.params));
       case "agent.continue":
-        return this.manager.continue(request.params.id, request.params.prompt, request.params.overrides, request.params.scope);
+        return unwrapManagerResult(await this.manager.continue(
+          request.params.id,
+          request.params.prompt,
+          request.params.overrides,
+          request.params.scope,
+        ));
       case "agent.get":
-        return this.manager.get(request.params.id, request.params.scope) ?? null;
+        return unwrapManagerResult(this.manager.get(request.params.id, request.params.scope));
       case "agent.list":
-        return this.manager.list(request.params);
+        return unwrapManagerResult(this.manager.list(request.params));
       case "daemon.status":
         return this.status();
       case "daemon.stop":
@@ -357,7 +370,6 @@ function readRequestId(value: unknown): string {
 
 function errorCode(error: unknown): string {
   if (error instanceof LocalAgentDaemonProtocolError) return error.code;
-  if (error instanceof LocalAgentConflictError) return "CONFLICT";
   if (errorMessage(error).includes("is stopping")) return "DAEMON_STOPPING";
   return "AGENT_ERROR";
 }
@@ -388,4 +400,9 @@ export function readLocalAgentDaemonLogs(paths: LocalAgentDaemonPaths, lines = 2
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function unwrapManagerResult<T, E>(result: Result<T, E>): T {
+  if (result.isErr()) throw result.error;
+  return result.value;
 }

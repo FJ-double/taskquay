@@ -12,13 +12,16 @@ export type AgentTargetErrorCode =
   | "UNKNOWN_TARGET"
   | "AGENT_NOT_FOUND"
   | "PROVIDER_DISABLED"
-  | "PROVIDER_NOT_CONFIGURED";
+  | "PROVIDER_NOT_CONFIGURED"
+  | "TARGET_RESOLUTION_FAILED";
 
 export class AgentTargetError extends TaggedError("AgentTargetError")<{
   code: AgentTargetErrorCode;
   target: string;
   provider?: LocalAgentProvider;
+  operation?: string;
   retryable: boolean;
+  cause?: unknown;
   message: string;
 }>() {}
 

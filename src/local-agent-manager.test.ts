@@ -3,7 +3,7 @@ import { Result, type Result as BetterResult } from "better-result";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { LocalAgentConflictError, LocalAgentManager } from "./local-agent-manager.js";
+import { LocalAgentManager } from "./local-agent-manager.js";
 import {
   AgentProviderExecutionError,
   type AgentProviderError,
@@ -30,6 +30,12 @@ const profile: LocalAgentProfile = {
   body: "Review only.",
   disabled: false,
 };
+const disabledProfile: LocalAgentProfile = {
+  ...profile,
+  name: "disabled-reviewer",
+  filePath: join(root, "disabled-reviewer.md"),
+  disabled: true,
+};
 
 class FakeRuntime implements LocalAgentRuntime {
   readonly provider = "codex" as const;
@@ -46,6 +52,7 @@ class FakeRuntime implements LocalAgentRuntime {
       await callbacks?.onSessionId?.("thread_early");
       return Result.err(providerFailure("provider failed after session creation"));
     }
+    if (input.prompt.includes("defect")) throw new TypeError("internal defect");
     if (input.prompt.includes("fail")) return Result.err(providerFailure("provider failed"));
     if (input.prompt.includes("hold")) {
       await new Promise<void>((resolve) => { this.releaseHold = resolve; });
@@ -111,105 +118,150 @@ const manager = new LocalAgentManager({
   store,
   drivers: [driver],
   pool: new LocalAgentRuntimePool(),
-  loadProfiles: async () => [profile],
+  loadProfiles: async () => [profile, disabledProfile],
   allowedRoots: [root],
 });
 
-await assert.rejects(
-  manager.start({
-    target: "reviewer",
-    prompt: "outside",
-    workspaceId: scope.workspaceId,
-    workspaceRoot: join(tmpdir(), "outside"),
-  }),
-  /outside allowed roots/,
-);
+const outside = await manager.start({
+  target: "reviewer",
+  prompt: "outside",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: join(tmpdir(), "outside"),
+});
+assert.equal(outside.isErr(), true);
+if (outside.isErr()) assert.equal(outside.error.code, "WORKSPACE_NOT_ALLOWED");
 
-assert.equal(manager.get(stale.id, scope)?.status, "running");
-assert.throws(
-  () => manager.get(stale.id, { workspaceId: "ws_current", workspaceRoot: root }),
-  /different workspace/,
-  "agents must not be controlled with an unrelated workspace id",
-);
-manager.reconcileActiveRuns();
-assert.equal(manager.get(stale.id, scope)?.status, "error");
-assert.equal(manager.get(stale.id, scope)?.latestResponse, "previous response");
-assert.equal(
-  manager.get(stale.id, scope)?.error,
-  "DevSpace restarted while this agent turn was running.",
-);
+const unknown = await manager.start({
+  target: "missing",
+  prompt: "inspect",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+});
+assert.equal(unknown.isErr(), true);
+if (unknown.isErr()) assert.equal(unknown.error.code, "UNKNOWN_TARGET");
 
-const first = await manager.start({
+const disabled = await manager.start({
+  target: "disabled-reviewer",
+  prompt: "inspect",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+});
+assert.equal(disabled.isErr(), true);
+if (disabled.isErr()) assert.equal(disabled.error.code, "PROVIDER_DISABLED");
+
+const unconfigured = await manager.start({
+  target: "claude",
+  prompt: "inspect",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+});
+assert.equal(unconfigured.isErr(), true);
+if (unconfigured.isErr()) assert.equal(unconfigured.error.code, "PROVIDER_NOT_CONFIGURED");
+
+assert.equal(getRecord(stale.id).status, "running");
+
+const mismatchedGet = manager.get(stale.id, { workspaceId: "ws_current", workspaceRoot: root });
+assert.equal(mismatchedGet.isErr(), true);
+if (mismatchedGet.isErr()) assert.equal(mismatchedGet.error.code, "WORKSPACE_MISMATCH");
+
+unwrap(manager.reconcileActiveRuns());
+assert.equal(getRecord(stale.id).status, "error");
+assert.equal(getRecord(stale.id).latestResponse, "previous response");
+assert.equal(getRecord(stale.id).error, "DevSpace restarted while this agent turn was running.");
+assert.equal(getRecord(stale.id).errorCode, "DAEMON_UNAVAILABLE");
+assert.equal(getRecord(stale.id).errorRetryable, true);
+
+const first = unwrap(await manager.start({
   target: "reviewer",
   prompt: "hold",
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
-});
+}));
 assert.equal(first.status, "running");
 await waitFor(() => runtimes.get(first.id)?.inputs.length === 1);
-await assert.rejects(
-  () => manager.continue(first.id, "another prompt", {}, scope),
-  (error: unknown) => error instanceof LocalAgentConflictError && error.agentId === first.id,
-);
+const conflict = await manager.continue(first.id, "another prompt", {}, scope);
+assert.equal(conflict.isErr(), true);
+if (conflict.isErr()) {
+  assert.equal(conflict.error.code, "AGENT_CONFLICT");
+  assert.equal("agentId" in conflict.error ? conflict.error.agentId : undefined, first.id);
+}
 
 runtimes.get(first.id)!.release();
-await waitFor(() => manager.get(first.id, scope)?.status === "idle");
-assert.equal(manager.get(first.id, scope)?.providerSessionId, "thread_test");
-assert.match(manager.get(first.id, scope)?.latestResponse ?? "", /Task:\nhold/);
+await waitFor(() => getRecord(first.id).status === "idle");
+assert.equal(getRecord(first.id).providerSessionId, "thread_test");
+assert.match(getRecord(first.id).latestResponse ?? "", /Task:\nhold/);
 
-const continued = await manager.continue(first.id, "continue", {}, scope);
+const continued = unwrap(await manager.continue(first.id, "continue", {}, scope));
 assert.equal(continued.status, "running");
-await waitFor(() => manager.get(first.id, scope)?.status === "idle");
+await waitFor(() => getRecord(first.id).status === "idle");
 
-const second = await manager.start({
+const second = unwrap(await manager.start({
   target: "reviewer",
   prompt: "second agent",
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
-});
-await waitFor(() => manager.get(second.id, scope)?.status === "idle");
+}));
+await waitFor(() => getRecord(second.id).status === "idle");
 assert.notEqual(first.id, second.id);
 assert.equal(runtimes.size, 2, "different agents receive independent logical runtimes");
 
-const failed = await manager.start({
+const failed = unwrap(await manager.start({
   target: "reviewer",
   prompt: "fail",
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
-});
-await waitFor(() => manager.get(failed.id, scope)?.status === "error");
-assert.equal(manager.get(failed.id, scope)?.error, "provider failed");
+}));
+await waitFor(() => getRecord(failed.id).status === "error");
+assert.equal(getRecord(failed.id).error, "provider failed");
+assert.equal(getRecord(failed.id).errorCode, "PROVIDER_EXECUTION_ERROR");
+assert.equal(getRecord(failed.id).errorRetryable, false);
+const recovered = unwrap(await manager.continue(failed.id, "recovered", {}, scope));
+assert.equal(recovered.status, "running", "provider Err releases active-turn ownership");
+await waitFor(() => getRecord(failed.id).status === "idle");
 
-const earlyFailure = await manager.start({
+const earlyFailure = unwrap(await manager.start({
   target: "reviewer",
   prompt: "early-fail",
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
-});
-await waitFor(() => manager.get(earlyFailure.id, scope)?.status === "error");
-assert.equal(manager.get(earlyFailure.id, scope)?.providerSessionId, "thread_early");
+}));
+await waitFor(() => getRecord(earlyFailure.id).status === "error");
+assert.equal(getRecord(earlyFailure.id).providerSessionId, "thread_early");
 
-await assert.rejects(
-  () => manager.continue(first.id, "wrong workspace", {}, {
-    workspaceId: scope.workspaceId,
-    workspaceRoot: join(root, "other"),
-  }),
-  /different workspace/,
+const wrongWorkspace = await manager.continue(
+  first.id,
+  "wrong workspace",
+  {},
+  { workspaceId: scope.workspaceId, workspaceRoot: join(root, "other") },
 );
-await assert.rejects(
-  () => manager.continue(first.id, "wrong workspace id", {}, {
-    workspaceId: "ws_other",
-    workspaceRoot: root,
-  }),
-  /different workspace/,
-);
+assert.equal(wrongWorkspace.isErr(), true);
+if (wrongWorkspace.isErr()) assert.equal(wrongWorkspace.error.code, "WORKSPACE_MISMATCH");
 
-const shuttingDown = await manager.start({
+const wrongWorkspaceId = await manager.continue(
+  first.id,
+  "wrong workspace id",
+  {},
+  { workspaceId: "ws_other", workspaceRoot: root },
+);
+assert.equal(wrongWorkspaceId.isErr(), true);
+if (wrongWorkspaceId.isErr()) assert.equal(wrongWorkspaceId.error.code, "WORKSPACE_MISMATCH");
+
+const defect = unwrap(await manager.start({
+  target: "reviewer",
+  prompt: "defect",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+}));
+await waitFor(() => getRecord(defect.id).status === "error");
+assert.equal(getRecord(defect.id).errorCode, "AGENT_INTERNAL_ERROR");
+assert.notEqual(getRecord(defect.id).errorCode, "PROVIDER_EXECUTION_ERROR");
+
+const shuttingDown = unwrap(await manager.start({
   target: "reviewer",
   prompt: "hold during shutdown",
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
-});
+}));
 await waitFor(() => runtimes.get(shuttingDown.id)?.inputs.length === 1);
 const closing = manager.close();
 await new Promise<void>((resolve) => setImmediate(resolve));
@@ -218,6 +270,15 @@ await closing;
 
 await manager.close();
 await rm(root, { recursive: true, force: true });
+
+function getRecord(id: string) {
+  return unwrap(manager.get(id, scope));
+}
+
+function unwrap<T, E>(result: BetterResult<T, E>): T {
+  if (result.isErr()) throw result.error;
+  return result.value;
+}
 
 async function waitFor(check: () => boolean): Promise<void> {
   const deadline = Date.now() + 2_000;
