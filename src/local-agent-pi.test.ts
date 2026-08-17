@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { basename } from "node:path";
+import type { AgentSessionEvent, AgentSessionEventListener } from "@earendil-works/pi-coding-agent";
 import {
   PiLocalAgentDriver,
   piToolsForWriteMode,
@@ -13,8 +14,8 @@ import type { LocalAgentRuntimeContext } from "./local-agent-runtime.js";
 class FakePiSession implements PiSessionLike {
   readonly sessionId = "pi_session_1";
   readonly messages: any[] = [];
-  readonly modelRegistry = { find: () => ({ id: "model" }) } as PiSessionLike["modelRegistry"];
-  private readonly listeners = new Set<(event: unknown) => void>();
+  readonly modelRegistry = { find: () => ({ id: "model" }) } as unknown as PiSessionLike["modelRegistry"];
+  private readonly listeners = new Set<AgentSessionEventListener>();
   disposeCount = 0;
   model?: unknown;
   thinking?: unknown;
@@ -27,10 +28,10 @@ class FakePiSession implements PiSessionLike {
       content: [{ type: "text", text: `response:${text}` }],
     };
     this.messages.push(message);
-    for (const listener of this.listeners) listener({ type: "agent_end" });
+    for (const listener of this.listeners) listener({ type: "agent_end" } as AgentSessionEvent);
   }
 
-  subscribe(listener: (event: unknown) => void): () => void {
+  subscribe(listener: AgentSessionEventListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
