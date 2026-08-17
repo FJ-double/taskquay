@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { LocalAgentClient } from "./local-agent-client.js";
+import { daemonExecArgv, LocalAgentClient } from "./local-agent-client.js";
 import { LocalAgentDaemon, type LocalAgentDaemonManager } from "./local-agent-daemon.js";
 import type { RunOverrides, StartLocalAgentInput } from "./local-agent-manager.js";
 import type { LocalAgentListScope, LocalAgentRecord } from "./local-agent-store.js";
@@ -80,6 +80,19 @@ for (const diagnostic of [
   await assert.rejects(diagnostic, /Local agent daemon is not running/);
 }
 assert.equal(diagnosticSpawnCount, 0, "daemon diagnostics must not start a missing daemon");
+
+assert.deepEqual(
+  daemonExecArgv([
+    "--enable-source-maps",
+    "--inspect=127.0.0.1:9229",
+    "--inspect-brk",
+    "--inspect-wait=127.0.0.1:9230",
+    "--inspect-port", "9231",
+    "--trace-warnings",
+  ]),
+  ["--enable-source-maps", "--trace-warnings"],
+  "detached daemon startup must not inherit inspector flags",
+);
 
 let shutdownSocket: ReturnType<typeof createConnection> | undefined;
 try {

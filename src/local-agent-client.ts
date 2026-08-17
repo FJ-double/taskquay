@@ -210,13 +210,28 @@ export function createLocalAgentClient(config: Pick<ServerConfig, "stateDir">): 
 
 export function spawnLocalAgentDaemon(stateDir: string, env: NodeJS.ProcessEnv = process.env): void {
   const entrypoint = resolveDaemonEntrypoint();
-  const child = spawn(process.execPath, [...process.execArgv, entrypoint], {
+  const child = spawn(process.execPath, [...daemonExecArgv(process.execArgv), entrypoint], {
     detached: true,
     stdio: "ignore",
     windowsHide: true,
     env: { ...env, DEVSPACE_STATE_DIR: stateDir },
   });
   child.unref();
+}
+
+export function daemonExecArgv(execArgv: readonly string[]): string[] {
+  const result: string[] = [];
+  for (let index = 0; index < execArgv.length; index += 1) {
+    const argument = execArgv[index]!;
+    if (/^--inspect(?:-brk|-wait)?(?:=.*)?$/.test(argument)) continue;
+    if (argument === "--inspect-port") {
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("--inspect-port=")) continue;
+    result.push(argument);
+  }
+  return result;
 }
 
 export function resolveDaemonEntrypoint(): string {
