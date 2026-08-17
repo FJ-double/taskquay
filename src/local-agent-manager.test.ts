@@ -16,6 +16,7 @@ import { LocalAgentStore } from "./local-agent-store.js";
 
 const root = await mkdtemp(join(tmpdir(), "devspace-agent-manager-test-"));
 const stateDir = join(root, "state");
+const scope = { workspaceId: "ws_test", workspaceRoot: root };
 const profile: LocalAgentProfile = {
   name: "reviewer",
   description: "Test reviewer",
@@ -81,6 +82,7 @@ const driver: LocalAgentDriver = {
 
 const store = new LocalAgentStore(stateDir);
 const stale = store.create({
+  workspaceId: scope.workspaceId,
   workspaceRoot: root,
   profileName: "reviewer",
   provider: "codex",
@@ -96,73 +98,93 @@ const manager = new LocalAgentManager({
 });
 
 await assert.rejects(
-  manager.start({ target: "reviewer", prompt: "outside", workspaceRoot: join(tmpdir(), "outside") }),
+  manager.start({
+    target: "reviewer",
+    prompt: "outside",
+    workspaceId: scope.workspaceId,
+    workspaceRoot: join(tmpdir(), "outside"),
+  }),
   /outside allowed roots/,
 );
 
-assert.equal(manager.get(stale.id)?.status, "running");
+assert.equal(manager.get(stale.id, scope)?.status, "running");
 manager.reconcileActiveRuns();
-assert.equal(manager.get(stale.id)?.status, "error");
-assert.equal(manager.get(stale.id)?.latestResponse, "previous response");
+assert.equal(manager.get(stale.id, scope)?.status, "error");
+assert.equal(manager.get(stale.id, scope)?.latestResponse, "previous response");
 assert.equal(
-  manager.get(stale.id)?.error,
+  manager.get(stale.id, scope)?.error,
   "DevSpace restarted while this agent turn was running.",
 );
 
 const first = await manager.start({
   target: "reviewer",
   prompt: "hold",
+  workspaceId: scope.workspaceId,
   workspaceRoot: root,
 });
 assert.equal(first.status, "running");
 await waitFor(() => runtimes.get(first.id)?.inputs.length === 1);
 await assert.rejects(
-  () => manager.continue(first.id, "another prompt"),
+  () => manager.continue(first.id, "another prompt", {}, scope),
   (error: unknown) => error instanceof LocalAgentConflictError && error.agentId === first.id,
 );
 
 runtimes.get(first.id)!.release();
-await waitFor(() => manager.get(first.id)?.status === "idle");
-assert.equal(manager.get(first.id)?.providerSessionId, "thread_test");
-assert.match(manager.get(first.id)?.latestResponse ?? "", /Task:\nhold/);
+await waitFor(() => manager.get(first.id, scope)?.status === "idle");
+assert.equal(manager.get(first.id, scope)?.providerSessionId, "thread_test");
+assert.match(manager.get(first.id, scope)?.latestResponse ?? "", /Task:\nhold/);
 
-const continued = await manager.continue(first.id, "continue");
+const continued = await manager.continue(first.id, "continue", {}, scope);
 assert.equal(continued.status, "running");
-await waitFor(() => manager.get(first.id)?.status === "idle");
+await waitFor(() => manager.get(first.id, scope)?.status === "idle");
 
 const second = await manager.start({
   target: "reviewer",
   prompt: "second agent",
+  workspaceId: scope.workspaceId,
   workspaceRoot: root,
 });
-await waitFor(() => manager.get(second.id)?.status === "idle");
+await waitFor(() => manager.get(second.id, scope)?.status === "idle");
 assert.notEqual(first.id, second.id);
 assert.equal(runtimes.size, 2, "different agents receive independent logical runtimes");
 
 const failed = await manager.start({
   target: "reviewer",
   prompt: "fail",
+  workspaceId: scope.workspaceId,
   workspaceRoot: root,
 });
-await waitFor(() => manager.get(failed.id)?.status === "error");
-assert.equal(manager.get(failed.id)?.error, "provider failed");
+await waitFor(() => manager.get(failed.id, scope)?.status === "error");
+assert.equal(manager.get(failed.id, scope)?.error, "provider failed");
 
 const earlyFailure = await manager.start({
   target: "reviewer",
   prompt: "early-fail",
+  workspaceId: scope.workspaceId,
   workspaceRoot: root,
 });
-await waitFor(() => manager.get(earlyFailure.id)?.status === "error");
-assert.equal(manager.get(earlyFailure.id)?.providerSessionId, "thread_early");
+await waitFor(() => manager.get(earlyFailure.id, scope)?.status === "error");
+assert.equal(manager.get(earlyFailure.id, scope)?.providerSessionId, "thread_early");
 
 await assert.rejects(
-  () => manager.continue(first.id, "wrong workspace", {}, { workspaceRoot: join(root, "other") }),
+  () => manager.continue(first.id, "wrong workspace", {}, {
+    workspaceId: scope.workspaceId,
+    workspaceRoot: join(root, "other"),
+  }),
+  /different workspace/,
+);
+await assert.rejects(
+  () => manager.continue(first.id, "wrong workspace id", {}, {
+    workspaceId: "ws_other",
+    workspaceRoot: root,
+  }),
   /different workspace/,
 );
 
 const shuttingDown = await manager.start({
   target: "reviewer",
   prompt: "hold during shutdown",
+  workspaceId: scope.workspaceId,
   workspaceRoot: root,
 });
 await waitFor(() => runtimes.get(shuttingDown.id)?.inputs.length === 1);

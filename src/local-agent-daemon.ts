@@ -20,7 +20,7 @@ import {
   LocalAgentDaemonProtocolError,
 } from "./local-agent-daemon-protocol.js";
 import { LocalAgentConflictError, type RunOverrides, type StartLocalAgentInput } from "./local-agent-manager.js";
-import type { LocalAgentListScope, LocalAgentRecord, LocalAgentWorkspaceScope } from "./local-agent-store.js";
+import type { LocalAgentRecord, LocalAgentWorkspaceScope } from "./local-agent-store.js";
 
 const MAX_REQUEST_BYTES = 512 * 1024;
 const DEFAULT_DAEMON_IDLE_SHUTDOWN_MS = 30_000;
@@ -30,9 +30,9 @@ const DEFAULT_DAEMON_SHUTDOWN_TIMEOUT_MS = 10_000;
 
 export interface LocalAgentDaemonManager {
   start(input: StartLocalAgentInput): Promise<LocalAgentRecord>;
-  continue(agentId: string, prompt: string, overrides?: RunOverrides, scope?: LocalAgentWorkspaceScope): Promise<LocalAgentRecord>;
-  get(agentId: string, scope?: LocalAgentWorkspaceScope): LocalAgentRecord | undefined;
-  list(scope?: LocalAgentListScope): LocalAgentRecord[];
+  continue(agentId: string, prompt: string, overrides: RunOverrides | undefined, scope: LocalAgentWorkspaceScope): Promise<LocalAgentRecord>;
+  get(agentId: string, scope: LocalAgentWorkspaceScope): LocalAgentRecord | undefined;
+  list(scope: LocalAgentWorkspaceScope): LocalAgentRecord[];
   evictIdle(now?: number): Promise<void>;
   close(): Promise<void>;
   readonly activeTurnCount: number;

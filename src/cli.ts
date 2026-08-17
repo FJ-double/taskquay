@@ -357,13 +357,13 @@ async function runAgentsList(): Promise<void> {
 async function runAgentsRun(args: string[]): Promise<void> {
   const parsed = parseLocalAgentRunArgs(args);
   const config = loadConfig();
-  const workspaceRoot = resolveCurrentWorkspaceRoot();
+  const scope = resolveCurrentWorkspaceScope();
   const client = createLocalAgentClient(config);
   const record = await client.start({
     target: parsed.target,
     prompt: parsed.prompt,
-    workspaceRoot,
-    workspaceId: process.env.DEVSPACE_WORKSPACE_ID,
+    workspaceRoot: scope.workspaceRoot,
+    workspaceId: scope.workspaceId,
     model: parsed.model,
     thinking: parsed.thinking,
   });
@@ -438,9 +438,13 @@ function resolveCurrentWorkspaceRoot(): string {
   return resolve(process.env.DEVSPACE_WORKSPACE_ROOT || process.cwd());
 }
 
-function resolveCurrentWorkspaceScope(): { workspaceId?: string; workspaceRoot: string } {
+function resolveCurrentWorkspaceScope(): { workspaceId: string; workspaceRoot: string } {
+  const workspaceId = process.env.DEVSPACE_WORKSPACE_ID?.trim();
+  if (!workspaceId) {
+    throw new Error("A DevSpace workspace is required. Run this command from an open_workspace session.");
+  }
   return {
-    workspaceId: process.env.DEVSPACE_WORKSPACE_ID,
+    workspaceId,
     workspaceRoot: resolveCurrentWorkspaceRoot(),
   };
 }

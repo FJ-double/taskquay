@@ -15,6 +15,7 @@ const request = decodeLocalAgentDaemonRequest({
   params: {
     target: "reviewer",
     prompt: "Review this",
+    workspaceId: "ws_test",
     workspaceRoot: "/tmp/project",
     writeMode: "read_only",
   },
@@ -31,6 +32,7 @@ const whitespaceRequest = decodeLocalAgentDaemonRequest({
   params: {
     target: "reviewer",
     prompt: "  keep prompt whitespace  \n",
+    workspaceId: "ws_test",
     workspaceRoot: "/tmp/project",
   },
 });
@@ -49,6 +51,7 @@ assert.throws(
 
 const record = decodeAgentRecord({
   id: "agt_1234",
+  workspaceId: "ws_test",
   workspaceRoot: "/tmp/project",
   profileName: "reviewer",
   provider: "codex",

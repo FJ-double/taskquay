@@ -1,5 +1,4 @@
 import type {
-  LocalAgentListScope,
   LocalAgentRecord,
   LocalAgentStatus,
   LocalAgentWorkspaceScope,
@@ -26,7 +25,7 @@ export type LocalAgentDaemonRequest =
   | AgentDaemonRequestBase<"agent.start", StartLocalAgentInput>
   | AgentDaemonRequestBase<"agent.continue", { id: string; prompt: string; scope: LocalAgentWorkspaceScope; overrides?: RunOverrides }>
   | AgentDaemonRequestBase<"agent.get", { id: string; scope: LocalAgentWorkspaceScope }>
-  | AgentDaemonRequestBase<"agent.list", LocalAgentListScope>
+  | AgentDaemonRequestBase<"agent.list", LocalAgentWorkspaceScope>
   | AgentDaemonRequestBase<"daemon.status", Record<string, never>>
   | AgentDaemonRequestBase<"daemon.stop", Record<string, never>>
   | AgentDaemonRequestBase<"daemon.logs", { lines?: number }>;
@@ -169,7 +168,7 @@ export function decodeAgentRecord(value: unknown): LocalAgentRecord {
   if (!isLocalAgentStatus(status)) throw new LocalAgentDaemonProtocolError("INVALID_RECORD", "Invalid agent status.");
   return {
     id: requiredString(record?.id, "id"),
-    workspaceId: optionalString(record?.workspaceId),
+    workspaceId: requiredString(record?.workspaceId, "workspaceId"),
     workspaceRoot: requiredString(record?.workspaceRoot, "workspaceRoot"),
     profileName: requiredString(record?.profileName, "profileName"),
     provider: requiredString(record?.provider, "provider"),
@@ -234,7 +233,7 @@ function decodeStartInput(value: unknown): StartLocalAgentInput {
     target: requiredString(record?.target, "target"),
     prompt: requiredContentString(record?.prompt, "prompt"),
     workspaceRoot: requiredString(record?.workspaceRoot, "workspaceRoot"),
-    workspaceId: optionalString(record?.workspaceId),
+    workspaceId: requiredString(record?.workspaceId, "workspaceId"),
     model: optionalString(record?.model),
     thinking: optionalString(record?.thinking),
     writeMode: decodeWriteMode(record?.writeMode),
@@ -260,19 +259,13 @@ function decodeWorkspaceScope(value: unknown): LocalAgentWorkspaceScope {
   const record = asRecord(value);
   if (!record) throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Workspace scope is required.");
   return {
-    workspaceId: optionalString(record.workspaceId),
+    workspaceId: requiredString(record.workspaceId, "scope.workspaceId"),
     workspaceRoot: requiredString(record.workspaceRoot, "scope.workspaceRoot"),
   };
 }
 
-function decodeListScope(value: unknown): LocalAgentListScope {
-  if (value === undefined) return {};
-  const record = asRecord(value);
-  if (!record) throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "List scope must be an object.");
-  return {
-    workspaceId: optionalString(record.workspaceId),
-    workspaceRoot: optionalString(record.workspaceRoot),
-  };
+function decodeListScope(value: unknown): LocalAgentWorkspaceScope {
+  return decodeWorkspaceScope(value);
 }
 
 function decodeLogsParams(value: unknown): { lines?: number } {

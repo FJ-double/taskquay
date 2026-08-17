@@ -7,11 +7,12 @@ import { tmpdir } from "node:os";
 import { daemonExecArgv, LocalAgentClient } from "./local-agent-client.js";
 import { LocalAgentDaemon, type LocalAgentDaemonManager } from "./local-agent-daemon.js";
 import type { RunOverrides, StartLocalAgentInput } from "./local-agent-manager.js";
-import type { LocalAgentListScope, LocalAgentRecord } from "./local-agent-store.js";
+import type { LocalAgentRecord } from "./local-agent-store.js";
 
 const root = await mkdtemp(join(tmpdir(), "devspace-agentd-test-"));
 const record: LocalAgentRecord = {
   id: "agt_test",
+  workspaceId: "ws_test",
   workspaceRoot: join(root, "project"),
   profileName: "reviewer",
   provider: "codex",
@@ -31,15 +32,20 @@ class FakeManager implements LocalAgentDaemonManager {
     return record;
   }
 
-  async continue(_agentId: string, _prompt: string, _overrides?: RunOverrides): Promise<LocalAgentRecord> {
+  async continue(
+    _agentId: string,
+    _prompt: string,
+    _overrides: RunOverrides | undefined,
+    _scope: { workspaceId: string; workspaceRoot: string },
+  ): Promise<LocalAgentRecord> {
     return { ...record, status: "running" };
   }
 
-  get(id: string): LocalAgentRecord | undefined {
+  get(id: string, _scope: { workspaceId: string; workspaceRoot: string }): LocalAgentRecord | undefined {
     return id === record.id ? record : undefined;
   }
 
-  list(_scope?: LocalAgentListScope): LocalAgentRecord[] {
+  list(_scope: { workspaceId: string; workspaceRoot: string }): LocalAgentRecord[] {
     return [record];
   }
 
@@ -99,12 +105,13 @@ try {
   const started = await client.run({
     target: "reviewer",
     prompt: "Review this",
+    workspaceId: record.workspaceId!,
     workspaceRoot: join(root, "project"),
   });
   assert.equal(started.id, record.id);
   assert.equal(manager.lastInput?.prompt, "Review this");
-  assert.equal((await client.get(record.id, { workspaceRoot: record.workspaceRoot }))?.id, record.id);
-  assert.equal((await client.list({ workspaceRoot: record.workspaceRoot }))[0]?.id, record.id);
+  assert.equal((await client.get(record.id, { workspaceId: record.workspaceId!, workspaceRoot: record.workspaceRoot }))?.id, record.id);
+  assert.equal((await client.list({ workspaceId: record.workspaceId!, workspaceRoot: record.workspaceRoot }))[0]?.id, record.id);
   assert.equal((await client.status()).state, "ready");
 
   await client.stop();
