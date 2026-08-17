@@ -62,6 +62,7 @@ export class AcpRuntime implements LocalAgentRuntime {
   private readonly liveSessions: Set<string>;
   private readonly sessionWriteModes: Map<string, LocalAgentWriteMode>;
   private readonly sessionMetadata: Map<string, unknown>;
+  private readonly activeSessions = new Set<string>();
   private alive = true;
   private closed = false;
 
@@ -92,25 +93,33 @@ export class AcpRuntime implements LocalAgentRuntime {
   async run(input: LocalAgentRunInput, callbacks?: LocalAgentRunCallbacks): Promise<LocalAgentRunResult> {
     if (!this.isAlive()) throw new Error(`${this.provider} ACP runtime is not running.`);
     const sessionId = await this.openSession(input, callbacks);
+    if (this.activeSessions.has(sessionId)) {
+      throw new Error(`${this.provider} ACP session ${sessionId} already has an active turn.`);
+    }
+    this.activeSessions.add(sessionId);
     const queue = this.queues.get(sessionId) ?? { values: [] };
     this.queues.set(sessionId, queue);
-    queue.values.length = 0;
-    const response = await this.connection.agent.request("session/prompt", {
-      sessionId,
-      prompt: [{ type: "text", text: input.prompt }],
-    });
-    const updates = queue.values.splice(0);
-    const finalResponse = extractAcpText(updates);
-    if (!finalResponse) {
-      const stopReason = readString(response, "stopReason");
-      throw new Error(`${this.provider} ACP did not return a final assistant response${stopReason ? ` (${stopReason})` : ""}.`);
+    try {
+      queue.values.length = 0;
+      const response = await this.connection.agent.request("session/prompt", {
+        sessionId,
+        prompt: [{ type: "text", text: input.prompt }],
+      });
+      const updates = queue.values.splice(0);
+      const finalResponse = extractAcpText(updates);
+      if (!finalResponse) {
+        const stopReason = readString(response, "stopReason");
+        throw new Error(`${this.provider} ACP did not return a final assistant response${stopReason ? ` (${stopReason})` : ""}.`);
+      }
+      return {
+        provider: this.provider,
+        providerSessionId: sessionId,
+        finalResponse,
+        items: updates,
+      };
+    } finally {
+      this.activeSessions.delete(sessionId);
     }
-    return {
-      provider: this.provider,
-      providerSessionId: sessionId,
-      finalResponse,
-      items: updates,
-    };
   }
 
   async releaseSession(providerSessionId: string): Promise<void> {
@@ -118,7 +127,7 @@ export class AcpRuntime implements LocalAgentRuntime {
     this.liveSessions.delete(providerSessionId);
     this.sessionWriteModes.delete(providerSessionId);
     this.sessionMetadata.delete(providerSessionId);
-    if (!this.capabilities.close || !this.capabilities.resume || !this.isAlive()) return;
+    if (!this.capabilities.close || !this.isAlive()) return;
     await this.connection.agent.request("session/close", { sessionId: providerSessionId });
   }
 
@@ -134,6 +143,7 @@ export class AcpRuntime implements LocalAgentRuntime {
     this.liveSessions.clear();
     this.sessionWriteModes.clear();
     this.sessionMetadata.clear();
+    this.activeSessions.clear();
     this.connection.close(new Error(`${this.provider} ACP runtime closed.`));
     if (this.child && this.child.exitCode === null) {
       const detached = process.platform !== "win32";
@@ -222,7 +232,9 @@ export class AcpRuntime implements LocalAgentRuntime {
   }
 
   private additionalDirectoryParams(): { additionalDirectories?: string[] } {
-    return this.capabilities.additionalDirectories ? { additionalDirectories: [] } : {};
+    // DevSpace currently authorizes exactly one workspace root per agent turn.
+    // Do not advertise an empty additional-directory scope to ACP providers.
+    return {};
   }
 }
 
@@ -277,7 +289,7 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
       const sessionWriteModes = new Map<string, LocalAgentWriteMode>();
       const app = client({ name: "DevSpace" })
         .onRequest(methods.client.session.requestPermission, (context) => {
-          const writeMode = queuesWriteMode(context.params.sessionId, sessionWriteModes);
+          const writeMode = sessionWriteModes.get(context.params.sessionId);
           const selected = selectAcpPermissionOption(context.params.options, writeMode, this.provider);
           return selected
             ? { outcome: { outcome: "selected", optionId: selected.optionId } }
@@ -493,6 +505,7 @@ export function selectAcpPermissionOption(
   writeMode: LocalAgentWriteMode | undefined,
   provider?: AcpProvider,
 ): { optionId: string } | undefined {
+  if (!writeMode) return undefined;
   // Copilot's native sandbox has a per-command escape hatch enabled by
   // default. Normal turns already pass --allow-all-tools, so any permission
   // request that reaches ACP is an attempted escalation (including a
@@ -508,20 +521,13 @@ export function selectAcpPermissionOption(
   return selected ? { optionId: selected.optionId } : undefined;
 }
 
-function queuesWriteMode(
-  sessionId: string,
-  sessionWriteModes: Map<string, LocalAgentWriteMode>,
-): LocalAgentWriteMode {
-  return sessionWriteModes.get(sessionId) ?? "allowed";
-}
-
 function readAcpCapabilities(value: unknown): AcpCapabilities {
   const capabilities = asRecord(asRecord(value)?.agentCapabilities);
   const sessions = asRecord(capabilities?.sessionCapabilities);
   return {
     resume: Boolean(sessions?.resume),
     close: Boolean(sessions?.close),
-    additionalDirectories: sessions?.additionalDirectories !== undefined && sessions?.additionalDirectories !== null,
+    additionalDirectories: Boolean(sessions?.additionalDirectories),
   };
 }
 
