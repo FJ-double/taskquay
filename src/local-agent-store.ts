@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { Result, type Result as BetterResult } from "better-result";
 import { openDatabase, type DatabaseHandle } from "./db/client.js";
-import { AgentStoreError } from "./local-agent-errors.js";
+import { AgentStoreError, isProgrammerDefect } from "./local-agent-errors.js";
 
 export type LocalAgentStatus = "starting" | "running" | "idle" | "error" | "stopped";
 
@@ -104,10 +104,7 @@ export class LocalAgentStore {
   }
 
   listResult(scope: LocalAgentListScope = {}): BetterResult<LocalAgentRecord[], AgentStoreError> {
-    return Result.try({
-      try: () => this.list(scope),
-      catch: (cause) => new AgentStoreError("list", cause),
-    });
+    return storeResult("list", () => this.list(scope));
   }
 
   create(input: CreateLocalAgentRecordInput): LocalAgentRecord {
@@ -157,10 +154,7 @@ export class LocalAgentStore {
   }
 
   createResult(input: CreateLocalAgentRecordInput): BetterResult<LocalAgentRecord, AgentStoreError> {
-    return Result.try({
-      try: () => this.create(input),
-      catch: (cause) => new AgentStoreError("create", cause),
-    });
+    return storeResult("create", () => this.create(input));
   }
 
   getById(id: string): LocalAgentRecord | undefined {
@@ -175,10 +169,7 @@ export class LocalAgentStore {
   }
 
   getByIdResult(id: string): BetterResult<LocalAgentRecord | undefined, AgentStoreError> {
-    return Result.try({
-      try: () => this.getById(id),
-      catch: (cause) => new AgentStoreError("get", cause),
-    });
+    return storeResult("get", () => this.getById(id));
   }
 
   /**
@@ -241,10 +232,7 @@ export class LocalAgentStore {
     id: string,
     patch: Partial<Omit<LocalAgentRecord, "id" | "createdAt">>,
   ): BetterResult<LocalAgentRecord, AgentStoreError> {
-    return Result.try({
-      try: () => this.update(id, patch),
-      catch: (cause) => new AgentStoreError("update", cause),
-    });
+    return storeResult("update", () => this.update(id, patch));
   }
 
   reconcileActiveRuns(message = "DevSpace restarted while this agent turn was running."): number {
@@ -262,10 +250,7 @@ export class LocalAgentStore {
   reconcileActiveRunsResult(
     message = "DevSpace restarted while this agent turn was running.",
   ): BetterResult<number, AgentStoreError> {
-    return Result.try({
-      try: () => this.reconcileActiveRuns(message),
-      catch: (cause) => new AgentStoreError("reconcile_active_runs", cause),
-    });
+    return storeResult("reconcile_active_runs", () => this.reconcileActiveRuns(message));
   }
 
   close(): void {
@@ -302,6 +287,15 @@ function readOptionalBoolean(value: string | null): boolean | undefined {
   if (value === "true") return true;
   if (value === "false") return false;
   return undefined;
+}
+
+function storeResult<T>(operation: string, run: () => T): BetterResult<T, AgentStoreError> {
+  try {
+    return Result.ok(run());
+  } catch (cause) {
+    if (isProgrammerDefect(cause)) throw cause;
+    return Result.err(new AgentStoreError(operation, cause));
+  }
 }
 
 function readStatus(status: string): LocalAgentStatus {

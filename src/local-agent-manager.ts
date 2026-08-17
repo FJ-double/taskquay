@@ -5,6 +5,8 @@ import {
   AgentScopeError,
   AgentStoreError,
   AgentTargetError,
+  isLocalAgentError,
+  isProgrammerDefect,
   type LocalAgentError,
 } from "./local-agent-errors.js";
 import {
@@ -327,6 +329,10 @@ export class LocalAgentManager {
         durationMs: Math.max(0, Date.now() - startedAt),
       });
     } catch (error) {
+      if (isLocalAgentError(error)) {
+        this.persistRunError(record, error, startedAt);
+        return;
+      }
       const persisted = this.store.updateResult(record.id, {
         status: "error",
         error: "Unexpected internal subagent failure.",
@@ -488,6 +494,7 @@ export class LocalAgentManager {
     try {
       return Result.ok(await this.loadProfiles(workspaceRoot));
     } catch (cause) {
+      if (isProgrammerDefect(cause)) throw cause;
       return Result.err(new AgentTargetError({
         code: "TARGET_RESOLUTION_FAILED",
         target,
