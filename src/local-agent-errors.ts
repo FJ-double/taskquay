@@ -1,0 +1,250 @@
+import { TaggedError } from "better-result";
+import {
+  isLocalAgentProvider,
+  type LocalAgentProvider,
+} from "./local-agent-profiles.js";
+
+export type AgentTargetErrorCode =
+  | "UNKNOWN_TARGET"
+  | "AGENT_NOT_FOUND"
+  | "PROVIDER_DISABLED"
+  | "PROVIDER_NOT_CONFIGURED";
+
+export class AgentTargetError extends TaggedError("AgentTargetError")<{
+  code: AgentTargetErrorCode;
+  target: string;
+  provider?: LocalAgentProvider;
+  retryable: boolean;
+  message: string;
+}>() {}
+
+export class AgentConflictError extends TaggedError("AgentConflictError")<{
+  code: "AGENT_CONFLICT";
+  agentId?: string;
+  operation: string;
+  retryable: boolean;
+  message: string;
+}>() {}
+
+export type AgentScopeErrorCode =
+  | "WORKSPACE_MISMATCH"
+  | "WORKSPACE_NOT_ALLOWED"
+  | "WORKSPACE_SCOPE_REQUIRED";
+
+export class AgentScopeError extends TaggedError("AgentScopeError")<{
+  code: AgentScopeErrorCode;
+  agentId?: string;
+  workspaceId?: string;
+  operation: string;
+  retryable: boolean;
+  cause?: unknown;
+  message: string;
+}>() {}
+
+interface AgentProviderErrorFields extends Record<string, unknown> {
+  provider: LocalAgentProvider;
+  agentId?: string;
+  operation: string;
+  retryable: boolean;
+  cause?: unknown;
+  message: string;
+}
+
+export class AgentProviderUnavailableError extends TaggedError(
+  "AgentProviderUnavailableError",
+)<AgentProviderErrorFields & { code: "PROVIDER_UNAVAILABLE" }>() {}
+
+export class AgentProviderCancelledError extends TaggedError(
+  "AgentProviderCancelledError",
+)<AgentProviderErrorFields & { code: "PROVIDER_CANCELLED" }>() {}
+
+export class AgentProviderProtocolError extends TaggedError(
+  "AgentProviderProtocolError",
+)<AgentProviderErrorFields & { code: "PROVIDER_PROTOCOL_ERROR" }>() {}
+
+export class AgentProviderExecutionError extends TaggedError(
+  "AgentProviderExecutionError",
+)<AgentProviderErrorFields & { code: "PROVIDER_EXECUTION_ERROR" }>() {}
+
+export type AgentProviderError =
+  | AgentProviderUnavailableError
+  | AgentProviderCancelledError
+  | AgentProviderProtocolError
+  | AgentProviderExecutionError;
+
+interface AgentDaemonErrorFields extends Record<string, unknown> {
+  operation: string;
+  retryable: boolean;
+  cause?: unknown;
+  message: string;
+}
+
+export class AgentDaemonUnavailableError extends TaggedError(
+  "AgentDaemonUnavailableError",
+)<AgentDaemonErrorFields & { code: "DAEMON_UNAVAILABLE" }>() {}
+
+export class AgentDaemonStartupError extends TaggedError(
+  "AgentDaemonStartupError",
+)<AgentDaemonErrorFields & { code: "DAEMON_STARTUP_FAILURE" }>() {}
+
+export class AgentDaemonTimeoutError extends TaggedError(
+  "AgentDaemonTimeoutError",
+)<AgentDaemonErrorFields & { code: "DAEMON_TIMEOUT" }>() {}
+
+export class AgentDaemonProtocolMismatchError extends TaggedError(
+  "AgentDaemonProtocolMismatchError",
+)<AgentDaemonErrorFields & { code: "DAEMON_PROTOCOL_MISMATCH" }>() {}
+
+export class AgentDaemonInvalidResponseError extends TaggedError(
+  "AgentDaemonInvalidResponseError",
+)<AgentDaemonErrorFields & { code: "DAEMON_INVALID_RESPONSE" }>() {}
+
+export type AgentDaemonError =
+  | AgentDaemonUnavailableError
+  | AgentDaemonStartupError
+  | AgentDaemonTimeoutError
+  | AgentDaemonProtocolMismatchError
+  | AgentDaemonInvalidResponseError;
+
+export class AgentStoreError extends TaggedError("AgentStoreError")<{
+  code: "AGENT_STORE_ERROR";
+  operation: string;
+  retryable: boolean;
+  cause: unknown;
+  message: string;
+}>() {}
+
+export type AgentManagerError =
+  | AgentTargetError
+  | AgentConflictError
+  | AgentScopeError
+  | AgentProviderError
+  | AgentStoreError;
+
+export type LocalAgentError = AgentManagerError | AgentDaemonError;
+
+export interface AgentErrorPayload {
+  code: LocalAgentError["code"];
+  message: string;
+  retryable?: boolean;
+  provider?: LocalAgentProvider;
+  agentId?: string;
+  workspaceId?: string;
+  operation?: string;
+  target?: string;
+}
+
+export function isAgentProviderError(error: unknown): error is AgentProviderError {
+  return AgentProviderUnavailableError.is(error)
+    || AgentProviderCancelledError.is(error)
+    || AgentProviderProtocolError.is(error)
+    || AgentProviderExecutionError.is(error);
+}
+
+export function isAgentDaemonError(error: unknown): error is AgentDaemonError {
+  return AgentDaemonUnavailableError.is(error)
+    || AgentDaemonStartupError.is(error)
+    || AgentDaemonTimeoutError.is(error)
+    || AgentDaemonProtocolMismatchError.is(error)
+    || AgentDaemonInvalidResponseError.is(error);
+}
+
+export function isLocalAgentError(error: unknown): error is LocalAgentError {
+  return AgentTargetError.is(error)
+    || AgentConflictError.is(error)
+    || AgentScopeError.is(error)
+    || isAgentProviderError(error)
+    || AgentStoreError.is(error)
+    || isAgentDaemonError(error);
+}
+
+export function toAgentErrorPayload(error: LocalAgentError): AgentErrorPayload {
+  const payload: AgentErrorPayload = {
+    code: error.code,
+    message: error.message,
+    retryable: error.retryable,
+  };
+  if (
+    "provider" in error
+    && typeof error.provider === "string"
+    && isLocalAgentProvider(error.provider)
+  ) payload.provider = error.provider;
+  if ("agentId" in error && typeof error.agentId === "string") payload.agentId = error.agentId;
+  if ("workspaceId" in error && typeof error.workspaceId === "string") payload.workspaceId = error.workspaceId;
+  if ("operation" in error && typeof error.operation === "string") payload.operation = error.operation;
+  if ("target" in error && typeof error.target === "string") payload.target = error.target;
+  return payload;
+}
+
+export function providerErrorFromCause(input: {
+  provider: LocalAgentProvider;
+  agentId?: string;
+  operation: string;
+  cause: unknown;
+}): AgentProviderError | undefined {
+  if (isAgentProviderError(input.cause)) return input.cause;
+  if (isProgrammerDefect(input.cause)) return undefined;
+  if (isAbortError(input.cause)) {
+    return new AgentProviderCancelledError({
+      code: "PROVIDER_CANCELLED",
+      provider: input.provider,
+      agentId: input.agentId,
+      operation: input.operation,
+      retryable: false,
+      cause: input.cause,
+      message: `${displayProvider(input.provider)} agent turn was cancelled.`,
+    });
+  }
+  if (isUnavailableCause(input.cause)) {
+    return new AgentProviderUnavailableError({
+      code: "PROVIDER_UNAVAILABLE",
+      provider: input.provider,
+      agentId: input.agentId,
+      operation: input.operation,
+      retryable: false,
+      cause: input.cause,
+      message: `${displayProvider(input.provider)} provider is unavailable.`,
+    });
+  }
+  return new AgentProviderExecutionError({
+    code: "PROVIDER_EXECUTION_ERROR",
+    provider: input.provider,
+    agentId: input.agentId,
+    operation: input.operation,
+    retryable: false,
+    cause: input.cause,
+    message: `${displayProvider(input.provider)} agent execution failed.`,
+  });
+}
+
+export function isProgrammerDefect(error: unknown): boolean {
+  return error instanceof TypeError
+    || error instanceof ReferenceError
+    || error instanceof SyntaxError;
+}
+
+function isAbortError(error: unknown): boolean {
+  return Boolean(
+    error
+      && typeof error === "object"
+      && "name" in error
+      && String((error as { name?: unknown }).name) === "AbortError",
+  );
+}
+
+function isUnavailableCause(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = "code" in error ? String((error as { code?: unknown }).code) : "";
+  return code === "ENOENT" || code === "ECONNREFUSED" || code === "ENOTFOUND";
+}
+
+function displayProvider(provider: LocalAgentProvider): string {
+  switch (provider) {
+    case "codex": return "Codex";
+    case "claude": return "Claude";
+    case "opencode": return "OpenCode";
+    case "pi": return "Pi";
+    case "cursor": return "Cursor";
+    case "copilot": return "Copilot";
+  }
+}
