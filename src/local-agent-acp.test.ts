@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
-import { resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import {
   AcpLocalAgentDriver,
   AcpRuntime,
   acpCommandArgs,
+  resolveAcpCommand,
   selectAcpPermissionOption,
 } from "./local-agent-acp.js";
 
@@ -252,6 +256,20 @@ assert.deepEqual(acpCommandArgs("copilot", { ...cachedContext, writeMode: "read_
 assert.deepEqual(acpCommandArgs("copilot", { ...cachedContext, writeMode: "full_access" }), [
   "--acp", "--no-sandbox", "--allow-all", "-C", resolvedProject,
 ]);
+
+if (process.platform !== "win32") {
+  const commandRoot = await mkdtemp(join(tmpdir(), "devspace-acp-command-test-"));
+  const candidate = join(commandRoot, "cursor-agent");
+  const marker = join(commandRoot, "executed");
+  try {
+    await writeFile(candidate, `#!/bin/sh\ntouch '${marker}'\nexit 0\n`, { mode: 0o700 });
+    await chmod(candidate, 0o700);
+    assert.equal(resolveAcpCommand("cursor", { PATH: commandRoot }), candidate);
+    assert.equal(existsSync(marker), false, "ACP command discovery must not execute PATH candidates");
+  } finally {
+    await rm(commandRoot, { recursive: true, force: true });
+  }
+}
 
 await resumedRuntime.close();
 await resumedRuntime.close();

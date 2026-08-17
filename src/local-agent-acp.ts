@@ -1,4 +1,6 @@
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { accessSync, constants } from "node:fs";
+import { createRequire } from "node:module";
 import { delimiter, resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { terminateProcessTree } from "./process-platform.js";
@@ -16,6 +18,9 @@ export type AcpProvider = "cursor" | "copilot";
 
 const MAX_ACP_QUEUE_ITEMS = 10_000;
 const MAX_ACP_STDERR_BYTES = 32 * 1024;
+const ACP_INITIALIZE_TIMEOUT_MS = 10_000;
+const require = createRequire(import.meta.url);
+const DEVSPACE_VERSION = readDevspaceVersion();
 
 const ACP_COMMANDS: Record<AcpProvider, [string, ...string[]]> = {
   cursor: ["cursor-agent", "acp"],
@@ -305,11 +310,15 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
         Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
       );
       connection = app.connect(stream) as unknown as AcpConnectionLike;
-      const init = await connection.agent.request(methods.agent.initialize, {
-        protocolVersion: 1,
-        clientInfo: { name: "DevSpace", version: "1.0.7" },
-        clientCapabilities: {},
-      });
+      const init = await withTimeout(
+        connection.agent.request(methods.agent.initialize, {
+          protocolVersion: 1,
+          clientInfo: { name: "DevSpace", version: DEVSPACE_VERSION },
+          clientCapabilities: {},
+        }),
+        ACP_INITIALIZE_TIMEOUT_MS,
+        `${this.provider} ACP initialize timed out.`,
+      );
       const capabilities = readAcpCapabilities(init);
       return new AcpRuntime({
         provider: this.provider,
@@ -375,16 +384,17 @@ export function resolveAcpCommand(
 ): string | undefined {
   const configured = provider === "cursor" ? env.CURSOR_COMMAND : env.COPILOT_COMMAND;
   const command = configured ?? ACP_COMMANDS[provider][0];
-  if (command.includes("/") || command.includes("\\")) return executableExists(command, env) ? command : undefined;
+  if (command.includes("/") || command.includes("\\")) return executableExists(command) ? command : undefined;
   const path = env.PATH;
   if (!path) return undefined;
   const extensions = process.platform === "win32"
-    ? (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)
+    ? ["", ...(env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)]
     : [""];
   for (const directory of path.split(delimiter)) {
+    if (!directory) continue;
     for (const extension of extensions) {
       const candidate = resolve(directory, `${command}${extension}`);
-      if (executableExists(candidate, env)) return candidate;
+      if (executableExists(candidate)) return candidate;
     }
   }
   return undefined;
@@ -565,16 +575,34 @@ function isWindowsShellCommand(command: string): boolean {
   return /\.(?:bat|cmd)$/i.test(command);
 }
 
-function executableExists(command: string, env: NodeJS.ProcessEnv): boolean {
-  const result = spawnSync(command, ["--version"], {
-    encoding: "utf8",
-    env,
-    shell: process.platform === "win32" && isWindowsShellCommand(command),
-    windowsHide: true,
-    timeout: 5_000,
+function executableExists(command: string): boolean {
+  try {
+    accessSync(command, process.platform === "win32" ? constants.F_OK : constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    timer.unref();
   });
-  const code = result.error && "code" in result.error ? result.error.code : undefined;
-  return code !== "ENOENT" && !result.error;
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function readDevspaceVersion(): string {
+  const packageJson = require("../package.json") as { version?: unknown };
+  if (typeof packageJson.version !== "string" || !packageJson.version) {
+    throw new Error("Unable to read DevSpace package version.");
+  }
+  return packageJson.version;
 }
 
 function readArray(value: unknown, key: string): unknown[] | undefined {
