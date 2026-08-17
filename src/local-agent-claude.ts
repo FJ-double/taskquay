@@ -164,7 +164,8 @@ export class ClaudeLocalAgentDriver implements LocalAgentDriver {
   ) {}
 
   runtimeKey(context: LocalAgentRuntimeContext): string {
-    return `claude:${context.agentId}`;
+    const authority = context.writeMode === "full_access" ? "full_access" : "restricted";
+    return `claude:${context.agentId}:${authority}`;
   }
 
   async createRuntime(context: LocalAgentRuntimeContext): Promise<LocalAgentRuntime> {
