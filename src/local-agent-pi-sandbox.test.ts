@@ -35,13 +35,20 @@ if (SandboxManager.isSupportedPlatform() && dependencies.errors.length === 0) {
 
     const bash = tools.get("bash");
     assert.ok(bash, "Pi sandbox extension registers a bash tool");
+    await bash.execute("bash-inside-write-test", {
+      command: `touch '${join(workspace, "inside.txt")}'`,
+    });
+    assert.equal(
+      existsSync(join(workspace, "inside.txt")),
+      true,
+      "sandboxed Pi bash can write inside the workspace",
+    );
     await assert.rejects(
-      bash.execute("bash-test", {
-        command: `touch '${join(workspace, "inside.txt")}'; touch '${outside}'`,
+      bash.execute("bash-outside-write-test", {
+        command: `touch '${outside}'`,
       }),
       /Read-only file system|Command exited with code/,
     );
-    assert.equal(existsSync(join(workspace, "inside.txt")), true);
     assert.equal(existsSync(outside), false, "sandboxed Pi bash cannot write outside the workspace");
 
     const read = tools.get("read");
