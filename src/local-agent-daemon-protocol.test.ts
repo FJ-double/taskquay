@@ -21,6 +21,7 @@ const request = decodeLocalAgentDaemonRequest({
   },
 });
 assert.equal(request.method, "agent.start");
+if (request.method !== "agent.start") throw new Error("expected agent.start request");
 assert.equal(request.params.writeMode, "read_only");
 assert.match(encodeLocalAgentDaemonRequest(request), /"method":"agent.start"/);
 
@@ -36,6 +37,7 @@ const whitespaceRequest = decodeLocalAgentDaemonRequest({
     workspaceRoot: "/tmp/project",
   },
 });
+if (whitespaceRequest.method !== "agent.start") throw new Error("expected agent.start request");
 assert.equal(whitespaceRequest.params.prompt, "  keep prompt whitespace  \n");
 
 assert.throws(

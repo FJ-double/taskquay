@@ -24,7 +24,7 @@ import {
   type LocalAgentDaemonPaths,
 } from "./local-agent-daemon-lifecycle.js";
 import type { RunOverrides, StartLocalAgentInput } from "./local-agent-manager.js";
-import type { LocalAgentListScope, LocalAgentRecord, LocalAgentWorkspaceScope } from "./local-agent-store.js";
+import type { LocalAgentRecord, LocalAgentWorkspaceScope } from "./local-agent-store.js";
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 8_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -87,7 +87,7 @@ export class LocalAgentClient {
     return result === null ? undefined : decodeAgentRecord(result);
   }
 
-  async list(scope: LocalAgentListScope): Promise<LocalAgentRecord[]> {
+  async list(scope: LocalAgentWorkspaceScope): Promise<LocalAgentRecord[]> {
     return decodeAgentRecordList(await this.request("agent.list", scope));
   }
 
