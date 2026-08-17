@@ -161,16 +161,16 @@ await assert.rejects(
   applicationErrorPool.run(applicationErrorDriver, {
     agentId: "agt_app_error",
     provider: "opencode",
-    workspace: "/tmp/project",
-  }, { prompt: "bad input", workspace: "/tmp/project" }),
+    workspaceRoot: "/tmp/project",
+  }, { prompt: "bad input", workspaceRoot: "/tmp/project" }),
   /server rejected invalid input/,
 );
 assert.equal(applicationErrorPool.size, 1, "ordinary provider errors must not evict a healthy server runtime");
 const recoveredApplicationTurn = await applicationErrorPool.run(applicationErrorDriver, {
   agentId: "agt_app_error",
   provider: "opencode",
-  workspace: "/tmp/project",
-}, { prompt: "valid input", workspace: "/tmp/project" });
+  workspaceRoot: "/tmp/project",
+}, { prompt: "valid input", workspaceRoot: "/tmp/project" });
 assert.equal(recoveredApplicationTurn.finalResponse, "ok");
 await applicationErrorPool.close();
 

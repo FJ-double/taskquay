@@ -228,13 +228,13 @@ const overlapRuntime = new AcpRuntime({
 let overlapSessionId: string | undefined;
 const firstOverlappingTurn = overlapRuntime.run({
   prompt: "first overlapping turn",
-  workspace: "/tmp/project",
+  workspaceRoot: "/tmp/project",
 }, { onSessionId: (sessionId) => { overlapSessionId = sessionId; } });
 await promptEntered;
 await assert.rejects(
   overlapRuntime.run({
     prompt: "second overlapping turn",
-    workspace: "/tmp/project",
+    workspaceRoot: "/tmp/project",
     providerSessionId: overlapSessionId,
   }),
   /already has an active turn/,
