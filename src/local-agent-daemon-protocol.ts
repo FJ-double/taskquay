@@ -177,8 +177,8 @@ export function decodeAgentRecord(value: unknown): LocalAgentRecord {
     thinking: optionalString(record?.thinking),
     providerSessionId: optionalString(record?.providerSessionId),
     status,
-    latestResponse: optionalString(record?.latestResponse),
-    error: optionalString(record?.error),
+    latestResponse: optionalContentString(record?.latestResponse),
+    error: optionalContentString(record?.error),
     createdAt: requiredString(record?.createdAt, "createdAt"),
     updatedAt: requiredString(record?.updatedAt, "updatedAt"),
   };
@@ -232,7 +232,7 @@ function decodeStartInput(value: unknown): StartLocalAgentInput {
   const record = asRecord(value);
   return {
     target: requiredString(record?.target, "target"),
-    prompt: requiredString(record?.prompt, "prompt"),
+    prompt: requiredContentString(record?.prompt, "prompt"),
     workspaceRoot: requiredString(record?.workspaceRoot, "workspaceRoot"),
     workspaceId: optionalString(record?.workspaceId),
     model: optionalString(record?.model),
@@ -246,7 +246,7 @@ function decodeContinueInput(value: unknown): { id: string; prompt: string; scop
   const overrides = asRecord(record?.overrides);
   return {
     id: requiredString(record?.id, "id"),
-    prompt: requiredString(record?.prompt, "prompt"),
+    prompt: requiredContentString(record?.prompt, "prompt"),
     scope: decodeWorkspaceScope(record?.scope),
     ...(overrides ? { overrides: {
       model: optionalString(overrides.model),
@@ -303,6 +303,12 @@ function requiredString(value: unknown, field: string): string {
   return result;
 }
 
+function requiredContentString(value: unknown, field: string): string {
+  const result = optionalContentString(value);
+  if (result === undefined) throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", `Missing ${field}.`);
+  return result;
+}
+
 function requiredInteger(value: unknown, field: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value)) {
     throw new LocalAgentDaemonProtocolError("INVALID_PROTOCOL", `Invalid ${field}.`);
@@ -314,6 +320,11 @@ function optionalString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed || undefined;
+}
+
+function optionalContentString(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  return value;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
