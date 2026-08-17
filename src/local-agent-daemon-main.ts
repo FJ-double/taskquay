@@ -32,7 +32,10 @@ const manager = new LocalAgentManager({
 const daemon = new LocalAgentDaemon({
   stateDir: paths.stateDir,
   manager,
-  onLockAcquired: () => { manager.reconcileActiveRuns(); },
+  onLockAcquired: () => {
+    const reconciled = manager.reconcileActiveRuns();
+    if (reconciled.isErr()) throw reconciled.error;
+  },
   onClosed: () => { if (!shuttingDown) process.exit(0); },
   idleShutdownMs: parseIdleShutdownMs(process.env.DEVSPACE_AGENTD_IDLE_TIMEOUT_MS),
 });
