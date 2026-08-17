@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -73,8 +73,9 @@ if (SandboxManager.isSupportedPlatform() && dependencies.errors.length === 0) {
     modeRef.value = "allowed";
 
     const envPath = join(workspace, ".env");
+    const resolvedEnvPath = join(realpathSync(workspace), ".env");
     assert.ok(
-      createPiSandboxConfig(workspace).filesystem.denyWrite.includes(envPath),
+      createPiSandboxConfig(workspace).filesystem.denyWrite.includes(resolvedEnvPath),
       "the process-global sandbox config protects workspace environment files on Windows too",
     );
     await writeFile(envPath, "before\n");

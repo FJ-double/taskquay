@@ -41,6 +41,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Pi sandbox dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y ripgrep bubblewrap socat
+
       - name: Typecheck
         run: npm run typecheck
 
