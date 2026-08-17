@@ -101,7 +101,10 @@ assert.deepEqual(sessions[0]?.model, { id: "model" });
 assert.equal(sessions[0]?.thinking, "high");
 assert.deepEqual(sessionIds, ["pi_session_1"]);
 assert.deepEqual(piToolsForWriteMode("allowed"), ["read", "grep", "find", "ls", "edit", "write", "bash"]);
-assert.ok(createPiSandboxConfig().filesystem.denyRead.some((path) => basename(path) === ".ssh"));
+assert.ok(
+  createPiSandboxConfig().filesystem.denyRead.some((path) => basename(path) === ".ssh"),
+  "sandbox config includes the protected-home read rule; enforcement is covered by local-agent-pi-sandbox.test.ts",
+);
 assert.deepEqual(sessions[0]?.activeTools, ["read", "grep", "find", "ls"]);
 assert.deepEqual(sessions[0]?.toolHistory, [
   ["read", "grep", "find", "ls"],

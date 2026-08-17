@@ -70,6 +70,8 @@ let sandboxInitialization: Promise<void> | undefined;
 let windowsSandboxWorkspace: string | undefined;
 let windowsSandboxQueue = Promise.resolve();
 let sandboxSessionCount = 0;
+let sandboxCommandCount = 0;
+const sandboxCommandWaiters = new Set<() => void>();
 const sessionStates = new WeakMap<object, PiSandboxSessionState>();
 
 export function createPiSandboxModeRef(value: PiSandboxWriteMode): PiSandboxModeRef {
@@ -87,11 +89,11 @@ export function createPiSandboxExtension(
 
     const localWrite = createWriteTool(workspace);
     const restrictedWrite = createWriteTool(workspace, { operations: createWriteOperations(workspace) });
-    pi.registerTool(dynamicTool(localWrite, restrictedWrite, modeRef));
+    pi.registerTool(dynamicTool(localWrite, restrictedWrite, modeRef, true));
 
     const localEdit = createEditTool(workspace);
     const restrictedEdit = createEditTool(workspace, { operations: createEditOperations(workspace) });
-    pi.registerTool(dynamicTool(localEdit, restrictedEdit, modeRef));
+    pi.registerTool(dynamicTool(localEdit, restrictedEdit, modeRef, true));
 
     const localGrep = createGrepTool(workspace);
     const restrictedGrep = createGrepTool(workspace, { operations: createGrepOperations(workspace) });
@@ -109,7 +111,7 @@ export function createPiSandboxExtension(
     const restrictedBash = createBashTool(workspace, {
       operations: createSandboxedBashOperations(),
     });
-    pi.registerTool(dynamicTool(localBash, restrictedBash, modeRef));
+    pi.registerTool(dynamicTool(localBash, restrictedBash, modeRef, true));
   };
 }
 
@@ -124,7 +126,9 @@ export function createPiSandboxConfig(workspace?: string): SandboxRuntimeConfig 
     filesystem: {
       denyRead: protectedHomePaths(),
       allowWrite: process.platform === "win32" && resolvedWorkspace ? [resolvedWorkspace] : [],
-      denyWrite: [],
+      denyWrite: resolvedWorkspace
+        ? [join(resolvedWorkspace, ".env"), join(resolvedWorkspace, ".env.local")]
+        : [],
       allowRead: [],
     },
   };
@@ -169,6 +173,8 @@ export async function releasePiSandboxSession(session: object): Promise<void> {
   state.acquired = false;
   sandboxSessionCount = Math.max(0, sandboxSessionCount - 1);
   if (sandboxSessionCount !== 0) return;
+  await waitForSandboxCommands();
+  if (sandboxSessionCount !== 0) return;
   const reset = async (): Promise<void> => {
     try {
       await SandboxManager.reset();
@@ -185,11 +191,16 @@ function dynamicTool<T extends { execute: (...args: any[]) => any }>(
   unrestricted: T,
   restricted: T,
   modeRef: PiSandboxModeRef,
+  writeCapable = false,
 ): T {
   return {
     ...restricted,
-    execute: (...args: Parameters<T["execute"]>) =>
-      (modeRef.value === "full_access" ? unrestricted : restricted).execute(...args),
+    execute: (...args: Parameters<T["execute"]>) => {
+      if (writeCapable && modeRef.value === "read_only") {
+        throw new Error("Pi read-only mode does not allow write-capable tools.");
+      }
+      return (modeRef.value === "full_access" ? unrestricted : restricted).execute(...args);
+    },
   } as T;
 }
 
@@ -277,7 +288,7 @@ function createLsOperations(workspace: string): LsOperations {
 
 function createSandboxedBashOperations(): BashOperations {
   return {
-    exec: async (command, cwd, options) => {
+    exec: (command, cwd, options) => withSandboxCommand(async () => {
       if (process.platform === "win32") {
         return enqueueWindowsSandbox(async () => {
           await ensureWindowsSandbox(cwd);
@@ -286,22 +297,28 @@ function createSandboxedBashOperations(): BashOperations {
       }
       await ensureSandboxInitialized();
       return runSandboxedCommand(command, cwd, options);
-    },
+    }),
   };
 }
 
 async function acquirePiSandbox(state: PiSandboxSessionState): Promise<void> {
   if (state.acquired) return;
-  if (process.platform === "win32") {
-    // Windows sandbox-runtime has process-global policy state. Serialize
-    // workspace changes with command execution so one session cannot reset
-    // another session's policy while its Bash command is running.
-    await enqueueWindowsSandbox(() => ensureWindowsSandbox(state.workspace));
-  } else {
-    await ensureSandboxInitialized();
-  }
   state.acquired = true;
   sandboxSessionCount += 1;
+  try {
+    if (process.platform === "win32") {
+      // Windows sandbox-runtime has process-global policy state. Serialize
+      // workspace changes with command execution so one session cannot reset
+      // another session's policy while its Bash command is running.
+      await enqueueWindowsSandbox(() => ensureWindowsSandbox(state.workspace));
+    } else {
+      await ensureSandboxInitialized();
+    }
+  } catch (error) {
+    state.acquired = false;
+    sandboxSessionCount = Math.max(0, sandboxSessionCount - 1);
+    throw error;
+  }
 }
 
 async function ensureSandboxInitialized(): Promise<void> {
@@ -444,32 +461,53 @@ function protectedHomePaths(): string[] {
 async function assertPiWorkspacePath(
   path: string,
   workspace: string,
-  forWrite = false,
+  _forWrite = false,
 ): Promise<string> {
   const resolvedWorkspace = resolveWorkspace(workspace);
   const absolutePath = resolve(path);
-  const boundaryPath = await resolveExistingBoundary(absolutePath, forWrite);
+  const { boundaryPath, suffix } = await resolveExistingBoundary(absolutePath);
   if (!isPathInsideRoot(boundaryPath, resolvedWorkspace)) {
     assertAllowedPath(boundaryPath, [resolvedWorkspace]);
   }
-  return absolutePath;
+  const operationPath = suffix ? resolve(boundaryPath, suffix) : boundaryPath;
+  if (!isPathInsideRoot(operationPath, resolvedWorkspace)) {
+    assertAllowedPath(operationPath, [resolvedWorkspace]);
+  }
+  return operationPath;
 }
 
-async function resolveExistingBoundary(path: string, forWrite: boolean): Promise<string> {
-  try {
-    return await realpath(path);
-  } catch {
-    if (!forWrite) return path;
-    let candidate = dirname(path);
-    while (candidate !== dirname(candidate)) {
-      try {
-        return await realpath(candidate);
-      } catch {
-        candidate = dirname(candidate);
-      }
+async function resolveExistingBoundary(path: string): Promise<{ boundaryPath: string; suffix: string }> {
+  let candidate = path;
+  for (;;) {
+    try {
+      return {
+        boundaryPath: await realpath(candidate),
+        suffix: relative(candidate, path),
+      };
+    } catch {
+      const parent = dirname(candidate);
+      if (parent === candidate) return { boundaryPath: candidate, suffix: relative(candidate, path) };
+      candidate = parent;
     }
-    return candidate;
   }
+}
+
+async function withSandboxCommand<T>(operation: () => Promise<T>): Promise<T> {
+  sandboxCommandCount += 1;
+  try {
+    return await operation();
+  } finally {
+    sandboxCommandCount = Math.max(0, sandboxCommandCount - 1);
+    if (sandboxCommandCount === 0) {
+      for (const resolveWaiter of sandboxCommandWaiters) resolveWaiter();
+      sandboxCommandWaiters.clear();
+    }
+  }
+}
+
+function waitForSandboxCommands(): Promise<void> {
+  if (sandboxCommandCount === 0) return Promise.resolve();
+  return new Promise((resolveWaiter) => sandboxCommandWaiters.add(resolveWaiter));
 }
 
 function resolveWorkspace(workspace: string): string {

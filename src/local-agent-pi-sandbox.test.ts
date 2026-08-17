@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
 import {
+  createPiSandboxConfig,
   createPiSandboxExtension,
   createPiSandboxModeRef,
   registerPiSandboxSession,
@@ -12,6 +13,10 @@ import {
 } from "./local-agent-pi-sandbox.js";
 
 const dependencies = await SandboxManager.checkDependenciesAsync();
+if (process.env.DEVSPACE_REQUIRE_PI_SANDBOX === "1") {
+  assert.equal(SandboxManager.isSupportedPlatform(), true, "Pi sandbox integration is required on this CI lane");
+  assert.deepEqual(dependencies.errors, [], "Pi sandbox dependencies must be available on this CI lane");
+}
 if (SandboxManager.isSupportedPlatform() && dependencies.errors.length === 0) {
   const root = await mkdtemp(join(tmpdir(), "devspace-pi-sandbox-test-"));
   const workspace = join(root, "workspace");
@@ -32,7 +37,7 @@ if (SandboxManager.isSupportedPlatform() && dependencies.errors.length === 0) {
     assert.ok(bash, "Pi sandbox extension registers a bash tool");
     await assert.rejects(
       bash.execute("bash-test", {
-        command: `touch ${join(workspace, "inside.txt")}; touch ${outside}`,
+        command: `touch '${join(workspace, "inside.txt")}'; touch '${outside}'`,
       }),
       /Read-only file system|Command exited with code/,
     );
@@ -44,6 +49,39 @@ if (SandboxManager.isSupportedPlatform() && dependencies.errors.length === 0) {
     await assert.rejects(
       read.execute("read-test", { path: outside }),
       /outside the allowed root|outside allowed roots|outside the workspace|not allowed/i,
+    );
+
+    const outsideDirectory = join(root, "outside-directory");
+    mkdirSync(outsideDirectory);
+    await writeFile(join(outsideDirectory, "secret.txt"), "secret");
+    const symlinkPath = join(workspace, "outside-link");
+    await symlink(outsideDirectory, symlinkPath, process.platform === "win32" ? "junction" : "dir");
+    await assert.rejects(
+      read.execute("symlink-read-test", { path: join(symlinkPath, "secret.txt") }),
+      /outside the allowed root|outside allowed roots|outside the workspace|not allowed/i,
+      "restricted Pi reads must resolve symlinks before enforcing the workspace boundary",
+    );
+
+    const write = tools.get("write");
+    assert.ok(write, "Pi sandbox extension registers a write tool");
+    modeRef.value = "read_only";
+    assert.throws(
+      () => write.execute("read-only-write-test", { path: join(workspace, "blocked.txt"), content: "blocked" }),
+      /read-only mode/,
+      "read-only mode rejects write-capable tools even if a provider attempts to invoke one",
+    );
+    modeRef.value = "allowed";
+
+    const envPath = join(workspace, ".env");
+    assert.ok(
+      createPiSandboxConfig(workspace).filesystem.denyWrite.includes(envPath),
+      "the process-global sandbox config protects workspace environment files on Windows too",
+    );
+    await writeFile(envPath, "before\n");
+    await assert.rejects(
+      bash.execute("env-write-test", { command: `printf 'after\\n' > '${envPath}'` }),
+      /Read-only file system|Command exited with code/,
+      "sandboxed Pi bash cannot overwrite protected workspace environment files",
     );
   } finally {
     await releasePiSandboxSession(session);
