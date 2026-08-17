@@ -116,7 +116,17 @@ export class AgentStoreError extends TaggedError("AgentStoreError")<{
   retryable: boolean;
   cause: unknown;
   message: string;
-}>() {}
+}>() {
+  constructor(operation: string, cause: unknown) {
+    super({
+      code: "AGENT_STORE_ERROR",
+      operation,
+      retryable: false,
+      cause,
+      message: `Subagent persistence operation failed: ${operation}.`,
+    });
+  }
+}
 
 export type AgentManagerError =
   | AgentTargetError

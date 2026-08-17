@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
+import { Result, type Result as BetterResult } from "better-result";
 import { openDatabase, type DatabaseHandle } from "./db/client.js";
+import { AgentStoreError } from "./local-agent-errors.js";
 
 export type LocalAgentStatus = "starting" | "running" | "idle" | "error" | "stopped";
 
@@ -16,6 +18,8 @@ export interface LocalAgentRecord {
   status: LocalAgentStatus;
   latestResponse?: string;
   error?: string;
+  errorCode?: string;
+  errorRetryable?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -51,6 +55,8 @@ interface LocalAgentRow {
   status: string;
   latest_response: string | null;
   error: string | null;
+  error_code: string | null;
+  error_retryable: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -95,6 +101,13 @@ export class LocalAgentStore {
     }
 
     return rows.map(rowToLocalAgentRecord);
+  }
+
+  listResult(scope: LocalAgentListScope = {}): BetterResult<LocalAgentRecord[], AgentStoreError> {
+    return Result.try({
+      try: () => this.list(scope),
+      catch: (cause) => new AgentStoreError("list", cause),
+    });
   }
 
   create(input: CreateLocalAgentRecordInput): LocalAgentRecord {
@@ -143,6 +156,13 @@ export class LocalAgentStore {
     return record;
   }
 
+  createResult(input: CreateLocalAgentRecordInput): BetterResult<LocalAgentRecord, AgentStoreError> {
+    return Result.try({
+      try: () => this.create(input),
+      catch: (cause) => new AgentStoreError("create", cause),
+    });
+  }
+
   getById(id: string): LocalAgentRecord | undefined {
     const exact = this.database.sqlite
       .prepare(
@@ -152,6 +172,13 @@ export class LocalAgentStore {
       )
       .get(id) as LocalAgentRow | undefined;
     return exact ? rowToLocalAgentRecord(exact) : undefined;
+  }
+
+  getByIdResult(id: string): BetterResult<LocalAgentRecord | undefined, AgentStoreError> {
+    return Result.try({
+      try: () => this.getById(id),
+      catch: (cause) => new AgentStoreError("get", cause),
+    });
   }
 
   /**
@@ -185,6 +212,8 @@ export class LocalAgentStore {
           status = ?,
           latest_response = ?,
           error = ?,
+          error_code = ?,
+          error_retryable = ?,
           updated_at = ?
          where id = ?`,
       )
@@ -199,6 +228,8 @@ export class LocalAgentStore {
         updated.status,
         updated.latestResponse ?? null,
         updated.error ?? null,
+        updated.errorCode ?? null,
+        updated.errorRetryable === undefined ? null : String(updated.errorRetryable),
         updated.updatedAt,
         updated.id,
       );
@@ -206,16 +237,35 @@ export class LocalAgentStore {
     return updated;
   }
 
+  updateResult(
+    id: string,
+    patch: Partial<Omit<LocalAgentRecord, "id" | "createdAt">>,
+  ): BetterResult<LocalAgentRecord, AgentStoreError> {
+    return Result.try({
+      try: () => this.update(id, patch),
+      catch: (cause) => new AgentStoreError("update", cause),
+    });
+  }
+
   reconcileActiveRuns(message = "DevSpace restarted while this agent turn was running."): number {
     const now = new Date().toISOString();
     const result = this.database.sqlite
       .prepare(
         `update local_agent_sessions
-         set status = 'error', error = ?, updated_at = ?
+         set status = 'error', error = ?, error_code = 'DAEMON_UNAVAILABLE', error_retryable = 'true', updated_at = ?
          where status in ('starting', 'running')`,
       )
       .run(message, now);
     return Number(result.changes);
+  }
+
+  reconcileActiveRunsResult(
+    message = "DevSpace restarted while this agent turn was running.",
+  ): BetterResult<number, AgentStoreError> {
+    return Result.try({
+      try: () => this.reconcileActiveRuns(message),
+      catch: (cause) => new AgentStoreError("reconcile_active_runs", cause),
+    });
   }
 
   close(): void {
@@ -241,9 +291,17 @@ function rowToLocalAgentRecord(row: LocalAgentRow): LocalAgentRecord {
     status: readStatus(row.status),
     latestResponse: row.latest_response ?? undefined,
     error: row.error ?? undefined,
+    errorCode: row.error_code ?? undefined,
+    errorRetryable: readOptionalBoolean(row.error_retryable),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function readOptionalBoolean(value: string | null): boolean | undefined {
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return undefined;
 }
 
 function readStatus(status: string): LocalAgentStatus {
