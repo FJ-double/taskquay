@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -7,6 +7,7 @@ import {
   CodexLocalAgentDriver,
   codexCommandEnvironment,
   parseCodexVersion,
+  resolveCodexCommand,
   sandboxFor,
 } from "./local-agent-codex.js";
 
@@ -34,6 +35,22 @@ assert.equal(
 
 if (process.platform !== "win32") {
   const root = await mkdtemp(join(tmpdir(), "devspace-codex-app-server-test-"));
+  const badBin = join(root, "bad-bin");
+  const goodBin = join(root, "good-bin");
+  await mkdir(badBin);
+  await mkdir(goodBin);
+  const badCandidate = join(badBin, "codex");
+  const goodCandidate = join(goodBin, "codex");
+  await writeFile(badCandidate, "#!/bin/sh\nexit 1\n", { mode: 0o700 });
+  await writeFile(goodCandidate, "#!/bin/sh\necho 'codex-cli 9.8.7'\n", { mode: 0o700 });
+  await chmod(badCandidate, 0o700);
+  await chmod(goodCandidate, 0o700);
+  assert.deepEqual(
+    resolveCodexCommand({ PATH: `${badBin}:${goodBin}` }),
+    { executable: goodCandidate, version: "9.8.7" },
+    "command resolution must skip candidates whose version probe exits non-zero",
+  );
+
   const command = join(root, "fake-codex");
   await writeFile(command, `#!/usr/bin/env node
 import readline from "node:readline";

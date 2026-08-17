@@ -43,7 +43,7 @@ export function resolveCodexCommand(env: NodeJS.ProcessEnv = process.env): Resol
     });
     const code = result.error && "code" in result.error ? result.error.code : undefined;
     if (code === "ENOENT") continue;
-    if (result.status !== 0 && result.error) continue;
+    if (result.error || result.status !== 0) continue;
     return { executable: candidate, version: parseCodexVersion(result.stdout) };
   }
   return undefined;
@@ -271,6 +271,7 @@ class CodexAppServerRpc {
     private readonly version?: string,
   ) {
     createInterface({ input: child.stdout, crlfDelay: Infinity }).on("line", (line) => this.handleLine(line));
+    child.stdin.on("error", (error) => this.fail(error));
     child.stderr.on("data", (chunk: Buffer) => {
       this.stderr = appendTail(this.stderr, chunk.toString("utf8"), MAX_STDERR_BYTES);
     });
