@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type {
   LocalAgentDriver,
   LocalAgentRunCallbacks,
@@ -20,17 +21,18 @@ const PI_WORKSPACE_TOOLS = ["read", "grep", "find", "ls", "edit", "write", "bash
 const PI_FULL_ACCESS_TOOLS = [...PI_WORKSPACE_TOOLS] as const;
 const MAX_PI_EVENTS = 10_000;
 
-export interface PiSessionLike {
-  readonly sessionId: string;
-  readonly state: { messages: unknown[] };
-  readonly modelRegistry?: { find(provider: string, modelId: string): unknown };
-  prompt(text: string): Promise<void>;
-  subscribe(listener: (event: unknown) => void): () => void;
-  setActiveToolsByName(toolNames: string[]): void;
-  setModel?(model: unknown): Promise<void>;
-  setThinkingLevel?(level: unknown): void;
-  dispose(): void;
-}
+export type PiSessionLike = Pick<
+  AgentSession,
+  | "sessionId"
+  | "messages"
+  | "modelRegistry"
+  | "prompt"
+  | "subscribe"
+  | "setActiveToolsByName"
+  | "setModel"
+  | "setThinkingLevel"
+  | "dispose"
+>;
 
 export type PiSessionFactory = (
   context: LocalAgentRuntimeContext,
@@ -60,14 +62,14 @@ export class PiSessionRuntime implements LocalAgentRuntime {
     await callbacks?.onSessionId?.(this.session.sessionId);
     await this.applyOverrides(input);
     this.events = [];
-    const messageStart = this.session.state.messages.length;
+    const messageStart = this.session.messages.length;
     this.collectingEvents = true;
     try {
       await this.session.prompt(input.prompt);
     } finally {
       this.collectingEvents = false;
     }
-    const currentMessages = this.session.state.messages.slice(messageStart);
+    const currentMessages = this.session.messages.slice(messageStart);
     const finalResponse = extractPiFinalResponse({ messages: currentMessages });
     if (!finalResponse) {
       const providerError = extractPiProviderError(this.events) || extractPiProviderError(currentMessages);
@@ -104,13 +106,13 @@ export class PiSessionRuntime implements LocalAgentRuntime {
   private async applyOverrides(input: LocalAgentRunInput): Promise<void> {
     await updatePiSandboxSession(this.session, input.workspace, input.writeMode ?? "allowed");
     this.session.setActiveToolsByName([...piToolsForWriteMode(input.writeMode)]);
-    if (input.model && this.session.modelRegistry && this.session.setModel) {
+    if (input.model) {
       const model = resolvePiModel(this.session.modelRegistry, input.model);
       if (!model) throw new Error(`Pi model not found: ${input.model}`);
-      await this.session.setModel(model);
+      await this.session.setModel(model as never);
     }
-    if (input.thinking && this.session.setThinkingLevel) {
-      this.session.setThinkingLevel(input.thinking);
+    if (input.thinking) {
+      this.session.setThinkingLevel(input.thinking as never);
     }
   }
 }
@@ -180,7 +182,7 @@ async function defaultPiSessionFactory(
       // broaden active tools without recreating the session.
       tools: [...PI_FULL_ACCESS_TOOLS],
     });
-    session = result.session as unknown as PiSessionLike;
+    session = result.session;
     await registerPiSandboxSession(session, input.workspace, modeRef, input.writeMode ?? "allowed");
     session.setActiveToolsByName([...piToolsForWriteMode(input.writeMode)]);
     return session;

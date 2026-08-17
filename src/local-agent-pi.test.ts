@@ -12,8 +12,8 @@ import type { LocalAgentRuntimeContext } from "./local-agent-runtime.js";
 
 class FakePiSession implements PiSessionLike {
   readonly sessionId = "pi_session_1";
-  readonly state = { messages: [] as unknown[] };
-  readonly modelRegistry = { find: () => ({ id: "model" }) };
+  readonly messages: any[] = [];
+  readonly modelRegistry = { find: () => ({ id: "model" }) } as PiSessionLike["modelRegistry"];
   private readonly listeners = new Set<(event: unknown) => void>();
   disposeCount = 0;
   model?: unknown;
@@ -26,7 +26,7 @@ class FakePiSession implements PiSessionLike {
       role: "assistant",
       content: [{ type: "text", text: `response:${text}` }],
     };
-    this.state.messages.push(message);
+    this.messages.push(message);
     for (const listener of this.listeners) listener({ type: "agent_end" });
   }
 
@@ -35,7 +35,7 @@ class FakePiSession implements PiSessionLike {
     return () => this.listeners.delete(listener);
   }
 
-  async setModel(model: unknown): Promise<void> {
+  async setModel(model: any): Promise<void> {
     this.model = model;
   }
 
@@ -44,7 +44,7 @@ class FakePiSession implements PiSessionLike {
     this.toolHistory.push([...toolNames]);
   }
 
-  setThinkingLevel(level: unknown): void {
+  setThinkingLevel(level: any): void {
     this.thinking = level;
   }
 
