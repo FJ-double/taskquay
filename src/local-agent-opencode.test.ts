@@ -206,7 +206,7 @@ const deadRuntime = await recoveringPool.run(recoveringDriver, {
   workspaceRoot: "/tmp/project",
 });
 assert.equal(deadRuntime.isErr(), true);
-if (deadRuntime.isErr()) assert.equal(deadRuntime.error.code, "PROVIDER_EXECUTION_ERROR");
+if (deadRuntime.isErr()) assert.equal(deadRuntime.error.code, "PROVIDER_UNAVAILABLE");
 assert.equal(recoveringPool.size, 0, "a failed health check removes the dead runtime immediately");
 await recoveringPool.run(recoveringDriver, {
   agentId: "agt_dead",

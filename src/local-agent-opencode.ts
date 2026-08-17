@@ -83,7 +83,17 @@ export class OpencodeRuntime implements LocalAgentRuntime {
             items: [promptResult, messages],
           };
         } catch (error) {
-          if (isOpenCodeTransportFailure(error)) this.alive = false;
+          if (isOpenCodeTransportFailure(error)) {
+            this.alive = false;
+            throw new AgentProviderUnavailableError({
+              code: "PROVIDER_UNAVAILABLE",
+              provider: this.provider,
+              operation: "run",
+              retryable: true,
+              cause: error,
+              message: "OpenCode provider is unavailable.",
+            });
+          }
           throw error;
         }
       },
