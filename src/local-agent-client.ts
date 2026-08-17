@@ -3,17 +3,13 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createConnection } from "node:net";
 import { fileURLToPath } from "node:url";
-import { Result, type Result as BetterResult } from "better-result";
+import { matchError, Result, type Result as BetterResult } from "better-result";
 import type { ServerConfig } from "./config.js";
 import {
-  AgentConflictError,
   AgentDaemonInvalidResponseError,
   AgentDaemonStartupError,
   AgentDaemonTimeoutError,
   AgentDaemonUnavailableError,
-  AgentScopeError,
-  AgentStoreError,
-  AgentTargetError,
   agentErrorFromPayload,
   isAgentDaemonError,
   isProgrammerDefect,
@@ -224,8 +220,7 @@ export class LocalAgentClient {
       return error.code === "DAEMON_UNAVAILABLE" ? Result.ok(undefined) : Result.err(error);
     }
     const decoded = decodeValue(response.value.result, "hello", decodeDaemonStatus);
-    if (decoded.isErr()) return decoded;
-    return Result.ok(decoded.value.state === "ready" ? decoded.value : undefined);
+    return decoded.map((status) => status.state === "ready" ? status : undefined);
   }
 
   private async request<M extends LocalAgentDaemonRequest["method"]>(
@@ -444,8 +439,7 @@ function decodeRequestResult<T, E extends LocalAgentError>(
   operation: string,
   decode: (value: unknown) => T,
 ): BetterResult<T, E | AgentDaemonInvalidResponseError> {
-  if (result.isErr()) return result;
-  return decodeValue(result.value, operation, decode);
+  return result.andThen((value) => decodeValue(value, operation, decode));
 }
 
 function decodeValue<T>(
@@ -484,20 +478,34 @@ function isRequestError(
   method: LocalAgentDaemonRequest["method"],
   error: LocalAgentError,
 ): boolean {
-  if (isAgentDaemonError(error)) return true;
+  const category = matchError(error, {
+    AgentTargetError: () => "target" as const,
+    AgentConflictError: () => "conflict" as const,
+    AgentScopeError: () => "scope" as const,
+    AgentProviderUnavailableError: () => "provider" as const,
+    AgentProviderCancelledError: () => "provider" as const,
+    AgentProviderProtocolError: () => "provider" as const,
+    AgentProviderExecutionError: () => "provider" as const,
+    AgentDaemonUnavailableError: () => "daemon" as const,
+    AgentDaemonStartupError: () => "daemon" as const,
+    AgentDaemonTimeoutError: () => "daemon" as const,
+    AgentDaemonProtocolMismatchError: () => "daemon" as const,
+    AgentDaemonInvalidResponseError: () => "daemon" as const,
+    AgentDaemonInternalError: () => "daemon" as const,
+    AgentStoreError: () => "store" as const,
+  });
+  if (category === "daemon") return true;
   switch (method) {
     case "agent.start":
     case "agent.continue":
-      return AgentTargetError.is(error)
-        || AgentScopeError.is(error)
-        || AgentConflictError.is(error)
-        || AgentStoreError.is(error);
+      return category === "target"
+        || category === "scope"
+        || category === "conflict"
+        || category === "store";
     case "agent.get":
-      return AgentTargetError.is(error)
-        || AgentScopeError.is(error)
-        || AgentStoreError.is(error);
+      return category === "target" || category === "scope" || category === "store";
     case "agent.list":
-      return AgentScopeError.is(error) || AgentStoreError.is(error);
+      return category === "scope" || category === "store";
     case "hello":
     case "daemon.status":
     case "daemon.stop":
