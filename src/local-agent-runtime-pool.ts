@@ -76,7 +76,7 @@ export class LocalAgentRuntimePool {
     input: LocalAgentRunInput,
     inputCallbacks?: LocalAgentRunCallbacks,
   ): Promise<BetterResult<LocalAgentRunResult, AgentProviderError>> {
-    if (this.closing) throw new Error("Local agent runtime pool is closed.");
+    if (this.closing) return Result.err(poolClosedError(driver, context));
 
     let acquired = await this.acquire(driver, context);
     if (acquired.isErr()) return acquired;
@@ -113,7 +113,7 @@ export class LocalAgentRuntimePool {
           await existing.releasePromise;
           continue;
         }
-        if (entry.closing) throw new Error("Local agent runtime is closing.");
+        if (entry.closing) throw poolClosedError(driver, context);
         const session = existing ?? { activeRuns: 0, lastUsedAt: this.now() };
         sessionIds.add(providerSessionId);
         session.activeRuns += 1;
@@ -255,7 +255,7 @@ export class LocalAgentRuntimePool {
         continue;
       }
 
-      if (this.closing) throw new Error("Local agent runtime pool is closed.");
+      if (this.closing) return Result.err(poolClosedError(driver, context));
 
       let entry!: RuntimeEntry;
       const createPromise = Promise.resolve()
@@ -297,7 +297,7 @@ export class LocalAgentRuntimePool {
       if (created.isErr()) return created;
       if (this.closing || entry.closing || this.entries.get(key) !== entry) {
         await this.closeEntry(entry, "pool_shutdown_during_creation");
-        throw new Error("Local agent runtime pool is closed.");
+        return Result.err(poolClosedError(driver, context));
       }
       return Result.ok(entry);
     }
@@ -466,6 +466,20 @@ export class LocalAgentRuntimePool {
   ): void {
     this.logger?.(level, event, fields);
   }
+}
+
+function poolClosedError(
+  driver: LocalAgentDriver,
+  context: LocalAgentRuntimeContext,
+): AgentProviderUnavailableError {
+  return new AgentProviderUnavailableError({
+    code: "PROVIDER_UNAVAILABLE",
+    provider: driver.provider,
+    agentId: context.agentId,
+    operation: "acquire_runtime",
+    retryable: true,
+    message: "Local agent runtime pool is closed.",
+  });
 }
 
 function hashRuntimeKey(key: string): string {

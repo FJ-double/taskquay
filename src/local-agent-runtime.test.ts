@@ -219,8 +219,20 @@ await new Promise<void>((resolve) => setImmediate(resolve));
 const pendingClose = racePool.close();
 resolveCreation(Result.ok(raceRuntime));
 await pendingClose;
-await assert.rejects(pendingRun, /closed/);
+const closedDuringCreation = await pendingRun;
+assert.equal(closedDuringCreation.isErr(), true);
+if (closedDuringCreation.isErr()) {
+  assert.equal(closedDuringCreation.error.code, "PROVIDER_UNAVAILABLE");
+  assert.equal(closedDuringCreation.error.retryable, true);
+}
 assert.equal(raceRuntime.closeCount, 1, "a runtime created during shutdown is closed");
+
+const afterClose = await racePool.run(raceDriver, context, input);
+assert.equal(afterClose.isErr(), true);
+if (afterClose.isErr()) {
+  assert.equal(afterClose.error.code, "PROVIDER_UNAVAILABLE");
+  assert.equal(afterClose.error.retryable, true);
+}
 
 {
   const creationStarted = deferred<void>();
