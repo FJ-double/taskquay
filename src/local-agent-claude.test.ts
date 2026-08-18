@@ -192,7 +192,11 @@ if (execution.isErr()) assert.equal(execution.error.code, "PROVIDER_EXECUTION_ER
 const brokenStreamQuery: ClaudeQueryLike = {
   [Symbol.asyncIterator]() {
     return {
-      next: async () => { throw new Error("stream disconnected"); },
+      next: async () => {
+        throw Object.assign(new TypeError("fetch failed"), {
+          cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1"), { code: "ECONNREFUSED" }),
+        });
+      },
     };
   },
   close() {},

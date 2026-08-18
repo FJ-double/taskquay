@@ -356,18 +356,6 @@ export function providerErrorFromCause(input: {
 }): AgentProviderError | undefined {
   if (isAgentProviderError(input.cause)) return input.cause;
   if (isLocalAgentError(input.cause)) return undefined;
-  if (isProgrammerDefect(input.cause)) return undefined;
-  if (isAbortError(input.cause)) {
-    return new AgentProviderCancelledError({
-      code: "PROVIDER_CANCELLED",
-      provider: input.provider,
-      agentId: input.agentId,
-      operation: input.operation,
-      retryable: false,
-      cause: input.cause,
-      message: `${displayProvider(input.provider)} agent turn was cancelled.`,
-    });
-  }
   const unavailable = unavailableCauseKind(input.cause);
   if (unavailable) {
     return new AgentProviderUnavailableError({
@@ -378,6 +366,18 @@ export function providerErrorFromCause(input: {
       retryable: unavailable === "transient",
       cause: input.cause,
       message: `${displayProvider(input.provider)} provider is unavailable.`,
+    });
+  }
+  if (isProgrammerDefect(input.cause)) return undefined;
+  if (isAbortError(input.cause)) {
+    return new AgentProviderCancelledError({
+      code: "PROVIDER_CANCELLED",
+      provider: input.provider,
+      agentId: input.agentId,
+      operation: input.operation,
+      retryable: false,
+      cause: input.cause,
+      message: `${displayProvider(input.provider)} agent turn was cancelled.`,
     });
   }
   return new AgentProviderExecutionError({
@@ -412,6 +412,7 @@ export async function captureAgentProviderResult<T>(input: {
 }
 
 export function isProgrammerDefect(error: unknown): boolean {
+  if (unavailableCauseKind(error)) return false;
   return error instanceof TypeError
     || error instanceof ReferenceError
     || error instanceof SyntaxError
@@ -429,10 +430,15 @@ function isAbortError(error: unknown): boolean {
 }
 
 function unavailableCauseKind(error: unknown): "permanent" | "transient" | undefined {
-  if (!error || typeof error !== "object") return undefined;
-  const code = "code" in error ? String((error as { code?: unknown }).code) : "";
-  if (code === "ENOENT") return "permanent";
-  if (code === "ECONNREFUSED" || code === "ENOTFOUND") return "transient";
+  const seen = new Set<object>();
+  let current = error;
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    const code = "code" in current ? String((current as { code?: unknown }).code) : "";
+    if (code === "ENOENT") return "permanent";
+    if (code === "ECONNREFUSED" || code === "ENOTFOUND") return "transient";
+    current = "cause" in current ? (current as { cause?: unknown }).cause : undefined;
+  }
   return undefined;
 }
 
