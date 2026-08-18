@@ -105,32 +105,34 @@ export class LocalAgentRuntimePool {
     this.clearIdleTimer(entry);
     entry.activeRuns += 1;
     const sessionIds = new Set<string>();
-    const reserveSession = async (providerSessionId: string): Promise<void> => {
-      if (!providerSessionId || sessionIds.has(providerSessionId)) return;
+    const reserveSession = async (providerSessionId: string): Promise<AgentProviderError | undefined> => {
+      if (!providerSessionId || sessionIds.has(providerSessionId)) return undefined;
       while (true) {
         const existing = entry.sessions.get(providerSessionId);
         if (existing?.releasePromise) {
           await existing.releasePromise;
           continue;
         }
-        if (entry.closing) throw poolClosedError(driver, context);
+        if (entry.closing) return poolClosedError(driver, context);
         const session = existing ?? { activeRuns: 0, lastUsedAt: this.now() };
         sessionIds.add(providerSessionId);
         session.activeRuns += 1;
         session.lastUsedAt = this.now();
         entry.sessions.set(providerSessionId, session);
-        return;
+        return undefined;
       }
     };
     const callbacks: LocalAgentRunCallbacks = {
       onSessionId: async (providerSessionId) => {
-        await reserveSession(providerSessionId);
+        const reservationError = await reserveSession(providerSessionId);
+        if (reservationError) throw reservationError;
         await inputCallbacks?.onSessionId?.(providerSessionId);
       },
     };
     const startedAt = this.now();
     try {
-      await reserveSession(input.providerSessionId ?? "");
+      const inputReservationError = await reserveSession(input.providerSessionId ?? "");
+      if (inputReservationError) return Result.err(inputReservationError);
       const result = await runtime.run(input, callbacks);
       if (result.isErr()) {
         if (!runtime.isAlive()) {
@@ -155,7 +157,8 @@ export class LocalAgentRuntimePool {
         }
         return result;
       }
-      await reserveSession(result.value.providerSessionId ?? "");
+      const outputReservationError = await reserveSession(result.value.providerSessionId ?? "");
+      if (outputReservationError) return Result.err(outputReservationError);
       return result;
     } catch (error) {
       if (!runtime.isAlive()) {

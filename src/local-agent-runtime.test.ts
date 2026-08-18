@@ -169,11 +169,23 @@ await shutdownReleasePool.run(shutdownReleaseDriver, context, input);
 shutdownReleaseRuntime.releaseBlocked = true;
 const shutdownRelease = shutdownReleasePool.evictIdle(30);
 await waitFor(() => shutdownReleaseRuntime.releaseStarted);
+const shutdownReuse = shutdownReleasePool.run(
+  shutdownReleaseDriver,
+  context,
+  { ...input, providerSessionId: "thread_1", prompt: "reuse during shutdown" },
+);
+await new Promise<void>((resolve) => setImmediate(resolve));
 const shutdown = shutdownReleasePool.close();
 await new Promise<void>((resolve) => setImmediate(resolve));
 assert.equal(shutdownReleaseRuntime.closeCount, 0, "shutdown waits for an in-flight session release");
 shutdownReleaseRuntime.finishSessionRelease();
 await shutdownRelease;
+const shutdownReuseResult = await shutdownReuse;
+assert.equal(shutdownReuseResult.isErr(), true);
+if (shutdownReuseResult.isErr()) {
+  assert.equal(shutdownReuseResult.error.code, "PROVIDER_UNAVAILABLE");
+  assert.equal(shutdownReuseResult.error.retryable, true);
+}
 await shutdown;
 assert.equal(shutdownReleaseRuntime.closeCount, 1);
 
