@@ -369,17 +369,47 @@ async function sendRawRequest(
   const connected = onceSocket(socket, "connect");
   let buffer = "";
   const response = new Promise<RawDaemonResponse>((resolveResponse, rejectResponse) => {
-    socket.on("data", (chunk: string | Buffer) => {
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timeout);
+      socket.off("data", onData);
+      socket.off("error", onError);
+      socket.off("close", onClose);
+      socket.off("end", onEnd);
+    };
+    const settle = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      action();
+    };
+    const onData = (chunk: string | Buffer) => {
       buffer += chunk.toString();
       const newline = buffer.indexOf("\n");
       if (newline === -1) return;
       try {
-        resolveResponse(JSON.parse(buffer.slice(0, newline)) as RawDaemonResponse);
+        const parsed = JSON.parse(buffer.slice(0, newline)) as RawDaemonResponse;
+        settle(() => resolveResponse(parsed));
       } catch (error) {
-        rejectResponse(error);
+        settle(() => rejectResponse(error));
       }
-    });
-    socket.once("error", rejectResponse);
+    };
+    const onError = (error: Error) => settle(() => rejectResponse(error));
+    const onClose = () => settle(() => rejectResponse(
+      new Error("Daemon closed the connection before returning a response."),
+    ));
+    const onEnd = () => settle(() => rejectResponse(
+      new Error("Daemon ended the connection before returning a response."),
+    ));
+    const timeout = setTimeout(() => settle(() => rejectResponse(
+      new Error("Daemon did not return a response within 2000ms."),
+    )), 2_000);
+    timeout.unref();
+
+    socket.on("data", onData);
+    socket.once("error", onError);
+    socket.once("close", onClose);
+    socket.once("end", onEnd);
   });
   await connected;
   if (payload !== undefined) socket.write(payload);
