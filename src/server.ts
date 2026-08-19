@@ -276,6 +276,7 @@ const workspaceLocalAgentProviderOutputSchema = z.object({
   name: z.string(),
   available: z.boolean(),
   reason: z.string().optional(),
+  note: z.string().optional(),
 });
 
 const workspaceAvailableAgentsFileOutputSchema = z.object({

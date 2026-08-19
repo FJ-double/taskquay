@@ -319,8 +319,7 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
   runtimeKey(context: LocalAgentRuntimeContext): string {
     const command = this.resolveCommand() ?? ACP_COMMANDS[this.provider][0];
     const writeMode = context.writeMode ?? "allowed";
-    const workspace = writeMode === "full_access" ? "shared" : resolve(context.workspaceRoot);
-    return `acp:${this.provider}:${command}:${writeMode}:${workspace}`;
+    return `acp:${this.provider}:${command}:${writeMode}:${resolve(context.workspaceRoot)}`;
   }
 
   async createRuntime(context: LocalAgentRuntimeContext) {
