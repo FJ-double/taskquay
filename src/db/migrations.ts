@@ -27,6 +27,11 @@ const migrations: Migration[] = [
     name: "workspace-conversation-bindings",
     up: migrateWorkspaceConversationBindings,
   },
+  {
+    version: 5,
+    name: "local-agent-structured-errors",
+    up: migrateLocalAgentStructuredErrors,
+  },
 ];
 
 export function migrateDatabase(sqlite: Database.Database): void {
@@ -196,6 +201,11 @@ function migrateWorkspaceConversationBindings(sqlite: Database.Database): void {
     create index if not exists workspace_conversation_bindings_workspace_idx
       on workspace_conversation_bindings(workspace_session_id);
   `);
+}
+
+function migrateLocalAgentStructuredErrors(sqlite: Database.Database): void {
+  addColumnIfMissing(sqlite, "local_agent_sessions", "error_code", "text");
+  addColumnIfMissing(sqlite, "local_agent_sessions", "error_retryable", "text");
 }
 
 function addColumnIfMissing(
