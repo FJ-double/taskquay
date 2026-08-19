@@ -141,6 +141,7 @@ try {
     assert.doesNotMatch(output, /profile reviewer/);
     assert.doesNotMatch(output, new RegExp(other.id));
 
+    let commandFailure: unknown;
     try {
       await execFileAsync(
         "node",
@@ -160,19 +161,20 @@ try {
           },
         },
       );
-      assert.fail("structured CLI errors should exit non-zero");
     } catch (error) {
-      const stdout = (error as { stdout?: string }).stdout ?? "";
-      const payload = JSON.parse(stdout) as {
-        ok: boolean;
-        error: { code: string; message: string; retryable: boolean; target: string };
-      };
-      assert.equal(payload.ok, false);
-      assert.equal(payload.error.code, "UNKNOWN_TARGET");
-      assert.equal(payload.error.message, "Unknown subagent profile or provider: missing.");
-      assert.equal(payload.error.retryable, false);
-      assert.equal(payload.error.target, "missing");
+      commandFailure = error;
     }
+    assert.ok(commandFailure, "structured CLI errors should exit non-zero");
+    const stdout = (commandFailure as { stdout?: string }).stdout ?? "";
+    const payload = JSON.parse(stdout) as {
+      ok: boolean;
+      error: { code: string; message: string; retryable: boolean; target: string };
+    };
+    assert.equal(payload.ok, false);
+    assert.equal(payload.error.code, "UNKNOWN_TARGET");
+    assert.equal(payload.error.message, "Unknown subagent profile or provider: missing.");
+    assert.equal(payload.error.retryable, false);
+    assert.equal(payload.error.target, "missing");
   } finally {
     await new Promise<void>((resolveClose, rejectClose) => {
       daemon.close((error) => error ? rejectClose(error) : resolveClose());

@@ -129,6 +129,10 @@ assert.deepEqual(store.list({ workspaceRoot: join(root, "other") }), []);
   });
   assert.equal(upgradedRecord.errorCode, "DAEMON_TIMEOUT");
   assert.equal(upgradedRecord.errorRetryable, true);
+  const reloadedRecord = upgradedStore.getById("agt_legacy");
+  assert.equal(reloadedRecord?.error, "old error");
+  assert.equal(reloadedRecord?.errorCode, "DAEMON_TIMEOUT");
+  assert.equal(reloadedRecord?.errorRetryable, true);
 } finally {
   for (const store of stores) {
     store.close();

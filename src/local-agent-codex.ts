@@ -120,7 +120,7 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
       provider: this.provider,
       operation: "run",
       run: async (): Promise<LocalAgentRunResult> => {
-        if (!this.alive) {
+        if (!this.isAlive()) {
           throw new AgentProviderUnavailableError({
             code: "PROVIDER_UNAVAILABLE",
             provider: this.provider,

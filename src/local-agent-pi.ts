@@ -211,7 +211,16 @@ async function defaultPiSessionFactory(
   const modelRegistry = ModelRegistry.create(authStorage, join(agentDir, "models.json"));
   const sessionManager = await resolveSessionManager(SessionManager, input.workspaceRoot, input.providerSessionId);
   const model = input.model ? resolvePiModel(modelRegistry, input.model) : undefined;
-  if (input.model && !model) throw new Error(`Pi model not found: ${input.model}`);
+  if (input.model && !model) {
+    throw new AgentProviderProtocolError({
+      code: "PROVIDER_PROTOCOL_ERROR",
+      provider: "pi",
+      agentId: context.agentId,
+      operation: "configure_model",
+      retryable: false,
+      message: `Pi model not found: ${input.model}.`,
+    });
+  }
   const modeRef = createPiSandboxModeRef(input.writeMode ?? "allowed");
   const resourceLoader = new DefaultResourceLoader({
     cwd: input.workspaceRoot,
@@ -273,7 +282,15 @@ async function resolveSessionManager(
   if (!providerSessionId) return SessionManager.create(workspaceRoot);
   const sessions = await SessionManager.list(workspaceRoot);
   const match = sessions.find((session) => session.id === providerSessionId);
-  if (!match) throw new Error(`Pi session not found: ${providerSessionId}`);
+  if (!match) {
+    throw new AgentProviderProtocolError({
+      code: "PROVIDER_PROTOCOL_ERROR",
+      provider: "pi",
+      operation: "session",
+      retryable: false,
+      message: `Pi session not found: ${providerSessionId}.`,
+    });
+  }
   return SessionManager.open(match.path);
 }
 

@@ -217,6 +217,49 @@ const cleanupFailure = await cleanupPool.run(cleanupDriver, context, input);
 assert.equal(cleanupFailure.isErr(), true);
 if (cleanupFailure.isErr()) assert.equal(cleanupFailure.error.message, "provider failed");
 
+{
+  const deadRuntime = new FakeRuntime();
+  deadRuntime.alive = false;
+  deadRuntime.close = async () => { throw new Error("dead runtime cleanup failed"); };
+  const replacementRuntime = new FakeRuntime();
+  let attempts = 0;
+  const recoveryPool = new LocalAgentRuntimePool();
+  const recoveryDriver: LocalAgentDriver = {
+    provider: "codex",
+    runtimeKey: () => "dead-runtime-recovery",
+    createRuntime: async () => Result.ok(attempts++ === 0 ? deadRuntime : replacementRuntime),
+  };
+
+  const recovered = await recoveryPool.run(recoveryDriver, context, input);
+  assert.equal(recovered.isOk(), true, "cleanup failure does not hide successful runtime recovery");
+  assert.equal(attempts, 2);
+  await recoveryPool.close();
+}
+
+{
+  let closeDuringRun: Promise<void> | undefined;
+  let completedTurnPool!: LocalAgentRuntimePool;
+  class ClosingAfterTurnRuntime extends FakeRuntime {
+    override async run(runInput: LocalAgentRunInput) {
+      const result = await super.run(runInput);
+      closeDuringRun = completedTurnPool.close();
+      return result;
+    }
+  }
+  const completedTurnRuntime = new ClosingAfterTurnRuntime();
+  completedTurnPool = new LocalAgentRuntimePool();
+  const completedTurnDriver: LocalAgentDriver = {
+    provider: "codex",
+    runtimeKey: () => "completed-turn-during-close",
+    createRuntime: async () => Result.ok(completedTurnRuntime),
+  };
+
+  const completedTurn = await completedTurnPool.run(completedTurnDriver, context, input);
+  assert.equal(completedTurn.isOk(), true, "shutdown does not discard an already completed provider turn");
+  if (completedTurn.isOk()) assert.equal(completedTurn.value.finalResponse, "done:inspect");
+  await closeDuringRun;
+}
+
 let resolveCreation!: (runtime: BetterResult<LocalAgentRuntime, AgentProviderError>) => void;
 const creating = new Promise<BetterResult<LocalAgentRuntime, AgentProviderError>>((resolve) => { resolveCreation = resolve; });
 const raceRuntime = new FakeRuntime();

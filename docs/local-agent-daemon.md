@@ -62,6 +62,8 @@ Agent commands accept `--json` when a machine-readable response is needed.
 Immediate failures are emitted as `{ ok: false, error: { code, message,
 retryable, ... } }`; successful `show`, `ls`, `run`, and `continue` output keeps
 the structured error fields on agent records when present.
+Successful `daemon status` and `daemon stop` output the daemon status object,
+and successful `daemon logs` output is `{ "logs": "<text>" }`.
 
 Agent identity is explicit at the client boundary. `agents run` starts a new
 logical agent from a profile or provider; `agents continue <id>` continues an

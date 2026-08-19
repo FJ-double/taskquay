@@ -29,6 +29,8 @@ const require = createRequire(import.meta.url);
 const spawn = require("cross-spawn") as typeof import("node:child_process").spawn;
 const DEVSPACE_VERSION = readDevspaceVersion();
 
+const observeChildError = (): void => {};
+
 const ACP_COMMANDS: Record<AcpProvider, [string, ...string[]]> = {
   cursor: ["cursor-agent", "acp"],
   copilot: ["copilot", "--acp"],
@@ -351,7 +353,15 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
         const onStartupError = (error: Error) => { resolveStartupError(error); };
         child.once("error", onStartupError);
         if (!child.stdin || !child.stdout || !child.stderr) {
+          child.on("error", observeChildError);
           child.removeListener("error", onStartupError);
+          if (child.exitCode === null) {
+            const detached = process.platform !== "win32";
+            terminateProcessTree(child, "SIGTERM", detached);
+            if (!await waitForProcessExit(child, 1_000)) {
+              terminateProcessTree(child, "SIGKILL", detached);
+            }
+          }
           throw new AgentProviderProtocolError({
             code: "PROVIDER_PROTOCOL_ERROR",
             provider: this.provider,
@@ -417,6 +427,7 @@ export class AcpLocalAgentDriver implements LocalAgentDriver {
           child.removeListener("error", onStartupError);
           return runtime;
         } catch (error) {
+          child.on("error", observeChildError);
           child.removeListener("error", onStartupError);
           try {
             connection?.close(error);

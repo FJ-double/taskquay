@@ -12,6 +12,7 @@ import type {
   LocalAgentRuntime,
   LocalAgentRuntimeContext,
 } from "./local-agent-runtime.js";
+import type { LocalAgentProvider } from "./local-agent-profiles.js";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_SESSION_IDLE_TIMEOUT_MS = 60_000;
@@ -84,13 +85,13 @@ export class LocalAgentRuntimePool {
     let runtime = entry.runtime;
     if (!runtime) throw new Error("Local agent runtime was created without a runtime.");
     if (!runtime.isAlive()) {
-      await this.removeAndClose(entry, "runtime_not_alive");
+      await this.discardRuntime(entry, driver.provider, "runtime_not_alive");
       acquired = await this.acquire(driver, context);
       if (acquired.isErr()) return acquired;
       entry = acquired.value;
       runtime = entry.runtime;
       if (!runtime || !runtime.isAlive()) {
-        await this.removeAndClose(entry, "runtime_not_alive");
+        await this.discardRuntime(entry, driver.provider, "runtime_not_alive");
         return Result.err(new AgentProviderUnavailableError({
           code: "PROVIDER_UNAVAILABLE",
           provider: driver.provider,
@@ -158,7 +159,14 @@ export class LocalAgentRuntimePool {
         return result;
       }
       const outputReservationError = await reserveSession(result.value.providerSessionId ?? "");
-      if (outputReservationError) return Result.err(outputReservationError);
+      if (outputReservationError) {
+        this.log("warn", "harness_session_reservation_failed", {
+          provider: driver.provider,
+          runtimeKeyHash: hashRuntimeKey(entry.key),
+          agentId: context.agentId,
+          error: outputReservationError.message,
+        });
+      }
       return result;
     } catch (error) {
       if (!runtime.isAlive()) {
@@ -196,6 +204,23 @@ export class LocalAgentRuntimePool {
       }
       entry.lastUsedAt = this.now();
       if (entry.activeRuns === 0 && !entry.closing) this.scheduleIdleClose(entry);
+    }
+  }
+
+  private async discardRuntime(
+    entry: RuntimeEntry,
+    provider: LocalAgentProvider,
+    reason: string,
+  ): Promise<void> {
+    try {
+      await this.removeAndClose(entry, reason);
+    } catch (error) {
+      this.log("warn", "harness_runtime_close_failed", {
+        provider,
+        runtimeKeyHash: hashRuntimeKey(entry.key),
+        reason,
+        error: errorMessage(error),
+      });
     }
   }
 
