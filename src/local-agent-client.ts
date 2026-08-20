@@ -236,7 +236,7 @@ export class LocalAgentClient {
     authToken: string,
     protocolVersion: number,
     mismatch: AgentDaemonProtocolMismatchError,
-  ): Promise<BetterResult<undefined, AgentDaemonError>> {
+  ): Promise<BetterResult<LocalAgentDaemonStatus | undefined, AgentDaemonError>> {
     const statusResponse = await sendRequest(this.endpoint, {
       requestId: randomUUID(),
       protocolVersion,
@@ -278,6 +278,14 @@ export class LocalAgentClient {
       }, Math.min(this.requestTimeoutMs, 250));
       if (probe.isErr() && probe.error.code === "DAEMON_UNAVAILABLE") {
         return Result.ok(undefined);
+      }
+      if (
+        probe.isOk()
+        && probe.value.protocolVersion >= LOCAL_AGENT_DAEMON_PROTOCOL_VERSION
+      ) {
+        // Another client completed the replacement while this client was
+        // waiting for the old endpoint to disappear.
+        return this.tryHello();
       }
     }
     return Result.err(new AgentDaemonStartupError({

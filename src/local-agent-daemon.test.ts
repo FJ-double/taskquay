@@ -288,6 +288,73 @@ try {
   await replacementDaemon.close();
 }
 
+const replacementRaceStateDir = join(root, "upgrade-race-state");
+await mkdir(replacementRaceStateDir, { recursive: true });
+const replacementRacePaths = localAgentDaemonPaths(replacementRaceStateDir);
+ensureLocalAgentDaemonSecret(replacementRacePaths);
+let replacementRaceProtocol = 1;
+const replacementRaceServer = createNetServer((socket) => {
+  let buffer = "";
+  socket.setEncoding("utf8");
+  socket.on("data", (chunk: string | Buffer) => {
+    buffer += chunk.toString();
+    const newline = buffer.indexOf("\n");
+    if (newline === -1) return;
+    const request = JSON.parse(buffer.slice(0, newline)) as {
+      requestId: string;
+      protocolVersion: number;
+      method: string;
+    };
+    if (request.protocolVersion !== replacementRaceProtocol) {
+      socket.end(encodeLocalAgentDaemonResponse({
+        requestId: request.requestId,
+        protocolVersion: replacementRaceProtocol,
+        ok: false,
+        error: {
+          code: "DAEMON_PROTOCOL_MISMATCH",
+          message: `Unsupported daemon protocol version ${request.protocolVersion}.`,
+          retryable: false,
+        },
+      }));
+      return;
+    }
+    socket.end(encodeLocalAgentDaemonResponse({
+      requestId: request.requestId,
+      protocolVersion: replacementRaceProtocol,
+      ok: true,
+      result: {
+        state: request.method === "daemon.stop" ? "stopping" : "ready",
+        protocolVersion: replacementRaceProtocol,
+        pid: process.pid,
+        endpoint: replacementRacePaths.endpoint,
+        startedAt: "now",
+        activeTurns: 0,
+        runtimeCount: 0,
+        clientConnections: 1,
+      },
+    }), () => {
+      if (request.method === "daemon.stop") replacementRaceProtocol = 2;
+    });
+  });
+});
+await new Promise<void>((resolveListen, rejectListen) => {
+  replacementRaceServer.once("error", rejectListen);
+  replacementRaceServer.listen(replacementRacePaths.endpoint, resolveListen);
+});
+const replacementRaceClient = new LocalAgentClient({
+  stateDir: replacementRaceStateDir,
+  startupTimeoutMs: 500,
+  requestTimeoutMs: 100,
+  spawnDaemon: () => {
+    throw new Error("the replacement daemon is already running");
+  },
+});
+try {
+  assert.equal(unwrap(await replacementRaceClient.ensureReady()).protocolVersion, 2);
+} finally {
+  await new Promise<void>((resolveClose) => replacementRaceServer.close(() => resolveClose()));
+}
+
 const timeoutStateDir = join(root, "request-timeout-state");
 await mkdir(timeoutStateDir, { recursive: true });
 const timeoutPaths = localAgentDaemonPaths(timeoutStateDir);
