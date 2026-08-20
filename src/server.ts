@@ -709,7 +709,7 @@ export function createMcpServer(
   workspaces: WorkspaceRegistry,
   reviewCheckpoints: ReturnType<typeof createReviewCheckpointManager>,
   processSessions: ProcessSessionManager,
-  localAgentProviders: LocalAgentProviderStatus[],
+  resolveLocalAgentProviders: () => LocalAgentProviderStatus[],
   incomingArtifactAdapters: readonly IncomingArtifactAdapter[],
 ): McpServer {
   const server = new McpServer(
@@ -834,7 +834,7 @@ export function createMcpServer(
       const agentCatalog = buildLocalAgentCatalog(
         config.subagents,
         workspace.agentProfiles,
-        localAgentProviders,
+        resolveLocalAgentProviders(),
       );
       const cardAgentProviders = agentCatalog.providers
         .filter((provider) => provider.usable)
@@ -1703,6 +1703,10 @@ export function createServer(
     config.subagents,
     getLocalAgentProviderAvailabilitySnapshot(),
   );
+  const resolveLocalAgentProviders = () => buildLocalAgentProviderStatuses(
+    config.subagents,
+    getLocalAgentProviderAvailabilitySnapshot(),
+  );
 
   const logSessionCloseResults = (
     reason: "idle_timeout" | "server_shutdown",
@@ -1862,7 +1866,7 @@ export function createServer(
           workspaces,
           reviewCheckpoints,
           processSessions,
-          localAgentProviders,
+          resolveLocalAgentProviders,
           incomingArtifactAdapters,
         );
         await server.connect(transport);

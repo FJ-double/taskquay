@@ -79,6 +79,28 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
   assert.ok(Array.isArray(card.agents));
 });
 
+test("open_workspace refreshes provider availability for each catalog", async (t) => {
+  let available = false;
+  const context = await fixture(t, {
+    localAgentProviders: () => [{ name: "codex", available }],
+  });
+
+  const unavailable = structuredContent(await callOpen(context.client, context.project, "chat-1"));
+  assert.deepEqual(unavailable.agentProviders, []);
+  assert.deepEqual(unavailable.agents, []);
+
+  available = true;
+  const usable = structuredContent(await callOpen(context.client, context.project, "chat-2"));
+  assert.equal(
+    (usable.agentProviders as Array<Record<string, unknown>>)[0]?.id,
+    "codex",
+  );
+  assert.equal(
+    (usable.agents as Array<Record<string, unknown>>)[0]?.name,
+    "reviewer",
+  );
+});
+
 test("concurrent checkout opens return one full context and one reuse instruction", async (t) => {
   const context = await fixture(t);
   const [first, second] = await Promise.all([
@@ -159,7 +181,7 @@ test("checkout reuse and context suppression survive a registry restart", async 
     new WorkspaceRegistry(context.config, restoredStore),
     createReviewCheckpointManager(),
     new ProcessSessionManager(),
-    [],
+    () => [],
     [],
   );
   const [restoredClientTransport, restoredServerTransport] = InMemoryTransport.createLinkedPair();
@@ -198,7 +220,10 @@ interface ServerFixture {
 
 async function fixture(
   t: TestContext,
-  options: { git?: boolean; localAgentProviders?: LocalAgentProviderAvailability[] } = {},
+  options: {
+    git?: boolean;
+    localAgentProviders?: LocalAgentProviderAvailability[] | (() => LocalAgentProviderAvailability[]);
+  } = {},
 ): Promise<ServerFixture> {
   const root = await mkdtemp(join(tmpdir(), "devspace-server-test-"));
   const project = join(root, "project");
@@ -227,6 +252,9 @@ async function fixture(
     await git(project, ["commit", "-m", "Initial commit"]);
   }
 
+  const initialProviderAvailability = typeof options.localAgentProviders === "function"
+    ? options.localAgentProviders()
+    : options.localAgentProviders ?? [];
   const loadedConfig = loadConfig({
     DEVSPACE_CONFIG_DIR: join(root, ".config"),
     DEVSPACE_ALLOWED_ROOTS: root,
@@ -243,16 +271,20 @@ async function fixture(
         ...loadedConfig,
         subagents: {
           enabled: true,
-          providers: options.localAgentProviders.map((provider) => ({
+          providers: initialProviderAvailability.map((provider) => ({
             id: provider.name,
             enabled: true,
           })),
         },
       }
     : loadedConfig;
-  const localAgentProviders = buildLocalAgentProviderStatuses(
+  const resolveProviderAvailability: () => LocalAgentProviderAvailability[] =
+    typeof options.localAgentProviders === "function"
+      ? options.localAgentProviders
+      : () => initialProviderAvailability;
+  const resolveLocalAgentProviders = () => buildLocalAgentProviderStatuses(
     config.subagents,
-    options.localAgentProviders ?? [],
+    resolveProviderAvailability(),
   );
   const store = new SqliteWorkspaceStore(stateDir);
   const workspaces = new WorkspaceRegistry(config, store);
@@ -261,7 +293,7 @@ async function fixture(
     workspaces,
     createReviewCheckpointManager(),
     new ProcessSessionManager(),
-    localAgentProviders,
+    resolveLocalAgentProviders,
     [],
   );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
