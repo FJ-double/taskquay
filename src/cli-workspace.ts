@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { assertAllowedPath } from "./roots.js";
 
@@ -14,14 +15,23 @@ export function resolveCliWorkspaceContext(
   cwd = process.cwd(),
 ): CliWorkspaceContext {
   const injectedRoot = env.DEVSPACE_WORKSPACE_ROOT?.trim();
-  const candidate = injectedRoot
-    ? resolve(injectedRoot)
-    : findGitRoot(cwd) ?? resolve(cwd);
+  const candidate = canonicalizePath(
+    injectedRoot ? resolve(injectedRoot) : findGitRoot(cwd) ?? resolve(cwd),
+  );
+  const canonicalAllowedRoots = allowedRoots.map(canonicalizePath);
 
   return {
     workspaceId: env.DEVSPACE_WORKSPACE_ID?.trim() || undefined,
-    workspaceRoot: assertAllowedPath(candidate, [...allowedRoots]),
+    workspaceRoot: assertAllowedPath(candidate, canonicalAllowedRoots),
   };
+}
+
+function canonicalizePath(path: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return resolve(path);
+  }
 }
 
 function findGitRoot(cwd: string): string | undefined {

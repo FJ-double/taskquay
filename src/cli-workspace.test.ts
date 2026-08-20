@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { resolveCliWorkspaceContext } from "./cli-workspace.js";
@@ -37,6 +37,15 @@ try {
     workspaceId: "ws_injected",
     workspaceRoot: resolve(nestedRoot),
   });
+
+  if (process.platform !== "win32") {
+    const repositoryAlias = join(root, "repository-alias");
+    symlinkSync(repositoryRoot, repositoryAlias, "dir");
+    assert.deepEqual(resolveCliWorkspaceContext([repositoryAlias], {}, nestedRoot), {
+      workspaceId: undefined,
+      workspaceRoot: resolve(repositoryRoot),
+    });
+  }
 
   assert.throws(
     () => resolveCliWorkspaceContext([repositoryRoot], {
