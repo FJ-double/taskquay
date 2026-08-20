@@ -15,10 +15,10 @@ try {
   execFileSync("git", ["init", "--quiet", repository]);
   // Git returns canonical paths, while macOS and Windows temp directories may
   // be reported through aliases such as /var or an 8.3 short path.
-  const allowedRoot = realpathSync(root);
-  const repositoryRoot = realpathSync(repository);
-  const nestedRoot = realpathSync(nested);
-  const plainRoot = realpathSync(plainDirectory);
+  const allowedRoot = realpathSync.native(root);
+  const repositoryRoot = realpathSync.native(repository);
+  const nestedRoot = realpathSync.native(nested);
+  const plainRoot = realpathSync.native(plainDirectory);
 
   assert.deepEqual(resolveCliWorkspaceContext([allowedRoot], {}, nestedRoot), {
     workspaceId: undefined,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -171,7 +171,7 @@ try {
     );
     assert.match(directOutput, new RegExp(current.id));
     const directList = [...daemonRequests].reverse().find((request) => request.method === "agent.list");
-    assert.deepEqual(directList?.params, { workspaceRoot: projectRoot });
+    assert.deepEqual(directList?.params, { workspaceRoot: realpathSync.native(projectRoot) });
 
     let commandFailure: unknown;
     try {
