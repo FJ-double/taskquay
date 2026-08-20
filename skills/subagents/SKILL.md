@@ -18,16 +18,16 @@ Use only these commands for normal delegation. The `npx` form works whether or
 not the user installed DevSpace globally.
 
 ```bash
-npx @waishnav/devspace agents targets
-npx @waishnav/devspace agents ls
-npx @waishnav/devspace agents run <profile-or-provider> "<prompt>"
-npx @waishnav/devspace agents continue <id> "<prompt>"
-npx @waishnav/devspace agents show <id>
+devspace agents targets
+devspace agents ls
+devspace agents run <profile-or-provider> "<prompt>"
+devspace agents continue <id> "<prompt>"
+devspace agents show <id>
 ```
 
 `targets` shows the providers and profiles available for the current project.
 Use an agent or profile already presented by DevSpace. If you do not know which
-ones are available, run `npx @waishnav/devspace agents targets` before
+ones are available, run `devspace agents targets` before
 delegating.
 
 `ls` shows existing subagent sessions for the current project. DevSpace selects
@@ -46,8 +46,8 @@ profile is needed. Run `targets` if you do not know which providers are enabled.
 Continuation supports the same per-turn model and effort overrides:
 
 ```bash
-npx @waishnav/devspace agents continue <id> --model <model> "<prompt>"
-npx @waishnav/devspace agents continue <id> --effort <level> "<prompt>"
+devspace agents continue <id> --model <model> "<prompt>"
+devspace agents continue <id> --effort <level> "<prompt>"
 ```
 
 `show <id>` prints status and the latest response. If the agent is still
@@ -60,7 +60,7 @@ directly. DevSpace manages execution and continuation for you.
 ## Choosing a profile
 
 Choose from the profiles DevSpace has already presented. If no catalog is
-visible, run `npx @waishnav/devspace agents targets`. Use the profile name with
+visible, run `devspace agents targets`. Use the profile name with
 the `agents run` command. If no profile fits, use an enabled provider from the
 same result.
 
@@ -69,8 +69,8 @@ configured/default provider model or effort level for a run, pass `--model`
 or `--effort`:
 
 ```bash
-npx @waishnav/devspace agents run <profile-or-provider> --model <model> "<prompt>"
-npx @waishnav/devspace agents run <profile-or-provider> --effort <level> "<prompt>"
+devspace agents run <profile-or-provider> --model <model> "<prompt>"
+devspace agents run <profile-or-provider> --effort <level> "<prompt>"
 ```
 
 Use `--effort` only when the user asks for a specific reasoning depth or when
