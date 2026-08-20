@@ -1,9 +1,9 @@
 ---
-name: subagent-delegation
+name: subagents
 description: Delegate coding tasks to user-configured DevSpace subagents.
 ---
 
-# Subagent Delegation
+# Subagents
 
 Use this skill when the user explicitly asks to delegate work to another coding
 agent, use a named subagent, get a second opinion, compare approaches, or run
@@ -24,20 +24,19 @@ devspace agents continue <id> "<prompt>"
 devspace agents show <id>
 ```
 
-`targets` shows the providers and profiles usable from the current workspace.
-Use it when this skill is installed directly in a local coding harness. An MCP
-host may already have received the same compact catalog from `open_workspace`.
+`targets` shows the providers and profiles available for the current project.
+Use an agent or profile already presented by DevSpace. If you do not know which
+ones are available, run `devspace agents targets` before delegating.
 
-`ls` shows existing subagent sessions for the current workspace. DevSpace scopes
-it automatically from the shell environment injected by the workspace tool.
-Use the returned logical `agt_...` ID with `continue`; provider session IDs and
-prefixes are not interchangeable with logical agent IDs.
+`ls` shows existing subagent sessions for the current project. DevSpace selects
+the project from the command environment. Use the returned `agt_...` ID with
+`continue`. Provider session IDs cannot replace DevSpace agent IDs.
 
 `run <profile> "<prompt>"` starts a new configured profile and prints a
 DevSpace agent id.
 
-`run <provider> "<prompt>"` starts a raw built-in provider when no configured
-profile is needed. Built-in providers are listed by `open_workspace`.
+`run <provider> "<prompt>"` starts an enabled provider when no configured
+profile is needed. Run `targets` if you do not know which providers are enabled.
 
 `continue <id> "<prompt>"` sends a follow-up to an existing agent. Do not use
 `run <id>` for continuation.
@@ -53,21 +52,15 @@ devspace agents continue <id> --effort <level> "<prompt>"
 running, `show` waits briefly. If there is still no final response, call `show`
 again later.
 
-The commands automatically start the internal `devspace-agentd` process when
-needed. `devspace serve` is not required for local-agent execution. The daemon
-owns shared agent sessions and provider runtimes for the configured DevSpace
-state directory.
-
-Do not run provider CLIs such as `codex`, `claude`, `opencode`, `pi`,
-`cursor-agent`, or `copilot` directly unless you are explicitly debugging
-DevSpace agent integration.
+Use DevSpace commands for delegation instead of calling provider commands
+directly. DevSpace manages execution and continuation for you.
 
 ## Choosing a profile
 
-Choose profiles from the compact subagent profile catalog returned by
-`open_workspace` or `devspace agents targets`. Use the profile name with
-`devspace agents run`. If no profile fits and delegation is still appropriate,
-use a provider listed by the same catalog.
+Choose from the profiles DevSpace has already presented. If no catalog is
+visible, run `devspace agents targets`. Use the profile name with
+`devspace agents run`. If no profile fits, use an enabled provider from the
+same result.
 
 Profiles may declare a model and optional effort level. To override the
 configured/default provider model or effort level for a run, pass `--model`
@@ -80,9 +73,8 @@ devspace agents run <profile-or-provider> --effort <level> "<prompt>"
 
 Use `--effort` only when the user asks for a specific reasoning depth or when
 the task clearly needs a different effort than the configured profile default.
-Effort values are provider-specific passthrough values. Use names supported by
-the selected local agent harness; DevSpace does not translate values between
-providers.
+Effort values are provider-specific. Use a value supported by the selected
+provider. DevSpace does not translate values between providers.
 
 Good delegation targets:
 
