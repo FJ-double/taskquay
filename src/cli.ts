@@ -208,6 +208,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
     );
 
     const config: DevspaceUserConfig = {
+      ...files.config,
       host: files.config.host ?? "127.0.0.1",
       port,
       allowedRoots,
