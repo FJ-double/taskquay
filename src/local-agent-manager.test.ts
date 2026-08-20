@@ -18,6 +18,7 @@ import type {
 } from "./local-agent-runtime.js";
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 import { LocalAgentStore } from "./local-agent-store.js";
+import type { SubagentsConfig } from "./local-agent-config.js";
 
 const root = await mkdtemp(join(tmpdir(), "devspace-agent-manager-test-"));
 const directRoot = await mkdtemp(join(tmpdir(), "devspace-direct-agent-manager-test-"));
@@ -36,6 +37,13 @@ const disabledProfile: LocalAgentProfile = {
   name: "disabled-reviewer",
   filePath: join(root, "disabled-reviewer.md"),
   disabled: true,
+};
+const subagents: SubagentsConfig = {
+  enabled: true,
+  providers: [
+    { id: "codex", enabled: true, model: "gpt-default", effort: "medium" },
+    { id: "claude", enabled: true },
+  ],
 };
 
 class FakeRuntime implements LocalAgentRuntime {
@@ -121,6 +129,7 @@ const manager = new LocalAgentManager({
   pool: new LocalAgentRuntimePool(),
   loadProfiles: async () => [profile, disabledProfile],
   allowedRoots: [root],
+  subagents,
 });
 
 const defectStore = new LocalAgentStore(join(root, "defect-state"));
@@ -132,6 +141,7 @@ const defectManager = new LocalAgentManager({
     throw new TypeError("profile loader defect");
   },
   allowedRoots: [root],
+  subagents,
 });
 await assert.rejects(
   defectManager.start({
@@ -180,6 +190,15 @@ const unconfigured = await manager.start({
 assert.equal(unconfigured.isErr(), true);
 if (unconfigured.isErr()) assert.equal(unconfigured.error.code, "PROVIDER_NOT_CONFIGURED");
 
+const disabledProvider = await manager.start({
+  target: "pi",
+  prompt: "inspect",
+  workspaceId: scope.workspaceId,
+  workspaceRoot: root,
+});
+assert.equal(disabledProvider.isErr(), true);
+if (disabledProvider.isErr()) assert.equal(disabledProvider.error.code, "PROVIDER_DISABLED");
+
 const previouslyCreatedDisabled = store.create({
   workspaceId: scope.workspaceId,
   workspaceRoot: root,
@@ -211,6 +230,8 @@ const first = unwrap(await manager.start({
   workspaceRoot: root,
 }));
 assert.equal(first.status, "running");
+assert.equal(first.model, "gpt-default");
+assert.equal(first.effort, "medium");
 await waitFor(() => runtimes.get(first.id)?.inputs.length === 1);
 const conflict = await manager.continue(first.id, "another prompt", {}, scope);
 assert.equal(conflict.isErr(), true);
@@ -224,9 +245,14 @@ await waitFor(() => getRecord(first.id).status === "idle");
 assert.equal(getRecord(first.id).providerSessionId, "thread_test");
 assert.match(getRecord(first.id).latestResponse ?? "", /Task:\nhold/);
 
-const continued = unwrap(await manager.continue(first.id, "continue", {}, scope));
+const continued = unwrap(await manager.continue(first.id, "continue", {
+  model: "gpt-run",
+  effort: "high",
+}, scope));
 assert.equal(continued.status, "running");
 await waitFor(() => getRecord(first.id).status === "idle");
+assert.equal(getRecord(first.id).model, "gpt-run");
+assert.equal(getRecord(first.id).effort, "high");
 
 const second = unwrap(await manager.start({
   target: "reviewer",

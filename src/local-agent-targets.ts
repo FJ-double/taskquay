@@ -4,6 +4,7 @@ import {
   type LocalAgentProfile,
   type LocalAgentProvider,
 } from "./local-agent-profiles.js";
+import type { SubagentProviderConfig } from "./local-agent-config.js";
 
 export interface ParsedLocalAgentRunArgs {
   target: string;
@@ -127,26 +128,29 @@ export function resolveLocalAgentTarget(
   profiles: LocalAgentProfile[],
   modelOverride?: string,
   effortOverride?: string,
+  providerConfigs: readonly SubagentProviderConfig[] = [],
 ): LocalAgentTarget | undefined {
   const profile = profiles.find((candidate) => candidate.name === target);
   if (profile) {
+    const providerConfig = providerConfigs.find((entry) => entry.id === profile.provider);
     return {
       kind: "profile",
       name: profile.name,
       provider: profile.provider,
-      model: modelOverride ?? profile.model,
-      effort: effortOverride ?? profile.effort,
+      model: modelOverride ?? profile.model ?? providerConfig?.model,
+      effort: effortOverride ?? profile.effort ?? providerConfig?.effort,
       profile,
     };
   }
 
   if (isLocalAgentProvider(target)) {
+    const providerConfig = providerConfigs.find((entry) => entry.id === target);
     return {
       kind: "provider",
       name: target,
       provider: target,
-      model: modelOverride,
-      effort: effortOverride,
+      model: modelOverride ?? providerConfig?.model,
+      effort: effortOverride ?? providerConfig?.effort,
     };
   }
 

@@ -123,6 +123,24 @@ assert.deepEqual(parseLocalAgentRunArgs(["codex", "--", "--json", "literal"]), {
 }
 
 {
+  const providerDefaults = [{
+    id: "codex",
+    enabled: true,
+    model: "gpt-default",
+    effort: "medium",
+  }] as const;
+  const raw = resolveLocalAgentTarget("codex", profiles, undefined, undefined, providerDefaults);
+  assert.equal(raw?.model, "gpt-default");
+  assert.equal(raw?.effort, "medium");
+  const profiled = resolveLocalAgentTarget("reviewer", profiles, undefined, undefined, providerDefaults);
+  assert.equal(profiled?.model, "gpt-5-codex");
+  assert.equal(profiled?.effort, "high");
+  const overridden = resolveLocalAgentTarget("reviewer", profiles, "gpt-run", "xhigh", providerDefaults);
+  assert.equal(overridden?.model, "gpt-run");
+  assert.equal(overridden?.effort, "xhigh");
+}
+
+{
   const target = resolveLocalAgentTarget("claude", profiles);
   assert.equal(target?.kind, "profile");
   assert.equal(target?.provider, "opencode");
