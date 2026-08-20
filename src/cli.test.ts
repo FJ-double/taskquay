@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -11,6 +12,9 @@ import { encodeLocalAgentDaemonResponse } from "./local-agent-daemon-protocol.js
 import { LocalAgentStore } from "./local-agent-store.js";
 
 const execFileAsync = promisify(execFile);
+const require = createRequire(import.meta.url);
+const tsxLoader = require.resolve("tsx");
+const cliPath = new URL("./cli.ts", import.meta.url).pathname;
 
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
   version: string;
@@ -72,6 +76,7 @@ try {
   store.close();
 
   const daemonSocket = localAgentDaemonPaths(stateDir).endpoint;
+  const daemonRequests: Array<{ method: string; params?: Record<string, unknown> }> = [];
   const daemon = createNetServer((socket) => {
     let buffer = "";
     socket.setEncoding("utf8");
@@ -79,11 +84,16 @@ try {
       buffer += chunk.toString();
       const newline = buffer.indexOf("\n");
       if (newline === -1) return;
-      const request = JSON.parse(buffer.slice(0, newline)) as { requestId: string; method: string };
+      const request = JSON.parse(buffer.slice(0, newline)) as {
+        requestId: string;
+        method: string;
+        params?: Record<string, unknown>;
+      };
+      daemonRequests.push(request);
       if (request.method === "agent.start") {
         socket.end(encodeLocalAgentDaemonResponse({
           requestId: request.requestId,
-          protocolVersion: 1,
+          protocolVersion: 3,
           ok: false,
           error: {
             code: "UNKNOWN_TARGET",
@@ -99,7 +109,7 @@ try {
         : request.method === "hello"
           ? {
               state: "ready",
-              protocolVersion: 1,
+              protocolVersion: 3,
               pid: process.pid,
               endpoint: daemonSocket,
               startedAt: "now",
@@ -110,7 +120,7 @@ try {
           : null;
       socket.end(encodeLocalAgentDaemonResponse({
         requestId: request.requestId,
-        protocolVersion: 1,
+        protocolVersion: 3,
         ok: true,
         result,
       }));
@@ -140,6 +150,28 @@ try {
     assert.match(output, new RegExp(`${current.id} idle reviewer codex gpt-5\\.4 effort=high`));
     assert.doesNotMatch(output, /profile reviewer/);
     assert.doesNotMatch(output, new RegExp(other.id));
+
+    const { stdout: directOutput } = await execFileAsync(
+      "node",
+      ["--import", tsxLoader, cliPath, "agents", "ls"],
+      {
+        cwd: projectRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          DEVSPACE_CONFIG_DIR: configDir,
+          DEVSPACE_ALLOWED_ROOTS: root,
+          DEVSPACE_STATE_DIR: stateDir,
+          DEVSPACE_SUBAGENTS: "1",
+          DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
+          DEVSPACE_WORKSPACE_ID: "",
+          DEVSPACE_WORKSPACE_ROOT: "",
+        },
+      },
+    );
+    assert.match(directOutput, new RegExp(current.id));
+    const directList = [...daemonRequests].reverse().find((request) => request.method === "agent.list");
+    assert.deepEqual(directList?.params, { workspaceRoot: projectRoot });
 
     let commandFailure: unknown;
     try {

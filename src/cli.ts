@@ -7,6 +7,7 @@ import * as prompts from "@clack/prompts";
 import { getShellConfig } from "@earendil-works/pi-coding-agent";
 import { satisfies } from "semver";
 import { loadConfig } from "./config.js";
+import { resolveCliWorkspaceContext } from "./cli-workspace.js";
 import {
   formatLocalAgentProviderAvailabilitySummary,
 } from "./local-agent-availability.js";
@@ -346,7 +347,7 @@ async function runAgentsCommand(args: string[]): Promise<void> {
 async function runAgentsList(json: boolean): Promise<void> {
   const config = loadConfig();
   const client = createLocalAgentClient(config);
-  const result = await client.list(resolveCurrentWorkspaceScope());
+  const result = await client.list(resolveCliWorkspaceContext(config.allowedRoots));
   const agents = presentAgentResult(result, json);
   if (!agents) return;
 
@@ -368,7 +369,7 @@ async function runAgentsList(json: boolean): Promise<void> {
 async function runAgentsRun(args: string[], json: boolean): Promise<void> {
   const parsed = parseLocalAgentRunArgs(args);
   const config = loadConfig();
-  const scope = resolveCurrentWorkspaceScope();
+  const scope = resolveCliWorkspaceContext(config.allowedRoots);
   const client = createLocalAgentClient(config);
   const result = await client.start({
     target: parsed.target,
@@ -391,7 +392,7 @@ async function runAgentsContinue(args: string[], json: boolean): Promise<void> {
   const parsed = parseLocalAgentContinueArgs(args);
   const config = loadConfig();
   const client = createLocalAgentClient(config);
-  const scope = resolveCurrentWorkspaceScope();
+  const scope = resolveCliWorkspaceContext(config.allowedRoots);
   const result = await client.continue(parsed.agentId, parsed.prompt, {
     model: parsed.model,
     effort: parsed.effort,
@@ -411,7 +412,7 @@ async function runAgentsShow(args: string[], json: boolean): Promise<void> {
 
   const config = loadConfig();
   const client = createLocalAgentClient(config);
-  const scope = resolveCurrentWorkspaceScope();
+  const scope = resolveCliWorkspaceContext(config.allowedRoots);
   const initial = await client.get(id, scope);
   let record = presentAgentResult(initial, json);
   if (!record) return;
@@ -469,21 +470,6 @@ async function runAgentsDaemon(args: string[], json: boolean): Promise<void> {
     default:
       throw new Error("Usage: devspace agents daemon <status|stop|logs>");
   }
-}
-
-function resolveCurrentWorkspaceRoot(): string {
-  return resolve(process.env.DEVSPACE_WORKSPACE_ROOT || process.cwd());
-}
-
-function resolveCurrentWorkspaceScope(): { workspaceId: string; workspaceRoot: string } {
-  const workspaceId = process.env.DEVSPACE_WORKSPACE_ID?.trim();
-  if (!workspaceId) {
-    throw new Error("A DevSpace workspace is required. Run this command from an open_workspace session.");
-  }
-  return {
-    workspaceId,
-    workspaceRoot: resolveCurrentWorkspaceRoot(),
-  };
 }
 
 function formatAgentLine(agent: Pick<
