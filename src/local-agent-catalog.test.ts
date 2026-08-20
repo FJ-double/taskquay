@@ -53,6 +53,7 @@ const profiles: LocalAgentProfile[] = [
   },
 ];
 const catalog = buildLocalAgentCatalog(config, profiles, statuses);
+assert.deepEqual(catalog.providers.map((provider) => provider.id), ["codex", "claude"]);
 assert.deepEqual(catalog.profiles.map((profile) => profile.name), ["reviewer", "custom"]);
 assert.equal(catalog.profiles[0]?.model, "gpt-default");
 assert.equal(catalog.profiles[0]?.effort, "medium");

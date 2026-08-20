@@ -49,14 +49,15 @@ export function buildLocalAgentProviderStatuses(
 export function buildLocalAgentCatalog(
   config: SubagentsConfig,
   profiles: readonly LocalAgentProfile[],
-  providers: LocalAgentProviderStatus[],
+  providers: readonly LocalAgentProviderStatus[],
 ): LocalAgentCatalog {
+  const visibleProviders = providers.filter((provider) => provider.enabled);
   const usable = new Map(
-    providers.filter((provider) => provider.usable).map((provider) => [provider.id, provider]),
+    visibleProviders.filter((provider) => provider.usable).map((provider) => [provider.id, provider]),
   );
   return {
     enabled: config.enabled,
-    providers,
+    providers: visibleProviders,
     profiles: profiles
       .filter((profile) => !profile.disabled && usable.has(profile.provider))
       .map((profile) => {

@@ -10,6 +10,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { loadConfig, type ServerConfig } from "./config.js";
 import type { LocalAgentProviderAvailability } from "./local-agent-availability.js";
 import { buildLocalAgentProviderStatuses } from "./local-agent-catalog.js";
+import type { SubagentsConfig } from "./local-agent-config.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { ProcessSessionManager } from "./process-sessions.js";
 import { createMcpServer } from "./server.js";
@@ -98,6 +99,28 @@ test("open_workspace refreshes provider availability for each catalog", async (t
   assert.equal(
     (usable.agents as Array<Record<string, unknown>>)[0]?.name,
     "reviewer",
+  );
+});
+
+test("open_workspace omits providers disabled by configuration", async (t) => {
+  const context = await fixture(t, {
+    localAgentProviders: [
+      { name: "codex", available: true },
+      { name: "claude", available: true },
+    ],
+    subagents: {
+      enabled: true,
+      providers: [
+        { id: "codex", enabled: true },
+        { id: "claude", enabled: false },
+      ],
+    },
+  });
+
+  const opened = structuredContent(await callOpen(context.client, context.project, "chat-1"));
+  assert.deepEqual(
+    (opened.agentProviders as Array<Record<string, unknown>>).map((provider) => provider.id),
+    ["codex"],
   );
 });
 
@@ -223,6 +246,7 @@ async function fixture(
   options: {
     git?: boolean;
     localAgentProviders?: LocalAgentProviderAvailability[] | (() => LocalAgentProviderAvailability[]);
+    subagents?: SubagentsConfig;
   } = {},
 ): Promise<ServerFixture> {
   const root = await mkdtemp(join(tmpdir(), "devspace-server-test-"));
@@ -269,7 +293,7 @@ async function fixture(
   const config: ServerConfig = options.localAgentProviders
     ? {
         ...loadedConfig,
-        subagents: {
+        subagents: options.subagents ?? {
           enabled: true,
           providers: initialProviderAvailability.map((provider) => ({
             id: provider.name,
