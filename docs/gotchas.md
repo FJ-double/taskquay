@@ -216,14 +216,14 @@ DevSpace looks in standard Agent Skills locations:
 
 It also checks compatibility and custom paths:
 
-- the bundled `subagent-delegation` skill when Subagents are enabled, unless `~/.devspace/skills/subagent-delegation/SKILL.md` exists
+- the bundled `subagents` skill when Subagents are enabled, unless `~/.devspace/skills/subagents/SKILL.md` exists
 - `DEVSPACE_AGENT_DIR/skills`, defaulting to `~/.codex/skills`
 - additional paths from `DEVSPACE_SKILL_PATHS`
 
 When Subagents are enabled, DevSpace loads agent profiles from
 `~/.devspace/agents/*.md` and project `.devspace/agents/*.md`, then exposes a
 compact profile catalog through `open_workspace`. The bundled
-`subagent-delegation` skill keeps the model-facing workflow to
+`subagents` skill keeps the model-facing workflow to
 `devspace agents targets`, `devspace agents ls`, `devspace agents run`,
 `devspace agents continue`, and `devspace agents show`.
 Those commands automatically manage the internal local agent daemon; `devspace
@@ -231,15 +231,15 @@ serve` is not a prerequisite.
 `devspace agents ls` lists existing subagent sessions, not profile
 definitions.
 
-For a local coding harness, run the installation command printed by
+For a Coding Agent, run the installation command printed by
 `devspace init`:
 
 ```bash
-npx skills add Waishnav/devspace --skill subagent-delegation --global
+npx skills add Waishnav/devspace --skill subagents --global
 ```
 
-The Skills CLI handles harness discovery and installation. DevSpace setup does
-not copy files into harness skill directories.
+The Skills CLI handles agent discovery and installation. DevSpace setup does
+not copy files into agent skill directories.
 
 Packaged agent profile examples under `examples/agents/` are starter templates.
 Copy or adapt them into one of the active profile directories before use.

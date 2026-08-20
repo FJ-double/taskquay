@@ -116,7 +116,7 @@ DevSpace discovers standard Agent Skills from:
 
 It also keeps compatibility with:
 
-- the bundled `subagent-delegation` skill when Subagents are enabled, unless `~/.devspace/skills/subagent-delegation/SKILL.md` exists
+- the bundled `subagents` skill when Subagents are enabled, unless `~/.devspace/skills/subagents/SKILL.md` exists
 - `DEVSPACE_AGENT_DIR/skills`, defaulting to `~/.codex/skills`
 - additional paths from `DEVSPACE_SKILL_PATHS`
 
@@ -142,7 +142,7 @@ Skill paths may be outside the workspace. DevSpace only permits reading:
 
 Set `DEVSPACE_SKILLS=0` to hide skills from workspace output. Enable Subagents
 and choose providers through `devspace init` or the persisted provider
-configuration. The bundled `subagent-delegation` skill teaches the minimal
+configuration. The bundled `subagents` skill teaches the minimal
 `devspace agents targets`, `devspace agents ls`, `devspace agents run`,
 `devspace agents continue`, and `devspace agents show` workflow. The catalog
 comes from `open_workspace`; `devspace agents ls` lists existing subagent
