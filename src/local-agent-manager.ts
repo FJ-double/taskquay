@@ -36,7 +36,7 @@ export interface StartLocalAgentInput {
   target: string;
   prompt: string;
   workspaceRoot: string;
-  workspaceId: string;
+  workspaceId?: string;
   model?: string;
   effort?: string;
   writeMode?: LocalAgentWriteMode;
@@ -502,7 +502,8 @@ export class LocalAgentManager {
   ): BetterResult<void, AgentScopeError> {
     const workspaceRoot = this.authorizeWorkspace(scope.workspaceRoot, operation);
     if (workspaceRoot.isErr()) return workspaceRoot;
-    if (workspaceRoot.value !== record.workspaceRoot || record.workspaceId !== scope.workspaceId) {
+    const idMismatch = scope.workspaceId !== undefined && record.workspaceId !== scope.workspaceId;
+    if (workspaceRoot.value !== record.workspaceRoot || idMismatch) {
       return Result.err(new AgentScopeError({
         code: "WORKSPACE_MISMATCH",
         agentId: record.id,

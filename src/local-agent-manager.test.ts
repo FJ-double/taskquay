@@ -278,6 +278,18 @@ const wrongWorkspaceId = await manager.continue(
 assert.equal(wrongWorkspaceId.isErr(), true);
 if (wrongWorkspaceId.isErr()) assert.equal(wrongWorkspaceId.error.code, "WORKSPACE_MISMATCH");
 
+const direct = unwrap(await manager.start({
+  target: "reviewer",
+  prompt: "direct harness",
+  workspaceRoot: root,
+}));
+await waitFor(() => unwrap(manager.get(direct.id, { workspaceRoot: root })).status === "idle");
+assert.equal(direct.workspaceId, undefined);
+assert.equal(unwrap(manager.get(first.id, { workspaceRoot: root })).id, first.id);
+const directWrongId = manager.get(direct.id, { workspaceId: "ws_other", workspaceRoot: root });
+assert.equal(directWrongId.isErr(), true);
+if (directWrongId.isErr()) assert.equal(directWrongId.error.code, "WORKSPACE_MISMATCH");
+
 const defect = unwrap(await manager.start({
   target: "reviewer",
   prompt: "defect",

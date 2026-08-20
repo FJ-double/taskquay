@@ -25,7 +25,7 @@ export interface LocalAgentRecord {
 }
 
 export interface CreateLocalAgentRecordInput {
-  workspaceId: string;
+  workspaceId?: string;
   workspaceRoot: string;
   profileName: string;
   provider: string;
@@ -34,7 +34,7 @@ export interface CreateLocalAgentRecordInput {
 }
 
 export interface LocalAgentWorkspaceScope {
-  workspaceId: string;
+  workspaceId?: string;
   workspaceRoot: string;
 }
 

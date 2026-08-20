@@ -180,7 +180,7 @@ export function decodeAgentRecord(value: unknown): LocalAgentRecord {
   if (!isLocalAgentStatus(status)) throw new LocalAgentDaemonProtocolError("INVALID_RECORD", "Invalid agent status.");
   return {
     id: requiredString(record?.id, "id"),
-    workspaceId: requiredString(record?.workspaceId, "workspaceId"),
+    workspaceId: optionalString(record?.workspaceId),
     workspaceRoot: requiredString(record?.workspaceRoot, "workspaceRoot"),
     profileName: requiredString(record?.profileName, "profileName"),
     provider: requiredString(record?.provider, "provider"),
@@ -247,7 +247,7 @@ function decodeStartInput(value: unknown): StartLocalAgentInput {
     target: requiredString(record?.target, "target"),
     prompt: requiredContentString(record?.prompt, "prompt"),
     workspaceRoot: requiredString(record?.workspaceRoot, "workspaceRoot"),
-    workspaceId: requiredString(record?.workspaceId, "workspaceId"),
+    workspaceId: optionalString(record?.workspaceId),
     model: optionalString(record?.model),
     effort: optionalString(record?.effort),
     writeMode: decodeWriteMode(record?.writeMode),
@@ -273,7 +273,7 @@ function decodeWorkspaceScope(value: unknown): LocalAgentWorkspaceScope {
   const record = asRecord(value);
   if (!record) throw new LocalAgentDaemonProtocolError("INVALID_PARAMS", "Workspace scope is required.");
   return {
-    workspaceId: requiredString(record.workspaceId, "scope.workspaceId"),
+    workspaceId: optionalString(record.workspaceId),
     workspaceRoot: requiredString(record.workspaceRoot, "scope.workspaceRoot"),
   };
 }
