@@ -28,8 +28,12 @@ import { createLocalAgentClient } from "./local-agent-client.js";
 import { toAgentErrorPayload, type LocalAgentError } from "./local-agent-errors.js";
 import type { LocalAgentRecord } from "./local-agent-store.js";
 import {
+  type OnboardingDestination,
   SUBAGENT_SKILL_INSTALL_COMMAND,
+  resolveOnboardingUsage,
   updateOnboardingSubagentsConfig,
+  usesChatGpt,
+  usesCodingAgents,
 } from "./onboarding.js";
 import {
   generateOwnerToken,
@@ -117,9 +121,31 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
   try {
     prompts.intro("DevSpace setup");
 
+    const destinationAnswer = await prompts.multiselect({
+      message: "Where will you use DevSpace?",
+      options: [
+        {
+          value: "chatgpt",
+          label: "ChatGPT",
+          hint: "Connect ChatGPT to projects on this computer.",
+        },
+        {
+          value: "coding-agents",
+          label: "Coding Agents",
+          hint: "Use DevSpace from Codex, Claude Code, OpenCode, Pi, and similar tools.",
+        },
+      ],
+      initialValues: files.config.publicBaseUrl ? ["chatgpt"] : ["coding-agents"],
+      required: true,
+    });
+    if (prompts.isCancel(destinationAnswer)) throw new SetupCancelledError();
+    const usage = resolveOnboardingUsage(destinationAnswer as OnboardingDestination[]);
+    const useChatGpt = usesChatGpt(usage);
+    const useCodingAgents = usesCodingAgents(usage);
+
     const defaultRoots = files.config.allowedRoots?.join(", ") || process.cwd();
     const rootsAnswer = await textPrompt({
-      message: `Where are your projects located? Press Enter to use ${defaultRoots}`,
+      message: `Which project folders can DevSpace access? Press Enter to use ${defaultRoots}`,
       placeholder: defaultRoots,
       defaultValue: defaultRoots,
       validate: (value) => value?.trim() ? undefined : "Enter at least one project root.",
@@ -129,78 +155,55 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       .map((root) => resolve(expandHomePath(root.trim())))
       .filter(Boolean);
 
-    const defaultPort = String(files.config.port ?? 7676);
-    const portAnswer = await textPrompt({
-      message: `Which local port should DevSpace use? Press Enter to use ${defaultPort}`,
-      placeholder: defaultPort,
-      defaultValue: defaultPort,
-      validate: validatePort,
-    });
-    const port = Number(portAnswer);
+    const port = isValidPort(files.config.port) ? files.config.port : 7676;
 
-    const useRemoteMcp = await confirmPrompt({
-      message: "Will a remote MCP host such as ChatGPT connect to DevSpace?",
-      initialValue: Boolean(files.config.publicBaseUrl),
-    });
     let publicBaseUrl: string | null = null;
-    if (useRemoteMcp) {
+    if (useChatGpt) {
       prompts.note(
         [
-          "Create a user-controlled tunnel or reverse proxy so the remote host can reach DevSpace.",
-          "Paste its public origin without /mcp.",
+          `Point your HTTPS tunnel or reverse proxy to http://127.0.0.1:${port}.`,
+          "Paste its public URL below.",
           "",
           "Example: https://your-tunnel-host.example.com",
         ].join("\n"),
-        "Remote MCP access",
+        "Connect ChatGPT",
       );
       publicBaseUrl = normalizePublicBaseUrl(await textPrompt({
         message: files.config.publicBaseUrl
-          ? `What is the public base URL? Press Enter to keep ${files.config.publicBaseUrl}`
-          : "What is the public base URL?",
+          ? `What public URL will ChatGPT connect to? Press Enter to keep ${files.config.publicBaseUrl}`
+          : "What public URL will ChatGPT connect to?",
         placeholder: files.config.publicBaseUrl ?? "https://your-tunnel-host.example.com",
         defaultValue: files.config.publicBaseUrl ?? "",
         validate: validateRequiredPublicBaseUrl,
       }));
     }
 
-    const useLocalHarness = await confirmPrompt({
-      message: "Will you use DevSpace subagents from a local coding harness?",
-      initialValue: !useRemoteMcp,
-    });
     const currentSubagents = resolveSubagentsConfig(files.config.subagents, {});
-    const enableSubagents = await confirmPrompt({
-      message: "Enable DevSpace subagents?",
-      initialValue: currentSubagents.enabled,
+    const availability = getLocalAgentProviderAvailabilitySnapshot();
+    const configuredProviders = currentSubagents.providers
+      .filter((provider) => provider.enabled)
+      .map((provider) => provider.id);
+    const initialValues = configuredProviders.length > 0
+      ? configuredProviders
+      : availability
+          .filter((provider) => provider.available)
+          .map((provider) => provider.name);
+    const providerAnswer = await prompts.multiselect({
+      message: "Which Coding Agents should be available?",
+      options: availability.map((provider) => ({
+        value: provider.name,
+        label: provider.name,
+        hint: provider.available
+          ? provider.note ?? "available"
+          : `unavailable: ${provider.reason ?? "provider preflight failed"}`,
+      })),
+      initialValues,
+      required: true,
     });
-    let selectedProviders: LocalAgentProvider[] = [];
-    if (enableSubagents) {
-      const availability = getLocalAgentProviderAvailabilitySnapshot();
-      const configuredProviders = currentSubagents.providers
-        .filter((provider) => provider.enabled)
-        .map((provider) => provider.id);
-      const initialValues = configuredProviders.length > 0
-        ? configuredProviders
-        : availability
-            .filter((provider) => provider.available)
-            .map((provider) => provider.name);
-      const providerAnswer = await prompts.multiselect({
-        message: "Which providers may DevSpace launch?",
-        options: availability.map((provider) => ({
-          value: provider.name,
-          label: provider.name,
-          hint: provider.available
-            ? provider.note ?? "available"
-            : `unavailable: ${provider.reason ?? "provider preflight failed"}`,
-        })),
-        initialValues,
-        required: true,
-      });
-      if (prompts.isCancel(providerAnswer)) throw new SetupCancelledError();
-      selectedProviders = providerAnswer as LocalAgentProvider[];
-    }
+    if (prompts.isCancel(providerAnswer)) throw new SetupCancelledError();
+    const selectedProviders = providerAnswer as LocalAgentProvider[];
     const subagents = updateOnboardingSubagentsConfig(
       currentSubagents,
-      enableSubagents,
       selectedProviders,
     );
 
@@ -215,45 +218,37 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       ownerToken: files.auth.ownerToken ?? generateOwnerToken(),
     };
 
-    const configPath = writeDevspaceConfig(config);
-    const authPath = writeDevspaceAuth(auth);
+    writeDevspaceConfig(config);
+    writeDevspaceAuth(auth);
 
     const lines = [
-      `Config: ${configPath}`,
-      `Auth: ${authPath}`,
-      `Local MCP URL: http://${config.host}:${config.port}/mcp`,
-      ...(publicBaseUrl ? [`Public MCP URL: ${publicBaseUrl}/mcp`] : []),
+      `Project folders: ${allowedRoots.join(", ")}`,
+      `Coding Agents: ${selectedProviders.join(", ")}`,
+      ...(publicBaseUrl ? [`ChatGPT connection URL: ${publicBaseUrl}/mcp`] : []),
     ];
-    prompts.note(lines.join("\n"), "DevSpace configured");
-    if (useRemoteMcp) {
+    prompts.note(lines.join("\n"), "DevSpace is ready");
+    if (useChatGpt) {
       prompts.note(
         [
           `Owner password: ${auth.ownerToken}`,
-          "Use this when the remote MCP host asks you to approve DevSpace access.",
-          `Stored at: ${authPath}`,
+          "Use this when ChatGPT asks you to approve DevSpace access.",
         ].join("\n"),
         "Owner password",
       );
     }
-    if (useLocalHarness && subagents.enabled) {
+    if (useCodingAgents) {
       prompts.note(
         [
           SUBAGENT_SKILL_INSTALL_COMMAND,
           "",
-          "The Skills CLI will let you choose the local harnesses that receive it.",
-          "DevSpace does not write into harness skill directories during setup.",
+          "The Skills CLI will let you choose which Coding Agents receive it.",
         ].join("\n"),
         "Install the Subagents skill",
       );
     }
     const nextSteps = [
-      useRemoteMcp ? "Run `devspace serve` to start the MCP server." : undefined,
-      useLocalHarness && subagents.enabled
-        ? "Run the skill command above before delegating from a local harness."
-        : undefined,
-      !useRemoteMcp && !(useLocalHarness && subagents.enabled)
-        ? "Run `devspace agents targets` to inspect the local configuration."
-        : undefined,
+      useChatGpt ? "Run `devspace serve`, then connect ChatGPT." : undefined,
+      useCodingAgents ? "Run the skill command above before delegating from your Coding Agents." : undefined,
     ].filter(Boolean).join(" ");
     prompts.outro(nextSteps);
   } catch (error) {
@@ -672,19 +667,8 @@ async function textPrompt(options: TextPromptOptions): Promise<string> {
   return value || options.defaultValue;
 }
 
-async function confirmPrompt(
-  options: Parameters<typeof prompts.confirm>[0],
-): Promise<boolean> {
-  const result = await prompts.confirm(options);
-  if (prompts.isCancel(result)) throw new SetupCancelledError();
-  return result;
-}
-
-function validatePort(value: string | undefined): string | undefined {
-  const port = Number(value);
-  return Number.isInteger(port) && port >= 1 && port <= 65535
-    ? undefined
-    : "Enter a port between 1 and 65535.";
+function isValidPort(value: unknown): value is number {
+  return Number.isInteger(value) && Number(value) >= 1 && Number(value) <= 65535;
 }
 
 function validateRequiredPublicBaseUrl(value: string | undefined): string | undefined {

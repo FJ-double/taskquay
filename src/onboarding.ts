@@ -5,15 +5,34 @@ import {
 } from "./local-agent-profiles.js";
 
 export const SUBAGENT_SKILL_INSTALL_COMMAND =
-  "npx skills add Waishnav/devspace --skill subagent-delegation --global";
+  "npx skills add Waishnav/devspace --skill subagents --global";
+
+export const ONBOARDING_DESTINATIONS = ["chatgpt", "coding-agents"] as const;
+export type OnboardingDestination = typeof ONBOARDING_DESTINATIONS[number];
+export type OnboardingUsage = OnboardingDestination | "both";
+
+export function resolveOnboardingUsage(
+  destinations: readonly OnboardingDestination[],
+): OnboardingUsage {
+  const selected = new Set(destinations);
+  if (selected.has("chatgpt") && selected.has("coding-agents")) return "both";
+  if (selected.has("chatgpt")) return "chatgpt";
+  if (selected.has("coding-agents")) return "coding-agents";
+  throw new Error("Choose ChatGPT, Coding Agents, or both.");
+}
+
+export function usesChatGpt(usage: OnboardingUsage): boolean {
+  return usage === "chatgpt" || usage === "both";
+}
+
+export function usesCodingAgents(usage: OnboardingUsage): boolean {
+  return usage === "coding-agents" || usage === "both";
+}
 
 export function updateOnboardingSubagentsConfig(
   current: SubagentsConfig,
-  enabled: boolean,
   selectedProviders: readonly LocalAgentProvider[],
 ): SubagentsConfig {
-  if (!enabled) return { ...current, enabled: false };
-
   const selected = new Set(selectedProviders);
   return {
     enabled: true,
