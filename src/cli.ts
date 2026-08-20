@@ -102,7 +102,7 @@ async function ensureConfigured(): Promise<void> {
         "Run:",
         "  devspace init",
         "",
-        "Or provide DEVSPACE_OAUTH_OWNER_TOKEN and DEVSPACE_ALLOWED_ROOTS.",
+        "Or provide DEVSPACE_OAUTH_OWNER_TOKEN.",
       ].join("\n"),
     );
   }
@@ -143,17 +143,20 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
     const useChatGpt = usesChatGpt(usage);
     const useCodingAgents = usesCodingAgents(usage);
 
-    const defaultRoots = files.config.allowedRoots?.join(", ") || process.cwd();
-    const rootsAnswer = await textPrompt({
-      message: `Which project folders can DevSpace access? Press Enter to use ${defaultRoots}`,
-      placeholder: defaultRoots,
-      defaultValue: defaultRoots,
-      validate: (value) => value?.trim() ? undefined : "Enter at least one project root.",
-    });
-    const allowedRoots = rootsAnswer
-      .split(",")
-      .map((root) => resolve(expandHomePath(root.trim())))
-      .filter(Boolean);
+    let allowedRoots: string[] | undefined;
+    if (useChatGpt) {
+      const defaultRoots = files.config.allowedRoots?.join(", ") || process.cwd();
+      const rootsAnswer = await textPrompt({
+        message: `Which project folders can DevSpace access? Press Enter to use ${defaultRoots}`,
+        placeholder: defaultRoots,
+        defaultValue: defaultRoots,
+        validate: (value) => value?.trim() ? undefined : "Enter at least one project root.",
+      });
+      allowedRoots = rootsAnswer
+        .split(",")
+        .map((root) => resolve(expandHomePath(root.trim())))
+        .filter(Boolean);
+    }
 
     const port = isValidPort(files.config.port) ? files.config.port : 7676;
 
@@ -211,7 +214,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       ...files.config,
       host: files.config.host ?? "127.0.0.1",
       port,
-      allowedRoots,
+      ...(allowedRoots ? { allowedRoots } : {}),
       publicBaseUrl,
       subagents,
     };
@@ -223,7 +226,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
     writeDevspaceAuth(auth);
 
     const lines = [
-      `Project folders: ${allowedRoots.join(", ")}`,
+      ...(allowedRoots ? [`Project folders: ${allowedRoots.join(", ")}`] : []),
       `Coding Agents: ${selectedProviders.join(", ")}`,
       ...(publicBaseUrl ? [`ChatGPT connection URL: ${publicBaseUrl}/mcp`] : []),
     ];
