@@ -85,7 +85,7 @@ function codexAvailability(env: NodeJS.ProcessEnv): LocalAgentProviderAvailabili
   return availability.available
     ? {
         ...availability,
-        note: "executable detected; app-server support is verified on first run",
+        note: "available",
       }
     : availability;
 }

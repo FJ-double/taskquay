@@ -20,7 +20,7 @@ import { WorkspaceRegistry } from "./workspaces.js";
 const execFileAsync = promisify(execFile);
 
 test("open_workspace keeps lifecycle flags out of model output and preserves complete card metadata", async (t) => {
-  const providerNote = "app-server support is verified on first run";
+  const providerNote = "available";
   const context = await fixture(t, {
     localAgentProviders: [{ name: "codex", available: true, note: providerNote }],
   });

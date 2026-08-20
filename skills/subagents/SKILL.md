@@ -5,10 +5,7 @@ description: Delegate focused coding, research, review, or verification work to 
 
 # DevSpace subagents
 
-Use the DevSpace CLI through the host's shell or process tool. Run commands from
-the project the subagent should work on. DevSpace scopes sessions to the host
-workspace when supplied, otherwise to the current Git repository or project
-directory.
+Use the DevSpace CLI through the shell or process tool. Run commands from the project the subagent should work on.
 
 ## Choose a target
 
@@ -18,29 +15,20 @@ Discover usable targets instead of guessing names:
 devspace agents targets --json
 ```
 
-Configured profiles include a description and may define provider, model,
-effort, and task instructions. Choose a matching profile when one fits. Use a
-provider target when no profile fits or a specific provider is needed.
-Unavailable and disabled providers are omitted.
+Configured profiles include a description and may define provider, model, effort, and task instructions. Choose a matching profile when one fits. Use a provider target when no profile fits or a specific provider is needed.
 
-Usually rely on the target's configured model and effort. Pass `--model` or
-`--effort` only with a value supported by that provider. DevSpace passes these
-values through without translating them between providers.
+Usually rely on the target's configured model and effort. Pass `--model` or `--effort` only with a value supported by that provider. DevSpace passes these values through without translating them between providers.
 
 ## Start work
 
-Give the subagent a self-contained brief. Include the objective, relevant
-paths, constraints, decisions it needs from the current conversation, and the
-expected result. The subagent receives the brief and its profile instructions,
-not the parent conversation.
+Give the subagent a self-contained brief. Include the objective, relevant paths, constraints, decisions it needs from the current conversation, and the expected result. The subagent receives the brief and its profile instructions, not the parent conversation.
 
 ```bash
 devspace agents run <profile-or-provider> "<brief>" --json
 devspace agents run <profile-or-provider> --model <model> --effort <effort> "<brief>" --json
 ```
 
-The result contains a DevSpace agent `id` and its current status. Execution
-continues independently, so retain the ID for later inspection or follow-up.
+The result contains a DevSpace agent `id` and its current status. Execution continues independently, so retain the ID for later inspection or follow-up.
 
 ## Inspect and continue
 
@@ -56,10 +44,7 @@ devspace agents ls --json
   session and context.
 - `ls` returns sessions belonging to the current project.
 
-Call `show --json` again later while the status is `starting` or `running`.
-`idle` means the response is ready. `error` and `stopped` are terminal without
-a successful response. Continue an agent when its existing context is useful;
-start another agent for unrelated work.
+Call `show --json` again later while the status is `starting` or `running`. `idle` means the response is ready. `error` and `stopped` are terminal without a successful response. Continue an agent when its existing context is useful; start another agent for unrelated work.
 
 ## Good uses
 
