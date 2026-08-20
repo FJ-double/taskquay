@@ -41,7 +41,7 @@ try {
       "description: Read-only reviewer.",
       "provider: codex",
       "model: gpt-5.4",
-      "thinking: high",
+      "effort: high",
       "---",
       "",
       "Review only.",
@@ -56,7 +56,7 @@ try {
       profileName: "reviewer",
       provider: "codex",
       model: "gpt-5.4",
-      thinking: "high",
+      effort: "high",
     }).id,
     { status: "idle" },
   );
@@ -137,7 +137,7 @@ try {
       },
     });
 
-    assert.match(output, new RegExp(`${current.id} idle reviewer codex gpt-5\\.4 thinking=high`));
+    assert.match(output, new RegExp(`${current.id} idle reviewer codex gpt-5\\.4 effort=high`));
     assert.doesNotMatch(output, /profile reviewer/);
     assert.doesNotMatch(output, new RegExp(other.id));
 

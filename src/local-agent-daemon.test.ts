@@ -223,11 +223,11 @@ const timeoutServer = createNetServer((socket) => {
     if (request.method !== "hello") return;
     socket.end(encodeLocalAgentDaemonResponse({
       requestId: request.requestId,
-      protocolVersion: 1,
+      protocolVersion: 2,
       ok: true,
       result: {
         state: "ready",
-        protocolVersion: 1,
+        protocolVersion: 2,
         pid: process.pid,
         endpoint: timeoutPaths.endpoint,
         startedAt: "now",
@@ -269,7 +269,7 @@ const invalidServer = createNetServer((socket) => {
     if (!buffer.includes("\n")) return;
     socket.end(encodeLocalAgentDaemonResponse({
       requestId: "wrong_request_id",
-      protocolVersion: 1,
+      protocolVersion: 2,
       ok: true,
       result: {},
     }));
@@ -323,7 +323,7 @@ try {
 
   const unauthorized = await sendRawRequest(socketDaemon.paths.endpoint, JSON.stringify({
     requestId: "unauthorized",
-    protocolVersion: 1,
+    protocolVersion: 2,
     authToken: "wrong-secret",
     method: "hello",
     params: {},

@@ -9,14 +9,14 @@ export interface ParsedLocalAgentRunArgs {
   target: string;
   prompt: string;
   model?: string;
-  thinking?: string;
+  effort?: string;
 }
 
 export interface ParsedLocalAgentContinueArgs {
   agentId: string;
   prompt: string;
   model?: string;
-  thinking?: string;
+  effort?: string;
 }
 
 export type LocalAgentTarget =
@@ -25,7 +25,7 @@ export type LocalAgentTarget =
       name: string;
       provider: LocalAgentProvider;
       model?: string;
-      thinking?: string;
+      effort?: string;
       profile: LocalAgentProfile;
     }
   | {
@@ -33,13 +33,13 @@ export type LocalAgentTarget =
       name: LocalAgentProvider;
       provider: LocalAgentProvider;
       model?: string;
-      thinking?: string;
+      effort?: string;
     };
 
 export function parseLocalAgentRunArgs(args: string[]): ParsedLocalAgentRunArgs {
   const parsed = parseAgentPromptArgs(
     args,
-    'Usage: devspace agents run <profile-or-provider> [--model <model>] [--thinking <level>] "<prompt>"',
+    'Usage: devspace agents run <profile-or-provider> [--model <model>] [--effort <level>] "<prompt>"',
   );
   return parsed;
 }
@@ -47,9 +47,9 @@ export function parseLocalAgentRunArgs(args: string[]): ParsedLocalAgentRunArgs 
 export function parseLocalAgentContinueArgs(args: string[]): ParsedLocalAgentContinueArgs {
   const parsed = parseAgentPromptArgs(
     args,
-    'Usage: devspace agents continue <id> [--model <model>] [--thinking <level>] "<prompt>"',
+    'Usage: devspace agents continue <id> [--model <model>] [--effort <level>] "<prompt>"',
   );
-  return { agentId: parsed.target, prompt: parsed.prompt, model: parsed.model, thinking: parsed.thinking };
+  return { agentId: parsed.target, prompt: parsed.prompt, model: parsed.model, effort: parsed.effort };
 }
 
 function parseAgentPromptArgs(
@@ -62,7 +62,7 @@ function parseAgentPromptArgs(
   }
 
   let model: string | undefined;
-  let thinking: string | undefined;
+  let effort: string | undefined;
   const promptParts: string[] = [];
   for (let index = 0; index < rest.length; index += 1) {
     const part = rest[index];
@@ -79,17 +79,17 @@ function parseAgentPromptArgs(
       model = value;
       continue;
     }
-    if (part === "--thinking") {
+    if (part === "--effort") {
       const value = rest[index + 1]?.trim();
-      if (!value) throw new Error("Missing value for --thinking.");
-      thinking = value;
+      if (!value) throw new Error("Missing value for --effort.");
+      effort = value;
       index += 1;
       continue;
     }
-    if (part?.startsWith("--thinking=")) {
-      const value = part.slice("--thinking=".length).trim();
-      if (!value) throw new Error("Missing value for --thinking.");
-      thinking = value;
+    if (part?.startsWith("--effort=")) {
+      const value = part.slice("--effort=".length).trim();
+      if (!value) throw new Error("Missing value for --effort.");
+      effort = value;
       continue;
     }
     promptParts.push(part ?? "");
@@ -100,14 +100,14 @@ function parseAgentPromptArgs(
     throw new Error(usage);
   }
 
-  return { target, prompt, model, thinking };
+  return { target, prompt, model, effort };
 }
 
 export function resolveLocalAgentTarget(
   target: string,
   profiles: LocalAgentProfile[],
   modelOverride?: string,
-  thinkingOverride?: string,
+  effortOverride?: string,
 ): LocalAgentTarget | undefined {
   const profile = profiles.find((candidate) => candidate.name === target);
   if (profile) {
@@ -116,7 +116,7 @@ export function resolveLocalAgentTarget(
       name: profile.name,
       provider: profile.provider,
       model: modelOverride ?? profile.model,
-      thinking: thinkingOverride ?? profile.thinking,
+      effort: effortOverride ?? profile.effort,
       profile,
     };
   }
@@ -127,7 +127,7 @@ export function resolveLocalAgentTarget(
       name: target,
       provider: target,
       model: modelOverride,
-      thinking: thinkingOverride,
+      effort: effortOverride,
     };
   }
 

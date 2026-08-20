@@ -10,7 +10,7 @@ import {
 
 const request = decodeLocalAgentDaemonRequest({
   requestId: "req_1",
-  protocolVersion: 1,
+  protocolVersion: 2,
   authToken: "test-secret",
   method: "agent.start",
   params: {
@@ -28,7 +28,7 @@ assert.match(encodeLocalAgentDaemonRequest(request), /"method":"agent.start"/);
 
 const whitespaceRequest = decodeLocalAgentDaemonRequest({
   requestId: "req_whitespace",
-  protocolVersion: 1,
+  protocolVersion: 2,
   authToken: "test-secret",
   method: "agent.start",
   params: {
@@ -44,7 +44,7 @@ assert.equal(whitespaceRequest.params.prompt, "  keep prompt whitespace  \n");
 assert.throws(
   () => decodeLocalAgentDaemonRequest({
     requestId: "req_2",
-    protocolVersion: 1,
+    protocolVersion: 2,
     authToken: "test-secret",
     method: "agent.start",
     params: { target: "reviewer", prompt: "" },
@@ -68,7 +68,7 @@ assert.equal(record.latestResponse, "  response whitespace  \n");
 
 const response = decodeLocalAgentDaemonResponse({
   requestId: "req_1",
-  protocolVersion: 1,
+  protocolVersion: 2,
   ok: true,
   result: record,
 });
@@ -76,7 +76,7 @@ assert.equal(response.ok, true);
 
 const errorResponse = decodeLocalAgentDaemonResponse(JSON.parse(encodeLocalAgentDaemonResponse({
   requestId: "req_error",
-  protocolVersion: 1,
+  protocolVersion: 2,
   ok: false,
   error: {
     code: "PROVIDER_UNAVAILABLE",

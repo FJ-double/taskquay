@@ -69,7 +69,7 @@ const first = await pool.run(driver, {
     prompt: "first",
     workspaceRoot: "/tmp/project",
     model: "anthropic/sonnet",
-    thinking: "high",
+    effort: "high",
   });
 const second = await pool.run(driver, {
   agentId: "agt_two",
@@ -106,10 +106,10 @@ await pool.run(driver, {
   provider: "opencode",
   workspaceRoot: "/tmp/project",
 }, {
-  prompt: "thinking override",
+  prompt: "effort override",
   workspaceRoot: "/tmp/project",
   providerSessionId: firstRecord.providerSessionId ?? undefined,
-  thinking: "low",
+  effort: "low",
 }, {
   onSessionId: (id) => { callbackSessionId = id; },
 });

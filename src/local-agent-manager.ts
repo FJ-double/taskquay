@@ -38,13 +38,13 @@ export interface StartLocalAgentInput {
   workspaceRoot: string;
   workspaceId: string;
   model?: string;
-  thinking?: string;
+  effort?: string;
   writeMode?: LocalAgentWriteMode;
 }
 
 export interface RunOverrides {
   model?: string;
-  thinking?: string;
+  effort?: string;
   writeMode?: LocalAgentWriteMode;
 }
 
@@ -104,7 +104,7 @@ export class LocalAgentManager {
       yield* manager.acceptingResult("start");
       const workspaceRoot = yield* manager.authorizeWorkspace(input.workspaceRoot, "start");
       const profiles = yield* Result.await(manager.loadProfilesResult(workspaceRoot, input.target));
-      const target = resolveLocalAgentTarget(input.target, profiles, input.model, input.thinking);
+      const target = resolveLocalAgentTarget(input.target, profiles, input.model, input.effort);
       if (!target) {
         return Result.err(new AgentTargetError({
           code: "UNKNOWN_TARGET",
@@ -129,11 +129,11 @@ export class LocalAgentManager {
         profileName: target.name,
         provider: target.provider,
         model: target.model,
-        thinking: target.thinking,
+        effort: target.effort,
       });
       return manager.begin(record, input.prompt, {
         model: target.model,
-        thinking: target.thinking,
+        effort: target.effort,
         writeMode: input.writeMode,
       });
     });
@@ -229,7 +229,7 @@ export class LocalAgentManager {
     const updated = this.store.updateResult(record.id, {
       status: "running",
       model: overrides.model ?? record.model,
-      thinking: overrides.thinking ?? record.thinking,
+      effort: overrides.effort ?? record.effort,
       latestResponse: undefined,
       error: undefined,
       errorCode: undefined,
@@ -292,7 +292,7 @@ export class LocalAgentManager {
         providerSessionId: record.providerSessionId,
         writeMode: input.value.writeMode,
         model: input.value.model,
-        thinking: input.value.thinking,
+        effort: input.value.effort,
         agentDir: this.agentDir,
       };
       const callbacks: LocalAgentRunCallbacks = {
@@ -401,9 +401,9 @@ export class LocalAgentManager {
       providerSessionId: record.providerSessionId,
       writeMode: overrides.writeMode ?? "allowed",
       model: record.model ?? profile?.model,
-      thinking: record.thinking ?? profile?.thinking,
+      effort: record.effort ?? profile?.effort,
       modelOverrideRequested: overrides.model !== undefined,
-      thinkingOverrideRequested: overrides.thinking !== undefined,
+      effortOverrideRequested: overrides.effort !== undefined,
     });
   }
 

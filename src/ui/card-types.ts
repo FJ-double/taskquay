@@ -75,7 +75,7 @@ export interface ToolResultCard {
     description?: string;
     provider?: string;
     model?: string;
-    thinking?: string;
+    effort?: string;
     providerAvailable?: boolean;
     providerUnavailableReason?: string;
   }>;

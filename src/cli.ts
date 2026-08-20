@@ -299,8 +299,8 @@ function printHelp(): void {
       "  devspace config get      Print persisted config",
       "  devspace config set publicBaseUrl <url|null>",
       "  devspace agents ls       List subagent sessions",
-      "  devspace agents run <profile-or-provider> [--model <model>] [--thinking <level>] <prompt>",
-      "  devspace agents continue <id> [--model <model>] [--thinking <level>] <prompt>",
+      "  devspace agents run <profile-or-provider> [--model <model>] [--effort <level>] <prompt>",
+      "  devspace agents continue <id> [--model <model>] [--effort <level>] <prompt>",
       "  devspace agents show <id>",
       "  devspace agents daemon <status|stop|logs>",
       "  devspace -v, --version   Print the installed version",
@@ -376,7 +376,7 @@ async function runAgentsRun(args: string[], json: boolean): Promise<void> {
     workspaceRoot: scope.workspaceRoot,
     workspaceId: scope.workspaceId,
     model: parsed.model,
-    thinking: parsed.thinking,
+    effort: parsed.effort,
   });
   const record = presentAgentResult(result, json);
   if (!record) return;
@@ -394,7 +394,7 @@ async function runAgentsContinue(args: string[], json: boolean): Promise<void> {
   const scope = resolveCurrentWorkspaceScope();
   const result = await client.continue(parsed.agentId, parsed.prompt, {
     model: parsed.model,
-    thinking: parsed.thinking,
+    effort: parsed.effort,
   }, scope);
   const record = presentAgentResult(result, json);
   if (!record) return;
@@ -488,11 +488,11 @@ function resolveCurrentWorkspaceScope(): { workspaceId: string; workspaceRoot: s
 
 function formatAgentLine(agent: Pick<
   LocalAgentRecord,
-  "id" | "status" | "profileName" | "provider" | "model" | "thinking"
+  "id" | "status" | "profileName" | "provider" | "model" | "effort"
 >): string {
   const model = agent.model ? ` ${agent.model}` : "";
-  const thinking = agent.thinking ? ` thinking=${agent.thinking}` : "";
-  return `${agent.id} ${agent.status} ${agent.profileName} ${agent.provider}${model}${thinking}`;
+  const effort = agent.effort ? ` effort=${agent.effort}` : "";
+  return `${agent.id} ${agent.status} ${agent.profileName} ${agent.provider}${model}${effort}`;
 }
 
 function presentAgentResult<T, E extends LocalAgentError>(
@@ -519,8 +519,8 @@ function printAgentsHelp(): void {
       "",
       "Usage:",
       "  devspace agents ls [--json]",
-      "  devspace agents run <profile-or-provider> [--model <model>] [--thinking <level>] [--json] <prompt>",
-      "  devspace agents continue <id> [--model <model>] [--thinking <level>] [--json] <prompt>",
+      "  devspace agents run <profile-or-provider> [--model <model>] [--effort <level>] [--json] <prompt>",
+      "  devspace agents continue <id> [--model <model>] [--effort <level>] [--json] <prompt>",
       "  devspace agents show <id> [--json]",
       "  devspace agents daemon <status|stop|logs> [--json]",
     ].join("\n"),

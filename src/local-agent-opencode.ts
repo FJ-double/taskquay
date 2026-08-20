@@ -58,7 +58,7 @@ export class OpencodeRuntime implements LocalAgentRuntime {
         try {
           await assertOpencodeHealthy(this.client);
           const resumed = Boolean(input.providerSessionId);
-          const initialModel = input.model ? parseOpencodeModel(input.model, input.thinking) : undefined;
+          const initialModel = input.model ? parseOpencodeModel(input.model, input.effort) : undefined;
           const sessionId = input.providerSessionId ?? await createOpencodeSession(this.client, input, initialModel);
           await callbacks?.onSessionId?.(sessionId);
           await this.client.v2.session.switchAgent({
@@ -66,7 +66,7 @@ export class OpencodeRuntime implements LocalAgentRuntime {
             agent: opencodeAgentFor(input.writeMode),
           }, { throwOnError: true });
 
-          const model = initialModel ?? (input.thinking ? await modelWithThinking(this.client, sessionId, input.thinking) : undefined);
+          const model = initialModel ?? (input.effort ? await modelWithEffort(this.client, sessionId, input.effort) : undefined);
           if (model && (resumed || !initialModel)) {
             await this.client.v2.session.switchModel({ sessionID: sessionId, model }, { throwOnError: true });
           }
@@ -235,10 +235,10 @@ class OpencodeHealthError extends Error {
   }
 }
 
-async function modelWithThinking(
+async function modelWithEffort(
   client: OpencodeClientLike,
   sessionId: string,
-  thinking: string,
+  effort: string,
 ): Promise<ModelRef> {
   const result = await client.v2.session.get({ sessionID: sessionId }, { throwOnError: true });
   const model = result.data.data.model;
@@ -248,10 +248,10 @@ async function modelWithThinking(
       provider: "opencode",
       operation: "resolve_model",
       retryable: false,
-      message: "OpenCode did not return the current session model for a thinking override.",
+      message: "OpenCode did not return the current session model for an effort override.",
     });
   }
-  return { ...model, variant: thinking };
+  return { ...model, variant: effort };
 }
 
 async function promptOpencodeSession(

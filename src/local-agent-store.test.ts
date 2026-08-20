@@ -18,12 +18,12 @@ try {
     profileName: "reviewer",
     provider: "codex",
     model: "gpt-5.4",
-    thinking: "high",
+    effort: "high",
   });
 
   assert.match(created.id, /^agt_[a-f0-9]{8}$/);
   assert.equal(created.status, "starting");
-  assert.equal(store.getById(created.id)?.thinking, "high");
+  assert.equal(store.getById(created.id)?.effort, "high");
   assert.equal(store.getById(created.id)?.profileName, "reviewer");
   assert.equal(store.getById(created.id.slice(0, 7)), undefined);
 
@@ -31,14 +31,14 @@ try {
     status: "error",
     latestResponse: "done",
     providerSessionId: "thread_123",
-    thinking: "medium",
+    effort: "medium",
     error: "Codex executable was not found.",
     errorCode: "PROVIDER_UNAVAILABLE",
     errorRetryable: false,
   });
 
   assert.equal(updated.status, "error");
-  assert.equal(updated.thinking, "medium");
+  assert.equal(updated.effort, "medium");
   assert.equal(updated.errorCode, "PROVIDER_UNAVAILABLE");
   assert.equal(updated.errorRetryable, false);
   assert.equal(store.getById("thread_123"), undefined);
@@ -103,13 +103,14 @@ assert.deepEqual(store.list({ workspaceRoot: join(root, "other") }), []);
   }
   legacy.prepare(`
     insert into local_agent_sessions (
-      id, workspace_root, profile_name, provider, status, error, created_at, updated_at
-    ) values (?, ?, ?, ?, ?, ?, ?, ?)
+      id, workspace_root, profile_name, provider, thinking, status, error, created_at, updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     "agt_legacy",
     join(root, "legacy-project"),
     "reviewer",
     "codex",
+    "high",
     "error",
     "old error",
     "2026-08-01T00:00:00.000Z",
@@ -121,6 +122,7 @@ assert.deepEqual(store.list({ workspaceRoot: join(root, "other") }), []);
   stores.push(upgradedStore);
   const legacyRecord = upgradedStore.getById("agt_legacy");
   assert.equal(legacyRecord?.error, "old error");
+  assert.equal(legacyRecord?.effort, "high");
   assert.equal(legacyRecord?.errorCode, undefined);
   assert.equal(legacyRecord?.errorRetryable, undefined);
   const upgradedRecord = upgradedStore.update("agt_legacy", {

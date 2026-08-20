@@ -531,7 +531,7 @@ function renderWorkspacePayload(container: HTMLElement, card: ToolResultCard): v
       agent.description,
       providerName ? `Provider: ${providerName}` : undefined,
       agent.model ? `Model: ${agent.model}` : undefined,
-      agent.thinking ? `Thinking: ${agent.thinking}` : undefined,
+      agent.effort ? `Effort: ${agent.effort}` : undefined,
       unavailable
         ? agent.providerUnavailableReason ?? "Provider unavailable"
         : undefined,
