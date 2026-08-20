@@ -161,12 +161,12 @@ try {
         env: {
           ...process.env,
           DEVSPACE_CONFIG_DIR: configDir,
-          DEVSPACE_ALLOWED_ROOTS: root,
+          DEVSPACE_ALLOWED_ROOTS: stateDir,
           DEVSPACE_STATE_DIR: stateDir,
           DEVSPACE_SUBAGENTS: "1",
           DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
           DEVSPACE_WORKSPACE_ID: "",
-          DEVSPACE_WORKSPACE_ROOT: "",
+          DEVSPACE_WORKSPACE_ROOT: stateDir,
         },
       },
     );

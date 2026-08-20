@@ -102,7 +102,11 @@ export class LocalAgentManager {
     const manager = this;
     return Result.gen(async function* () {
       yield* manager.acceptingResult("start");
-      const workspaceRoot = yield* manager.authorizeWorkspace(input.workspaceRoot, "start");
+      const workspaceRoot = yield* manager.authorizeWorkspace(
+        input.workspaceRoot,
+        input.workspaceId,
+        "start",
+      );
       const profiles = yield* Result.await(manager.loadProfilesResult(workspaceRoot, input.target));
       const target = resolveLocalAgentTarget(input.target, profiles, input.model, input.effort);
       if (!target) {
@@ -135,7 +139,7 @@ export class LocalAgentManager {
         model: target.model,
         effort: target.effort,
         writeMode: input.writeMode,
-      });
+      }, input.workspaceId);
     });
   }
 
@@ -154,7 +158,7 @@ export class LocalAgentManager {
       const profiles = yield* Result.await(manager.loadProfilesResult(record.workspaceRoot, record.profileName));
       yield* manager.profileForRecordResult(record, profiles);
       yield* manager.driverResult(record.provider, "continue", agentId);
-      return manager.begin(record, prompt, overrides);
+      return manager.begin(record, prompt, overrides, scope.workspaceId);
     });
   }
 
@@ -172,7 +176,7 @@ export class LocalAgentManager {
   }
 
   list(scope: LocalAgentWorkspaceScope): BetterResult<LocalAgentRecord[], AgentListError> {
-    return this.authorizeWorkspace(scope.workspaceRoot, "list").andThen((workspaceRoot) => (
+    return this.authorizeWorkspace(scope.workspaceRoot, scope.workspaceId, "list").andThen((workspaceRoot) => (
       this.store.listResult({
         workspaceId: scope.workspaceId,
         workspaceRoot,
@@ -215,6 +219,7 @@ export class LocalAgentManager {
     record: LocalAgentRecord,
     prompt: string,
     overrides: RunOverrides,
+    workspaceId?: string,
   ): BetterResult<LocalAgentRecord, AgentConflictError | AgentStoreError> {
     if (this.activeTurns.has(record.id)) {
       return Result.err(new AgentConflictError({
@@ -238,7 +243,9 @@ export class LocalAgentManager {
     if (updated.isErr()) return updated;
     // Defer invocation until after the tracking entry is visible. This keeps
     // cleanup correct even if runTurn later gains a synchronous completion path.
-    const turn = Promise.resolve().then(() => this.runTurn(updated.value, prompt, overrides));
+    const turn = Promise.resolve().then(() => (
+      this.runTurn(updated.value, prompt, overrides, workspaceId)
+    ));
     this.activeTurns.set(record.id, turn);
     void turn.catch(() => undefined);
     return updated;
@@ -248,6 +255,7 @@ export class LocalAgentManager {
     record: LocalAgentRecord,
     prompt: string,
     overrides: RunOverrides,
+    workspaceId?: string,
   ): Promise<void> {
     const startedAt = Date.now();
     this.log("info", "agent_run_started", {
@@ -256,7 +264,7 @@ export class LocalAgentManager {
       providerSessionIdPrefix: record.providerSessionId?.slice(0, 8),
     });
     try {
-      const authorized = this.authorizeWorkspace(record.workspaceRoot, "run");
+      const authorized = this.authorizeWorkspace(record.workspaceRoot, workspaceId, "run");
       if (authorized.isErr()) {
         this.persistRunError(record, authorized.error, startedAt);
         return;
@@ -478,10 +486,11 @@ export class LocalAgentManager {
 
   private authorizeWorkspace(
     workspaceRoot: string,
+    workspaceId: string | undefined,
     operation: string,
   ): BetterResult<string, AgentScopeError> {
     const normalized = resolve(workspaceRoot);
-    if (!this.allowedRoots) return Result.ok(normalized);
+    if (!workspaceId || !this.allowedRoots) return Result.ok(normalized);
     try {
       return Result.ok(assertAllowedPath(normalized, [...this.allowedRoots]));
     } catch (cause) {
@@ -500,7 +509,7 @@ export class LocalAgentManager {
     scope: LocalAgentWorkspaceScope,
     operation: string,
   ): BetterResult<void, AgentScopeError> {
-    const workspaceRoot = this.authorizeWorkspace(scope.workspaceRoot, operation);
+    const workspaceRoot = this.authorizeWorkspace(scope.workspaceRoot, scope.workspaceId, operation);
     if (workspaceRoot.isErr()) return workspaceRoot;
     const idMismatch = scope.workspaceId !== undefined && record.workspaceId !== scope.workspaceId;
     if (workspaceRoot.value !== record.workspaceRoot || idMismatch) {

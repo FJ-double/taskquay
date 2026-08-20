@@ -20,6 +20,7 @@ import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 import { LocalAgentStore } from "./local-agent-store.js";
 
 const root = await mkdtemp(join(tmpdir(), "devspace-agent-manager-test-"));
+const directRoot = await mkdtemp(join(tmpdir(), "devspace-direct-agent-manager-test-"));
 const stateDir = join(root, "state");
 const scope = { workspaceId: "ws_test", workspaceRoot: root };
 const profile: LocalAgentProfile = {
@@ -278,6 +279,17 @@ const wrongWorkspaceId = await manager.continue(
 assert.equal(wrongWorkspaceId.isErr(), true);
 if (wrongWorkspaceId.isErr()) assert.equal(wrongWorkspaceId.error.code, "WORKSPACE_MISMATCH");
 
+const directOutside = unwrap(await manager.start({
+  target: "reviewer",
+  prompt: "direct outside allowed roots",
+  workspaceRoot: directRoot,
+}));
+await waitFor(() => unwrap(manager.get(directOutside.id, { workspaceRoot: directRoot })).status === "idle");
+assert.equal(directOutside.workspaceId, undefined);
+assert.deepEqual(unwrap(manager.list({ workspaceRoot: directRoot })).map((record) => record.id), [
+  directOutside.id,
+]);
+
 const direct = unwrap(await manager.start({
   target: "reviewer",
   prompt: "direct harness",
@@ -314,6 +326,7 @@ await closing;
 
 await manager.close();
 await rm(root, { recursive: true, force: true });
+await rm(directRoot, { recursive: true, force: true });
 
 function getRecord(id: string) {
   return unwrap(manager.get(id, scope));

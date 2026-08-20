@@ -8,21 +8,23 @@ export interface CliWorkspaceContext {
   workspaceRoot: string;
 }
 
-/** Resolve the project boundary used by agent commands from any local harness. */
+/** Resolve the project context used by local agent commands. */
 export function resolveCliWorkspaceContext(
   allowedRoots: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
   cwd = process.cwd(),
 ): CliWorkspaceContext {
-  const injectedRoot = env.DEVSPACE_WORKSPACE_ROOT?.trim();
+  const workspaceId = env.DEVSPACE_WORKSPACE_ID?.trim() || undefined;
+  const injectedRoot = workspaceId ? env.DEVSPACE_WORKSPACE_ROOT?.trim() : undefined;
   const candidate = canonicalizePath(
     injectedRoot ? resolve(injectedRoot) : findGitRoot(cwd) ?? resolve(cwd),
   );
-  const canonicalAllowedRoots = allowedRoots.map(canonicalizePath);
+
+  if (!workspaceId) return { workspaceId, workspaceRoot: candidate };
 
   return {
-    workspaceId: env.DEVSPACE_WORKSPACE_ID?.trim() || undefined,
-    workspaceRoot: assertAllowedPath(candidate, canonicalAllowedRoots),
+    workspaceId,
+    workspaceRoot: assertAllowedPath(candidate, allowedRoots.map(canonicalizePath)),
   };
 }
 

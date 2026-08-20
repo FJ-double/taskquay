@@ -20,14 +20,21 @@ try {
   const nestedRoot = realpathSync.native(nested);
   const plainRoot = realpathSync.native(plainDirectory);
 
-  assert.deepEqual(resolveCliWorkspaceContext([allowedRoot], {}, nestedRoot), {
+  assert.deepEqual(resolveCliWorkspaceContext([plainRoot], {}, nestedRoot), {
     workspaceId: undefined,
     workspaceRoot: resolve(repositoryRoot),
   });
 
-  assert.deepEqual(resolveCliWorkspaceContext([allowedRoot], {}, plainRoot), {
+  assert.deepEqual(resolveCliWorkspaceContext([repositoryRoot], {}, plainRoot), {
     workspaceId: undefined,
     workspaceRoot: resolve(plainRoot),
+  });
+
+  assert.deepEqual(resolveCliWorkspaceContext([plainRoot], {
+    DEVSPACE_WORKSPACE_ROOT: plainRoot,
+  }, nestedRoot), {
+    workspaceId: undefined,
+    workspaceRoot: resolve(repositoryRoot),
   });
 
   assert.deepEqual(resolveCliWorkspaceContext([allowedRoot], {
@@ -41,14 +48,18 @@ try {
   if (process.platform !== "win32") {
     const repositoryAlias = join(root, "repository-alias");
     symlinkSync(repositoryRoot, repositoryAlias, "dir");
-    assert.deepEqual(resolveCliWorkspaceContext([repositoryAlias], {}, nestedRoot), {
-      workspaceId: undefined,
+    assert.deepEqual(resolveCliWorkspaceContext([repositoryAlias], {
+      DEVSPACE_WORKSPACE_ID: "ws_injected",
+      DEVSPACE_WORKSPACE_ROOT: repositoryRoot,
+    }, plainRoot), {
+      workspaceId: "ws_injected",
       workspaceRoot: resolve(repositoryRoot),
     });
   }
 
   assert.throws(
     () => resolveCliWorkspaceContext([repositoryRoot], {
+      DEVSPACE_WORKSPACE_ID: "ws_injected",
       DEVSPACE_WORKSPACE_ROOT: plainRoot,
     }, nestedRoot),
     /outside allowed roots/,
