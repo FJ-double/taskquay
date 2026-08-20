@@ -119,6 +119,73 @@ assert.deepEqual(switchInputs[0], {
   model: { providerID: "anthropic", id: "sonnet", variant: "low" },
 });
 assert.deepEqual(agentInputs[0], { sessionID: "session_1", agent: "devspace_allowed" });
+
+let readinessActiveCalls = 0;
+let readinessMessageCalls = 0;
+let readinessWaitCalls = 0;
+const readinessRaceClient = {
+  v2: {
+    session: {
+      async create() {
+        return { data: { data: { id: "session_readiness" } } };
+      },
+      async switchAgent() {},
+      async prompt() {
+        return { data: { data: { id: "prompt_readiness" } } };
+      },
+      async wait() {
+        readinessWaitCalls += 1;
+        throw new Error("Session wait is not available yet");
+      },
+      async active() {
+        readinessActiveCalls += 1;
+        return {
+          data: {
+            data: readinessActiveCalls < 3
+              ? { session_readiness: { type: "running" } }
+              : {},
+          },
+        };
+      },
+      async messages() {
+        readinessMessageCalls += 1;
+        const data = readinessActiveCalls >= 3
+          ? [
+            { type: "user", id: "prompt_readiness" },
+            {
+              type: "assistant",
+              id: "assistant_readiness",
+              time: { created: 1, completed: 2 },
+              finish: "stop",
+              content: [{ type: "text", id: "part_readiness", text: "ready response" }],
+            },
+          ]
+          : [{ type: "user", id: "prompt_readiness" }];
+        return { data: { data } };
+      },
+    },
+    health: { async get() { return { data: { healthy: true } }; } },
+  },
+} as unknown as OpencodeClientLike;
+const readinessPool = new LocalAgentRuntimePool();
+const readinessDriver = new OpencodeLocalAgentDriver(async () => ({
+  client: readinessRaceClient,
+  server: { close: () => undefined },
+}));
+const readinessResult = await readinessPool.run(readinessDriver, {
+  agentId: "agt_readiness",
+  provider: "opencode",
+  workspaceRoot: "/tmp/project",
+}, { prompt: "readiness", workspaceRoot: "/tmp/project" });
+assert.equal(readinessResult.isOk(), true, "OpenCode should wait for the active session to finish");
+if (readinessResult.isOk()) {
+  assert.equal(readinessResult.value.finalResponse, "ready response");
+}
+assert.equal(readinessWaitCalls, 0, "OpenCode should not rely on the unavailable wait endpoint");
+assert.equal(readinessActiveCalls >= 3, true);
+assert.equal(readinessMessageCalls >= 3, true);
+await readinessPool.close();
+
 assert.equal(opencodeAgentFor("read_only"), "devspace_read_only");
 assert.equal(opencodeAgentFor("full_access"), "devspace_full_access");
 assert.deepEqual(opencodePermissionFor("allowed"), {
