@@ -124,7 +124,7 @@ sessions.
 | Variable | Purpose |
 | --- | --- |
 | `DEVSPACE_SKILLS` | Set to `0` to hide skills. Enabled by default. |
-| `DEVSPACE_SUBAGENTS` | Set to `1` to expose configured agent profiles as Subagents. Experimental and disabled by default. |
+| `DEVSPACE_SUBAGENTS` | Optional master override for the persisted Subagents configuration. |
 | `DEVSPACE_AGENT_DIR` | Defaults to `~/.codex`; its `skills` child is loaded for compatibility. |
 | `DEVSPACE_SKILL_PATHS` | Optional comma-separated additional skill directories. |
 
@@ -146,9 +146,44 @@ from:
 - `~/.devspace/agents/*.md`
 - project `.devspace/agents/*.md`
 
+Enable providers and set their defaults in `~/.devspace/config.json`:
+
+```json
+{
+  "subagents": {
+    "enabled": true,
+    "providers": [
+      {
+        "id": "codex",
+        "enabled": true,
+        "model": "gpt-5.4",
+        "effort": "high"
+      },
+      {
+        "id": "claude",
+        "enabled": true,
+        "model": "sonnet"
+      }
+    ]
+  }
+}
+```
+
+Each entry controls one provider. Providers omitted from the array are disabled.
+`model` and `effort` are optional defaults; an invocation override wins over a
+profile value, which wins over the provider default. The legacy boolean
+`"subagents": true` remains readable and enables every provider, but new
+configuration should use the explicit object form.
+
+`devspace agents targets` shows usable providers and profiles for the current
+workspace. Add `--json` to inspect every provider's configured, available, and
+usable state. Provider availability is runtime state and never rewrites the
+configuration.
+
 `open_workspace` returns a compact catalog containing profile names,
 descriptions, providers, and optional models/effort levels so the host model can choose an
-agent without reading provider-specific launch details. `devspace agents ls`
+agent without reading provider-specific launch details. Disabled or unavailable
+providers and their profiles are omitted from this model-facing catalog. `devspace agents ls`
 lists existing subagent sessions for the current workspace, scoped by the
 workspace environment injected into shell commands. The `subagent-delegation`
 skill teaches the model to use only the minimal `devspace agents ls`,
