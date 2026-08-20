@@ -39,7 +39,7 @@ export function effectiveSkillPaths(config: ServerConfig, cwd: string): string[]
     resolve(cwd, ".agents", "skills"),
     config.devspaceSkillsDir,
     join(config.agentDir, "skills"),
-    config.subagents && !hasSubagentDelegationSkill(config.devspaceSkillsDir)
+    config.subagents.enabled && !hasSubagentDelegationSkill(config.devspaceSkillsDir)
       ? bundledSkills
       : undefined,
   ];
@@ -71,7 +71,7 @@ export function loadWorkspaceSkills(config: ServerConfig, cwd: string): LoadedSk
     includeDefaults: false,
   });
 
-  if (config.subagents) return result;
+  if (config.subagents.enabled) return result;
 
   return {
     skills: result.skills.filter((skill) => skill.name !== SUBAGENT_DELEGATION_NAME),

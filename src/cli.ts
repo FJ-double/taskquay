@@ -159,7 +159,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
 
     const configPath = writeDevspaceConfig(config);
     const authPath = writeDevspaceAuth(auth);
-    const seededSkillPaths = config.subagents ? ensureDevspaceDefaultSkills() : [];
+    const seededSkillPaths = resolveSubagentsFlag(config) ? ensureDevspaceDefaultSkills() : [];
 
     const lines = [
       `Config: ${configPath}`,
@@ -214,7 +214,7 @@ async function serve(): Promise<void> {
     }
     console.log("auth: Owner password approval required");
     console.log(`logging: ${config.logging.level} ${config.logging.format}`);
-    if (config.subagents) {
+    if (config.subagents.enabled) {
       console.log(`subagent providers: ${formatLocalAgentProviderAvailabilitySummary(localAgentProviders)}`);
     }
   });

@@ -255,7 +255,7 @@ try {
     DEVSPACE_STATE_DIR: stateDir,
     DEVSPACE_SUBAGENTS: "1",
     DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
-  }).subagents, true);
+  }).subagents.enabled, true);
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

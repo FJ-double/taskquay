@@ -829,7 +829,7 @@ export function createMcpServer(
           description: skill.description,
           path: formatPathForPrompt(skill.filePath),
         }));
-      const cardAgentProviders = config.subagents ? localAgentProviders : [];
+      const cardAgentProviders = config.subagents.enabled ? localAgentProviders : [];
       const cardAgents = workspace.agentProfiles.map((profile) => {
         const summary = summarizeLocalAgentProfile(profile);
         const availability = cardAgentProviders.find((provider) => provider.name === summary.provider);
@@ -1696,7 +1696,7 @@ export function createServer(
   const workspaces = new WorkspaceRegistry(config, workspaceStore);
   const reviewCheckpoints = createReviewCheckpointManager();
   const processSessions = new ProcessSessionManager();
-  const localAgentProviders = config.subagents
+  const localAgentProviders = config.subagents.enabled
     ? getLocalAgentProviderAvailabilitySnapshot()
     : [];
 
@@ -1924,7 +1924,7 @@ if (await isMainModule()) {
         ? "enabled"
         : `unsupported on ${process.platform}`;
     console.log(`native artifact download: ${artifactDownloadStatus}`);
-    if (config.subagents) {
+    if (config.subagents.enabled) {
       console.log(`subagent providers: ${formatLocalAgentProviderAvailabilitySummary(localAgentProviders)}`);
     }
   });

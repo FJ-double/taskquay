@@ -8,6 +8,10 @@ import {
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { expandHomePath } from "./roots.js";
+import {
+  resolveSubagentsConfig,
+  type StoredSubagentsConfig,
+} from "./local-agent-config.js";
 
 export interface DevspaceUserConfig {
   host?: string;
@@ -20,7 +24,7 @@ export interface DevspaceUserConfig {
   artifactsEnabled?: boolean;
   artifactMaxFileBytes?: number;
   agentDir?: string;
-  subagents?: boolean;
+  subagents?: StoredSubagentsConfig;
 }
 
 export interface DevspaceAuthConfig {
@@ -113,8 +117,8 @@ export function resolveSubagentsFlag(
   config: Pick<DevspaceUserConfig, "subagents">,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean | undefined {
-  if (env.DEVSPACE_SUBAGENTS === undefined) return config.subagents;
-  return ["1", "true", "yes", "on"].includes(env.DEVSPACE_SUBAGENTS.toLowerCase());
+  if (config.subagents === undefined && env.DEVSPACE_SUBAGENTS === undefined) return undefined;
+  return resolveSubagentsConfig(config.subagents, env).enabled;
 }
 
 function readJsonFile<T>(filePath: string): T {

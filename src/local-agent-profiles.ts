@@ -47,7 +47,7 @@ export async function loadLocalAgentProfiles(
   workspaceRoot: string,
   options: { includeDisabled?: boolean } = {},
 ): Promise<LocalAgentProfile[]> {
-  if (!config.subagents) return [];
+  if (!config.subagents.enabled) return [];
 
   const profileDirs = [
     config.devspaceAgentsDir,

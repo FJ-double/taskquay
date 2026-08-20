@@ -25,7 +25,7 @@ assert.equal(loadConfig({ ...baseEnv, DEVSPACE_MINIMAL_TOOLS: "1" }).toolMode, "
 assert.equal(loadConfig(baseEnv).skillsEnabled, true);
 assert.equal(loadConfig(baseEnv).devspaceSkillsDir, join(emptyConfigDir, "skills"));
 assert.equal(loadConfig(baseEnv).devspaceAgentsDir, join(emptyConfigDir, "agents"));
-assert.equal(loadConfig(baseEnv).subagents, false);
+assert.deepEqual(loadConfig(baseEnv).subagents, { enabled: false, providers: [] });
 assert.equal(loadConfig(baseEnv).artifactsEnabled, false);
 assert.equal(loadConfig(baseEnv).artifactMaxFileBytes, 100 * 1024 * 1024);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_ARTIFACTS: "1" }).artifactsEnabled, true);
@@ -35,10 +35,10 @@ assert.equal(
 );
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SKILLS: "0" }).skillsEnabled, false);
 assert.equal(loadConfig({ ...baseEnv, DEVSPACE_SKILLS: "1" }).skillsEnabled, true);
-assert.equal(
-  loadConfig({ ...baseEnv, DEVSPACE_SUBAGENTS: "1" }).subagents,
-  true,
-);
+assert.deepEqual(loadConfig({ ...baseEnv, DEVSPACE_SUBAGENTS: "1" }).subagents, {
+  enabled: true,
+  providers: [],
+});
 assert.equal(resolveSubagentsFlag({}, {}), undefined);
 assert.equal(resolveSubagentsFlag({ subagents: true }, {}), true);
 assert.equal(resolveSubagentsFlag({ subagents: true }, { DEVSPACE_SUBAGENTS: "0" }), false);
@@ -189,7 +189,8 @@ const fileConfig = loadConfig({ DEVSPACE_CONFIG_DIR: configDir });
 assert.equal(fileConfig.port, 8787);
 assert.equal(fileConfig.oauth.ownerToken, "persisted-owner-token-long-enough");
 assert.equal(fileConfig.publicBaseUrl, "https://devspace.example.com");
-assert.equal(fileConfig.subagents, true);
+assert.equal(fileConfig.subagents.enabled, true);
+assert.equal(fileConfig.subagents.providers.length, 6);
 assert.equal(fileConfig.artifactsEnabled, true);
 assert.equal(fileConfig.artifactMaxFileBytes, 321);
 assert.deepEqual(fileConfig.allowedHosts, [
