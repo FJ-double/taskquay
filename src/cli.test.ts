@@ -5,6 +5,7 @@ import { createServer as createNetServer } from "node:net";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { loadConfig } from "./config.js";
 import { localAgentDaemonPaths } from "./local-agent-daemon-lifecycle.js";
@@ -13,8 +14,8 @@ import { LocalAgentStore } from "./local-agent-store.js";
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
-const tsxLoader = require.resolve("tsx");
-const cliPath = new URL("./cli.ts", import.meta.url).pathname;
+const tsxLoader = pathToFileURL(require.resolve("tsx")).href;
+const cliPath = fileURLToPath(new URL("./cli.ts", import.meta.url));
 
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
   version: string;
