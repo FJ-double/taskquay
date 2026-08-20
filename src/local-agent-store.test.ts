@@ -98,7 +98,9 @@ assert.deepEqual(store.list({ workspaceRoot: join(root, "other") }), []);
   const migration = legacy.prepare(
     "insert into devspace_schema_migrations (version, name, applied_at) values (?, ?, ?)",
   );
-  for (const [version, name] of [[1, "workspace-state"], [2, "oauth-state"], [3, "local-agent-sessions"], [4, "workspace-conversation-bindings"]] as const) {
+  // Leave migration 3 unapplied to exercise an interrupted legacy upgrade:
+  // it adds an empty effort column before migration 6 copies thinking values.
+  for (const [version, name] of [[1, "workspace-state"], [2, "oauth-state"], [4, "workspace-conversation-bindings"]] as const) {
     migration.run(version, name, "2026-08-01T00:00:00.000Z");
   }
   legacy.prepare(`

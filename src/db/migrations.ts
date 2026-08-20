@@ -218,7 +218,16 @@ function migrateLocalAgentEffortRename(sqlite: Database.Database): void {
     name: string;
   }>;
   const names = new Set(columns.map((column) => column.name));
-  if (names.has("effort")) return;
+  if (names.has("effort")) {
+    if (names.has("thinking")) {
+      sqlite.exec(`
+        update local_agent_sessions
+        set effort = thinking
+        where effort is null and thinking is not null
+      `);
+    }
+    return;
+  }
   if (!names.has("thinking")) {
     addColumnIfMissing(sqlite, "local_agent_sessions", "effort", "text");
     return;
