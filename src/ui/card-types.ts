@@ -65,9 +65,9 @@ export interface ToolResultCard {
     path?: string;
   }>;
   agentProviders?: Array<{
-    name?: string;
-    available?: boolean;
-    reason?: string;
+    id?: string;
+    model?: string;
+    effort?: string;
     note?: string;
   }>;
   agents?: Array<{
@@ -76,8 +76,6 @@ export interface ToolResultCard {
     provider?: string;
     model?: string;
     effort?: string;
-    providerAvailable?: boolean;
-    providerUnavailableReason?: string;
   }>;
   instruction?: string;
 }

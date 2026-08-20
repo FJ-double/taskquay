@@ -9,6 +9,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { loadConfig, type ServerConfig } from "./config.js";
 import type { LocalAgentProviderAvailability } from "./local-agent-availability.js";
+import { buildLocalAgentProviderStatuses } from "./local-agent-catalog.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { ProcessSessionManager } from "./process-sessions.js";
 import { createMcpServer } from "./server.js";
@@ -41,6 +42,10 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
   assert.ok(Array.isArray(firstStructured.availableAgentsFiles));
   assert.ok(Array.isArray(firstStructured.skills));
   assert.ok(Array.isArray(firstStructured.agentProviders));
+  assert.equal(
+    (firstStructured.agentProviders as Array<Record<string, unknown>>)[0]?.id,
+    "codex",
+  );
   assert.equal(
     (firstStructured.agentProviders as Array<Record<string, unknown>>)[0]?.note,
     providerNote,
@@ -222,7 +227,7 @@ async function fixture(
     await git(project, ["commit", "-m", "Initial commit"]);
   }
 
-  const config = loadConfig({
+  const loadedConfig = loadConfig({
     DEVSPACE_CONFIG_DIR: join(root, ".config"),
     DEVSPACE_ALLOWED_ROOTS: root,
     DEVSPACE_WORKTREE_ROOT: join(root, ".worktrees"),
@@ -233,6 +238,22 @@ async function fixture(
     DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
     PORT: "1",
   });
+  const config: ServerConfig = options.localAgentProviders
+    ? {
+        ...loadedConfig,
+        subagents: {
+          enabled: true,
+          providers: options.localAgentProviders.map((provider) => ({
+            id: provider.name,
+            enabled: true,
+          })),
+        },
+      }
+    : loadedConfig;
+  const localAgentProviders = buildLocalAgentProviderStatuses(
+    config.subagents,
+    options.localAgentProviders ?? [],
+  );
   const store = new SqliteWorkspaceStore(stateDir);
   const workspaces = new WorkspaceRegistry(config, store);
   const server = createMcpServer(
@@ -240,7 +261,7 @@ async function fixture(
     workspaces,
     createReviewCheckpointManager(),
     new ProcessSessionManager(),
-    options.localAgentProviders ?? [],
+    localAgentProviders,
     [],
   );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

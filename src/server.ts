@@ -55,12 +55,15 @@ import { shutdownHttpServer } from "./server-shutdown.js";
 import { formatPathForPrompt } from "./skills.js";
 import { createWorkspaceStore } from "./workspace-store.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
-import { summarizeLocalAgentProfile } from "./local-agent-profiles.js";
 import {
-  formatLocalAgentProviderAvailabilitySummary,
   getLocalAgentProviderAvailabilitySnapshot,
-  type LocalAgentProviderAvailability,
 } from "./local-agent-availability.js";
+import {
+  buildLocalAgentCatalog,
+  buildLocalAgentProviderStatuses,
+  formatLocalAgentProviderStatusSummary,
+  type LocalAgentProviderStatus,
+} from "./local-agent-catalog.js";
 
 type Transport = StreamableHTTPServerTransport;
 // MCP clients can reconnect without closing the previous transport. Bound stale
@@ -91,7 +94,7 @@ const SHELL_TOOL_ANNOTATIONS = {
 interface RunningServer {
   app: ReturnType<typeof createMcpExpressApp>;
   config: ServerConfig;
-  localAgentProviders: LocalAgentProviderAvailability[];
+  localAgentProviders: LocalAgentProviderStatus[];
   close(): Promise<void>;
 }
 
@@ -221,23 +224,24 @@ function formatVisibleAgent(agent: {
   provider: string;
   model?: string;
   effort?: string;
-  providerAvailable?: boolean;
-  providerUnavailableReason?: string;
 }): string {
   const model = agent.model ? `, model ${agent.model}` : "";
   const effort = agent.effort ? `, effort ${agent.effort}` : "";
-  const availability = agent.providerAvailable === false
-    ? `, unavailable: ${agent.providerUnavailableReason ?? "provider unavailable"}`
-    : "";
-  return `${agent.name} (${agent.provider}${model}${effort}${availability})`;
+  return `${agent.name} (${agent.provider}${model}${effort})`;
 }
 
-function formatUnavailableAgentProvider(provider: LocalAgentProviderAvailability): string {
-  return `${provider.name} (${provider.reason ?? "unavailable"})`;
-}
-
-function formatAvailableAgentProvider(provider: LocalAgentProviderAvailability): string {
-  return provider.note ? `${provider.name} (${provider.note})` : provider.name;
+function formatAvailableAgentProvider(provider: {
+  id: string;
+  model?: string;
+  effort?: string;
+  note?: string;
+}): string {
+  const details = [
+    provider.model ? `model ${provider.model}` : undefined,
+    provider.effort ? `effort ${provider.effort}` : undefined,
+    provider.note,
+  ].filter(Boolean).join(", ");
+  return `${provider.id}${details ? ` (${details})` : ""}`;
 }
 
 function resultOutputSchema(extra: z.ZodRawShape = {}): z.ZodRawShape {
@@ -268,14 +272,12 @@ const workspaceLocalAgentOutputSchema = z.object({
   provider: z.string(),
   model: z.string().optional(),
   effort: z.string().optional(),
-  providerAvailable: z.boolean().optional(),
-  providerUnavailableReason: z.string().optional(),
 });
 
 const workspaceLocalAgentProviderOutputSchema = z.object({
-  name: z.string(),
-  available: z.boolean(),
-  reason: z.string().optional(),
+  id: z.string(),
+  model: z.string().optional(),
+  effort: z.string().optional(),
   note: z.string().optional(),
 });
 
@@ -707,7 +709,7 @@ export function createMcpServer(
   workspaces: WorkspaceRegistry,
   reviewCheckpoints: ReturnType<typeof createReviewCheckpointManager>,
   processSessions: ProcessSessionManager,
-  localAgentProviders: LocalAgentProviderAvailability[],
+  localAgentProviders: LocalAgentProviderStatus[],
   incomingArtifactAdapters: readonly IncomingArtifactAdapter[],
 ): McpServer {
   const server = new McpServer(
@@ -829,16 +831,20 @@ export function createMcpServer(
           description: skill.description,
           path: formatPathForPrompt(skill.filePath),
         }));
-      const cardAgentProviders = config.subagents.enabled ? localAgentProviders : [];
-      const cardAgents = workspace.agentProfiles.map((profile) => {
-        const summary = summarizeLocalAgentProfile(profile);
-        const availability = cardAgentProviders.find((provider) => provider.name === summary.provider);
-        return {
-          ...summary,
-          providerAvailable: availability?.available,
-          providerUnavailableReason: availability?.reason,
-        };
-      });
+      const agentCatalog = buildLocalAgentCatalog(
+        config.subagents,
+        workspace.agentProfiles,
+        localAgentProviders,
+      );
+      const cardAgentProviders = agentCatalog.providers
+        .filter((provider) => provider.usable)
+        .map((provider) => ({
+          id: provider.id,
+          model: provider.model,
+          effort: provider.effort,
+          note: provider.note,
+        }));
+      const cardAgents = agentCatalog.profiles;
       const cardAgentsFiles = agentsFiles.map((file) => ({
         path: formatAgentsPath(file.path, workspace.root),
         content: file.content,
@@ -883,11 +889,8 @@ export function createMcpServer(
             visibleSkills.length > 0
               ? `Available skills: ${visibleSkills.map((skill) => skill.name).join(", ")}`
               : undefined,
-            visibleAgentProviders.some((provider) => provider.available)
-              ? `Available subagent providers: ${visibleAgentProviders.filter((provider) => provider.available).map(formatAvailableAgentProvider).join(", ")}`
-              : undefined,
-            visibleAgentProviders.some((provider) => !provider.available)
-              ? `Unavailable subagent providers: ${visibleAgentProviders.filter((provider) => !provider.available).map(formatUnavailableAgentProvider).join(", ")}`
+            visibleAgentProviders.length > 0
+              ? `Available subagent providers: ${visibleAgentProviders.map(formatAvailableAgentProvider).join(", ")}`
               : undefined,
             visibleAgents.length > 0
               ? `Available subagent profiles: ${visibleAgents.map(formatVisibleAgent).join(", ")}`
@@ -1696,9 +1699,10 @@ export function createServer(
   const workspaces = new WorkspaceRegistry(config, workspaceStore);
   const reviewCheckpoints = createReviewCheckpointManager();
   const processSessions = new ProcessSessionManager();
-  const localAgentProviders = config.subagents.enabled
-    ? getLocalAgentProviderAvailabilitySnapshot()
-    : [];
+  const localAgentProviders = buildLocalAgentProviderStatuses(
+    config.subagents,
+    getLocalAgentProviderAvailabilitySnapshot(),
+  );
 
   const logSessionCloseResults = (
     reason: "idle_timeout" | "server_shutdown",
@@ -1924,9 +1928,7 @@ if (await isMainModule()) {
         ? "enabled"
         : `unsupported on ${process.platform}`;
     console.log(`native artifact download: ${artifactDownloadStatus}`);
-    if (config.subagents.enabled) {
-      console.log(`subagent providers: ${formatLocalAgentProviderAvailabilitySummary(localAgentProviders)}`);
-    }
+    console.log(`subagent providers: ${formatLocalAgentProviderStatusSummary(localAgentProviders)}`);
   });
 
   let shuttingDown = false;
