@@ -1,7 +1,7 @@
 # Setup Guide
 
-This guide is for users who want ChatGPT or another MCP host to work in local
-projects through DevSpace.
+This guide covers both remote MCP hosts and local coding harnesses using
+DevSpace in local projects.
 
 ## Requirements
 
@@ -9,10 +9,12 @@ projects through DevSpace.
 - npm
 - Git
 - Bash, including Git Bash or WSL on Windows
-- a public HTTPS URL that forwards to the local DevSpace server
+- a public HTTPS URL that forwards to the local DevSpace server, only when a
+  remote MCP host will connect
 
-DevSpace does not create the public tunnel for you. Use Cloudflare Tunnel,
-ngrok, Pinggy, Tailscale Funnel, or your own HTTPS reverse proxy.
+DevSpace does not create the public tunnel for you. Remote MCP users can use
+Cloudflare Tunnel, ngrok, Pinggy, Tailscale Funnel, or their own HTTPS reverse
+proxy.
 
 ## Install And Configure
 
@@ -53,7 +55,26 @@ The local MCP URL is:
 http://127.0.0.1:7676/mcp
 ```
 
-### Public Base URL
+### Usage And Subagents
+
+Setup asks independently whether a remote MCP host will connect and whether a
+local coding harness will use DevSpace subagents. It then detects the supported
+providers and asks which ones DevSpace may launch. These choices are persisted
+as provider objects under `subagents` in `~/.devspace/config.json`.
+
+For a local harness, setup prints this command instead of modifying harness
+directories itself:
+
+```bash
+npx skills add Waishnav/devspace --skill subagent-delegation --global
+```
+
+The Skills CLI asks which installed harnesses should receive the skill. The
+skill uses `devspace agents targets`, `run`, `continue`, `show`, and `ls`; these
+commands start DevSpace's local agent daemon as needed and do not require
+`devspace serve`.
+
+### Public Base URL For Remote MCP
 
 Start your tunnel or reverse proxy before entering this value. Point the tunnel
 at:
@@ -73,6 +94,9 @@ Configure the MCP client with the full MCP endpoint:
 ```text
 https://your-tunnel-host.example.com/mcp
 ```
+
+Skip remote MCP access during setup for a local-harness-only configuration; no
+public URL is required.
 
 ## Start The Server
 

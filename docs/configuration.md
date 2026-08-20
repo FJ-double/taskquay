@@ -136,7 +136,7 @@ DevSpace discovers standard Agent Skills from:
 
 It also keeps compatibility with:
 
-- the bundled `subagent-delegation` skill when `DEVSPACE_SUBAGENTS=1`, unless `~/.devspace/skills/subagent-delegation/SKILL.md` exists
+- the bundled `subagent-delegation` skill when Subagents are enabled, unless `~/.devspace/skills/subagent-delegation/SKILL.md` exists
 - `DEVSPACE_AGENT_DIR/skills`, defaulting to `~/.codex/skills`
 - additional paths from `DEVSPACE_SKILL_PATHS`
 
@@ -187,8 +187,16 @@ providers and their profiles are omitted from this model-facing catalog. `devspa
 lists existing subagent sessions for the current workspace, scoped by the
 workspace environment injected into shell commands. The `subagent-delegation`
 skill teaches the model to use only the minimal `devspace agents ls`,
-`devspace agents run`, `devspace agents continue`, and `devspace agents show`
-workflow.
+`devspace agents targets`, `devspace agents run`, `devspace agents continue`,
+and `devspace agents show` workflow.
+
+For Codex, Claude Code, OpenCode, Pi, or another supported local harness, use
+the Skills CLI to install the same skill. DevSpace setup prints this command but
+does not run it or write into harness directories:
+
+```bash
+npx skills add Waishnav/devspace --skill subagent-delegation --global
+```
 
 Starter profile templates are available under `examples/agents/`. Copy or adapt
 them into one of the active profile directories before use.

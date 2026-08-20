@@ -17,11 +17,16 @@ being used.
 Use only these commands for normal delegation:
 
 ```bash
+devspace agents targets
 devspace agents ls
 devspace agents run <profile-or-provider> "<prompt>"
 devspace agents continue <id> "<prompt>"
 devspace agents show <id>
 ```
+
+`targets` shows the providers and profiles usable from the current workspace.
+Use it when this skill is installed directly in a local coding harness. An MCP
+host may already have received the same compact catalog from `open_workspace`.
 
 `ls` shows existing subagent sessions for the current workspace. DevSpace scopes
 it automatically from the shell environment injected by the workspace tool.
@@ -60,9 +65,9 @@ DevSpace agent integration.
 ## Choosing a profile
 
 Choose profiles from the compact subagent profile catalog returned by
-`open_workspace`. Use the profile name with `devspace agents run`. If no
-profile fits and delegation is still appropriate, use a built-in provider name
-from `open_workspace`.
+`open_workspace` or `devspace agents targets`. Use the profile name with
+`devspace agents run`. If no profile fits and delegation is still appropriate,
+use a provider listed by the same catalog.
 
 Profiles may declare a model and optional effort level. To override the
 configured/default provider model or effort level for a run, pass `--model`
