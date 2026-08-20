@@ -208,6 +208,86 @@ const startupFailure = await startupFailureClient.ensureReady();
 assert.equal(startupFailure.isErr(), true);
 if (startupFailure.isErr()) assert.equal(startupFailure.error.code, "DAEMON_STARTUP_FAILURE");
 
+const upgradeStateDir = join(root, "upgrade-state");
+await mkdir(upgradeStateDir, { recursive: true });
+const upgradePaths = localAgentDaemonPaths(upgradeStateDir);
+ensureLocalAgentDaemonSecret(upgradePaths);
+const legacyMethods: string[] = [];
+const legacyServer = createNetServer((socket) => {
+  let buffer = "";
+  socket.setEncoding("utf8");
+  socket.on("data", (chunk: string | Buffer) => {
+    buffer += chunk.toString();
+    const newline = buffer.indexOf("\n");
+    if (newline === -1) return;
+    const request = JSON.parse(buffer.slice(0, newline)) as {
+      requestId: string;
+      protocolVersion: number;
+      method: string;
+    };
+    legacyMethods.push(`${request.method}:${request.protocolVersion}`);
+    if (request.protocolVersion !== 1) {
+      socket.end(encodeLocalAgentDaemonResponse({
+        requestId: request.requestId,
+        protocolVersion: 1,
+        ok: false,
+        error: {
+          code: "DAEMON_PROTOCOL_MISMATCH",
+          message: "Unsupported daemon protocol version 2; expected 1.",
+          retryable: false,
+        },
+      }));
+      return;
+    }
+    const stopping = request.method === "daemon.stop";
+    socket.end(encodeLocalAgentDaemonResponse({
+      requestId: request.requestId,
+      protocolVersion: 1,
+      ok: true,
+      result: {
+        state: stopping ? "stopping" : "ready",
+        protocolVersion: 1,
+        pid: process.pid,
+        endpoint: upgradePaths.endpoint,
+        startedAt: "now",
+        activeTurns: 0,
+        runtimeCount: 0,
+        clientConnections: 1,
+      },
+    }), () => {
+      if (stopping) legacyServer.close();
+    });
+  });
+});
+await new Promise<void>((resolveListen, rejectListen) => {
+  legacyServer.once("error", rejectListen);
+  legacyServer.listen(upgradePaths.endpoint, resolveListen);
+});
+const replacementManager = new FakeManager();
+replacementManager.activeTurnCount = 0;
+const replacementDaemon = new LocalAgentDaemon({
+  stateDir: upgradeStateDir,
+  manager: replacementManager,
+  idleShutdownMs: 60_000,
+});
+let replacementSpawns = 0;
+const upgradeClient = new LocalAgentClient({
+  stateDir: upgradeStateDir,
+  startupTimeoutMs: 2_000,
+  requestTimeoutMs: 500,
+  spawnDaemon: () => {
+    replacementSpawns += 1;
+    void replacementDaemon.start();
+  },
+});
+try {
+  assert.equal(unwrap(await upgradeClient.ensureReady()).protocolVersion, 2);
+  assert.equal(replacementSpawns, 1);
+  assert.deepEqual(legacyMethods.slice(0, 3), ["hello:2", "hello:1", "daemon.stop:1"]);
+} finally {
+  await replacementDaemon.close();
+}
+
 const timeoutStateDir = join(root, "request-timeout-state");
 await mkdir(timeoutStateDir, { recursive: true });
 const timeoutPaths = localAgentDaemonPaths(timeoutStateDir);
