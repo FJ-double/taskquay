@@ -10,7 +10,15 @@ import { loadConfig } from "./config.js";
 import { resolveCliWorkspaceContext } from "./cli-workspace.js";
 import {
   formatLocalAgentProviderAvailabilitySummary,
+  getLocalAgentProviderAvailabilitySnapshot,
 } from "./local-agent-availability.js";
+import {
+  buildLocalAgentCatalog,
+  buildLocalAgentProviderStatuses,
+  formatLocalAgentCatalog,
+  formatLocalAgentProviderStatusSummary,
+} from "./local-agent-catalog.js";
+import { loadLocalAgentProfiles } from "./local-agent-profiles.js";
 import {
   parseLocalAgentContinueArgs,
   parseLocalAgentRunArgs,
@@ -254,6 +262,12 @@ async function runDoctor(): Promise<void> {
     console.log(`Public MCP URL: ${new URL("/mcp", config.publicBaseUrl).toString()}`);
     console.log(`Allowed roots: ${config.allowedRoots.join(", ")}`);
     console.log(`Allowed hosts: ${config.allowedHosts.join(", ")}`);
+    const providers = buildLocalAgentProviderStatuses(
+      config.subagents,
+      getLocalAgentProviderAvailabilitySnapshot(),
+    );
+    console.log(`Subagents: ${config.subagents.enabled ? "enabled" : "disabled"}`);
+    console.log(`Subagent providers: ${formatLocalAgentProviderStatusSummary(providers)}`);
   } catch (error) {
     console.log(`Config status: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -329,6 +343,9 @@ async function runAgentsCommand(args: string[]): Promise<void> {
     case "show":
       await runAgentsShow(commandArgs, json);
       return;
+    case "targets":
+      await runAgentsTargets(commandArgs, json);
+      return;
     case "daemon":
       await runAgentsDaemon(commandArgs, json);
       return;
@@ -341,6 +358,19 @@ async function runAgentsCommand(args: string[]): Promise<void> {
     default:
       throw new Error(`Unknown agents command: ${subcommand}`);
   }
+}
+
+async function runAgentsTargets(args: string[], json: boolean): Promise<void> {
+  if (args.length > 0) throw new Error("Usage: devspace agents targets [--json]");
+  const config = loadConfig();
+  const scope = resolveCliWorkspaceContext(config.allowedRoots);
+  const profiles = await loadLocalAgentProfiles(config, scope.workspaceRoot);
+  const providers = buildLocalAgentProviderStatuses(
+    config.subagents,
+    getLocalAgentProviderAvailabilitySnapshot(),
+  );
+  const catalog = buildLocalAgentCatalog(config.subagents, profiles, providers);
+  console.log(json ? JSON.stringify(catalog, null, 2) : formatLocalAgentCatalog(catalog));
 }
 
 async function runAgentsList(args: string[], json: boolean): Promise<void> {
@@ -528,6 +558,7 @@ function printAgentsHelp(): void {
       "  devspace agents run <profile-or-provider> [--model <model>] [--effort <level>] [--json] <prompt>",
       "  devspace agents continue <id> [--model <model>] [--effort <level>] [--json] <prompt>",
       "  devspace agents show <id> [--json]",
+      "  devspace agents targets [--json]",
       "  devspace agents daemon <status|stop|logs> [--json]",
     ].join("\n"),
   );

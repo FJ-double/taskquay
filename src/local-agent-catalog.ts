@@ -1,0 +1,112 @@
+import type { SubagentsConfig } from "./local-agent-config.js";
+import type { LocalAgentProviderAvailability } from "./local-agent-availability.js";
+import {
+  LOCAL_AGENT_PROVIDERS,
+  type LocalAgentProfile,
+  type LocalAgentProfileSummary,
+  type LocalAgentProvider,
+} from "./local-agent-profiles.js";
+
+export interface LocalAgentProviderStatus {
+  id: LocalAgentProvider;
+  enabled: boolean;
+  available: boolean;
+  usable: boolean;
+  model?: string;
+  effort?: string;
+  reason?: string;
+  note?: string;
+}
+
+export interface LocalAgentCatalog {
+  enabled: boolean;
+  providers: LocalAgentProviderStatus[];
+  profiles: LocalAgentProfileSummary[];
+}
+
+export function buildLocalAgentProviderStatuses(
+  config: SubagentsConfig,
+  availability: readonly LocalAgentProviderAvailability[],
+): LocalAgentProviderStatus[] {
+  return LOCAL_AGENT_PROVIDERS.map((id) => {
+    const configured = config.providers.find((entry) => entry.id === id);
+    const live = availability.find((entry) => entry.name === id);
+    const enabled = configured?.enabled === true;
+    const available = live?.available === true;
+    return {
+      id,
+      enabled,
+      available,
+      usable: config.enabled && enabled && available,
+      model: configured?.model,
+      effort: configured?.effort,
+      reason: live?.reason,
+      note: live?.note,
+    };
+  });
+}
+
+export function buildLocalAgentCatalog(
+  config: SubagentsConfig,
+  profiles: readonly LocalAgentProfile[],
+  providers: LocalAgentProviderStatus[],
+): LocalAgentCatalog {
+  const usable = new Map(
+    providers.filter((provider) => provider.usable).map((provider) => [provider.id, provider]),
+  );
+  return {
+    enabled: config.enabled,
+    providers,
+    profiles: profiles
+      .filter((profile) => !profile.disabled && usable.has(profile.provider))
+      .map((profile) => {
+        const provider = usable.get(profile.provider)!;
+        return {
+          name: profile.name,
+          description: profile.description,
+          provider: profile.provider,
+          model: profile.model ?? provider.model,
+          effort: profile.effort ?? provider.effort,
+        };
+      }),
+  };
+}
+
+export function formatLocalAgentCatalog(catalog: LocalAgentCatalog): string {
+  if (!catalog.enabled) return "Subagents are disabled.";
+  const providers = catalog.providers.filter((provider) => provider.usable);
+  const providerLines = providers.length > 0
+    ? [
+        "Providers:",
+        ...providers.map((provider) => {
+          const defaults = [
+            provider.model ? `model=${provider.model}` : undefined,
+            provider.effort ? `effort=${provider.effort}` : undefined,
+          ].filter(Boolean).join(", ");
+          return `  ${provider.id}${defaults ? ` (${defaults})` : ""}`;
+        }),
+      ]
+    : ["Providers: none usable"];
+  const profileLines = catalog.profiles.length > 0
+    ? [
+        "Profiles:",
+        ...catalog.profiles.map((profile) => `  ${profile.name} (${profile.provider}) - ${profile.description}`),
+      ]
+    : ["Profiles: none"];
+  return [...providerLines, "", ...profileLines].join("\n");
+}
+
+export function formatLocalAgentProviderStatusSummary(
+  providers: readonly LocalAgentProviderStatus[],
+): string {
+  return providers.map((provider) => {
+    const state = provider.usable
+      ? "usable"
+      : !provider.enabled
+        ? "disabled"
+        : !provider.available
+          ? `unavailable: ${provider.reason ?? "provider preflight failed"}`
+          : "subagents disabled";
+    return `${provider.id} (${state})`;
+  }).join(", ");
+}
