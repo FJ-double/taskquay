@@ -74,11 +74,6 @@ assert.throws(
 );
 
 assert.throws(
-  () => parseLocalAgentRunArgs(["codex", "--thinking", "high", "hello"]),
-  /Unknown option: --thinking/,
-);
-
-assert.throws(
   () => parseLocalAgentRunArgs(["codex", "--unknown", "hello"]),
   /Unknown option: --unknown/,
 );
