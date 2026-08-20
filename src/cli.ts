@@ -158,7 +158,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       port,
       allowedRoots,
       publicBaseUrl,
-      subagents: resolveSubagentsFlag(files.config),
+      subagents: files.config.subagents,
     };
     const auth = {
       ownerToken: files.auth.ownerToken ?? generateOwnerToken(),
