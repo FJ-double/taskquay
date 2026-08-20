@@ -76,33 +76,29 @@ function parseAgentPromptArgs(
       continue;
     }
     if (part === "--model") {
-      const value = rest[index + 1]?.trim();
-      if (!value) throw new Error("Missing value for --model.");
+      const value = parseOptionValue(rest[index + 1], "--model");
       model = value;
       index += 1;
       continue;
     }
     if (part?.startsWith("--model=")) {
-      const value = part.slice("--model=".length).trim();
-      if (!value) throw new Error("Missing value for --model.");
+      const value = parseOptionValue(part.slice("--model=".length), "--model");
       model = value;
       continue;
     }
     if (part === "--effort") {
-      const value = rest[index + 1]?.trim();
-      if (!value) throw new Error("Missing value for --effort.");
+      const value = parseOptionValue(rest[index + 1], "--effort");
       effort = value;
       index += 1;
       continue;
     }
     if (part?.startsWith("--effort=")) {
-      const value = part.slice("--effort=".length).trim();
-      if (!value) throw new Error("Missing value for --effort.");
+      const value = parseOptionValue(part.slice("--effort=".length), "--effort");
       effort = value;
       continue;
     }
     if (part?.startsWith("-")) {
-      throw new Error(`Unknown option: ${part}. Use -- before prompt text that starts with a dash.`);
+      throw unknownOptionError(part);
     }
     promptParts.push(part ?? "");
   }
@@ -113,6 +109,17 @@ function parseAgentPromptArgs(
   }
 
   return { target, prompt, model, effort };
+}
+
+function parseOptionValue(value: string | undefined, option: string): string {
+  const trimmed = value?.trim();
+  if (!trimmed) throw new Error(`Missing value for ${option}.`);
+  if (trimmed.startsWith("-")) throw unknownOptionError(trimmed);
+  return trimmed;
+}
+
+function unknownOptionError(option: string): Error {
+  return new Error(`Unknown option: ${option}. Use -- before prompt text that starts with a dash.`);
 }
 
 export function resolveLocalAgentTarget(

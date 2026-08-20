@@ -78,6 +78,11 @@ assert.throws(
   /Unknown option: --unknown/,
 );
 
+assert.throws(
+  () => parseLocalAgentRunArgs(["codex", "--model", "--unknown", "hello"]),
+  /Unknown option: --unknown/,
+);
+
 assert.deepEqual(parseLocalAgentRunArgs(["codex", "--", "--json", "literal"]), {
   target: "codex",
   prompt: "--json literal",

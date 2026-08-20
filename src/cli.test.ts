@@ -208,6 +208,41 @@ try {
     assert.equal(payload.error.message, "Unknown subagent profile or provider: missing.");
     assert.equal(payload.error.retryable, false);
     assert.equal(payload.error.target, "missing");
+
+    await assert.rejects(
+      execFileAsync(
+        "node",
+        [
+          "--import",
+          "tsx",
+          "src/cli.ts",
+          "agents",
+          "run",
+          "codex",
+          "--model",
+          "--unknown",
+          "inspect",
+        ],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            DEVSPACE_CONFIG_DIR: configDir,
+            DEVSPACE_ALLOWED_ROOTS: projectRoot,
+            DEVSPACE_STATE_DIR: stateDir,
+            DEVSPACE_WORKSPACE_ID: "ws_current",
+            DEVSPACE_WORKSPACE_ROOT: projectRoot,
+            DEVSPACE_SUBAGENTS: "1",
+            DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
+          },
+        },
+      ),
+      (error: unknown) => {
+        assert.match((error as { stderr?: string }).stderr ?? "", /Unknown option: --unknown/);
+        return true;
+      },
+    );
   } finally {
     await new Promise<void>((resolveClose, rejectClose) => {
       daemon.close((error) => error ? rejectClose(error) : resolveClose());
