@@ -10,6 +10,7 @@ import { LocalAgentDaemon, type LocalAgentDaemonManager } from "./local-agent-da
 import {
   ensureLocalAgentDaemonSecret,
   LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+  LocalAgentDaemonLock,
   localAgentDaemonPaths,
 } from "./local-agent-daemon-lifecycle.js";
 import {
@@ -213,6 +214,8 @@ const upgradeStateDir = join(root, "upgrade-state");
 await mkdir(upgradeStateDir, { recursive: true });
 const upgradePaths = localAgentDaemonPaths(upgradeStateDir);
 ensureLocalAgentDaemonSecret(upgradePaths);
+const legacyLock = new LocalAgentDaemonLock(upgradePaths);
+legacyLock.acquire();
 const legacyMethods: string[] = [];
 const legacyServer = createNetServer((socket) => {
   let buffer = "";
@@ -256,7 +259,11 @@ const legacyServer = createNetServer((socket) => {
         clientConnections: 1,
       },
     }), () => {
-      if (stopping) legacyServer.close();
+      if (stopping) {
+        legacyServer.close(() => {
+          setTimeout(() => legacyLock.release(), 50);
+        });
+      }
     });
   });
 });
@@ -272,20 +279,24 @@ const replacementDaemon = new LocalAgentDaemon({
   idleShutdownMs: 60_000,
 });
 let replacementSpawns = 0;
+let spawnedBeforeLegacyLockReleased = false;
 const upgradeClient = new LocalAgentClient({
   stateDir: upgradeStateDir,
   startupTimeoutMs: 2_000,
   requestTimeoutMs: 500,
   spawnDaemon: () => {
     replacementSpawns += 1;
+    spawnedBeforeLegacyLockReleased = existsSync(upgradePaths.lockPath);
     void replacementDaemon.start();
   },
 });
 try {
   assert.equal(unwrap(await upgradeClient.ensureReady()).protocolVersion, 2);
   assert.equal(replacementSpawns, 1);
+  assert.equal(spawnedBeforeLegacyLockReleased, false);
   assert.deepEqual(legacyMethods.slice(0, 3), ["hello:2", "hello:1", "daemon.stop:1"]);
 } finally {
+  legacyLock.release();
   await replacementDaemon.close();
 }
 

@@ -35,6 +35,7 @@ import {
 import {
   LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
   ensureLocalAgentDaemonSecret,
+  isProcessAlive,
   localAgentDaemonPaths,
   readLocalAgentDaemonSecret,
   type LocalAgentDaemonPaths,
@@ -277,7 +278,10 @@ export class LocalAgentClient {
         params: {},
       }, Math.min(this.requestTimeoutMs, 250));
       if (probe.isErr() && probe.error.code === "DAEMON_UNAVAILABLE") {
-        return Result.ok(undefined);
+        if (!existsSync(this.paths.lockPath) || !isProcessAlive(status.value.pid)) {
+          return Result.ok(undefined);
+        }
+        continue;
       }
       if (
         probe.isOk()
