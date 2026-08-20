@@ -9,6 +9,7 @@ import { daemonExecArgv, LocalAgentClient } from "./local-agent-client.js";
 import { LocalAgentDaemon, type LocalAgentDaemonManager } from "./local-agent-daemon.js";
 import {
   ensureLocalAgentDaemonSecret,
+  LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
   localAgentDaemonPaths,
 } from "./local-agent-daemon-lifecycle.js";
 import {
@@ -333,7 +334,9 @@ const replacementRaceServer = createNetServer((socket) => {
         clientConnections: 1,
       },
     }), () => {
-      if (request.method === "daemon.stop") replacementRaceProtocol = 2;
+      if (request.method === "daemon.stop") {
+        replacementRaceProtocol = LOCAL_AGENT_DAEMON_PROTOCOL_VERSION;
+      }
     });
   });
 });
@@ -350,7 +353,10 @@ const replacementRaceClient = new LocalAgentClient({
   },
 });
 try {
-  assert.equal(unwrap(await replacementRaceClient.ensureReady()).protocolVersion, 2);
+  assert.equal(
+    unwrap(await replacementRaceClient.ensureReady()).protocolVersion,
+    LOCAL_AGENT_DAEMON_PROTOCOL_VERSION,
+  );
 } finally {
   await new Promise<void>((resolveClose) => replacementRaceServer.close(() => resolveClose()));
 }
