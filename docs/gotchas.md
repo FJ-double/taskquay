@@ -154,9 +154,11 @@ DevSpace does not currently prune workspace sessions, conversation bindings,
 or review refs. A future product retention policy will define safe cleanup for
 these records; no automatic deletion is performed today.
 
-## Workspace Path Rejected
+## MCP Workspace Path Rejected
 
-The path must be inside one of the allowed roots configured during setup.
+The path passed to `open_workspace` must be inside one of the allowed roots
+configured during ChatGPT setup. Direct `devspace agents` commands instead use
+the current local project and are not gated by MCP allowed roots.
 
 Run:
 

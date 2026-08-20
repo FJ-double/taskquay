@@ -30,8 +30,8 @@ DevSpace uses that answer to skip setup that does not apply to you.
 
 ### Project roots
 
-Choose the project folders DevSpace can access. Keep this
-narrow.
+If you selected ChatGPT, choose the project folders it may open through
+DevSpace. Keep this narrow.
 
 Examples:
 
@@ -46,6 +46,11 @@ Examples:
 ```text
 C:\Users\alice\dev,C:\Users\alice\work
 ```
+
+A Coding Agents-only setup skips this question. Direct `devspace agents`
+commands use the current Git project, or the current directory outside a
+repository, with the authority of your local shell. MCP workspace operations
+remain limited to the roots configured for ChatGPT.
 
 ### Coding Agents
 

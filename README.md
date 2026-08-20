@@ -81,12 +81,13 @@ npx @waishnav/devspace init
 During setup, DevSpace asks for:
 
 - where you will use it: ChatGPT, Coding Agents, or both
-- the local project folders DevSpace is allowed to open
 - which Coding Agents DevSpace may use
 
-If you select ChatGPT, setup also asks for your public HTTPS base
-URL from Cloudflare Tunnel, ngrok, Pinggy, Tailscale Funnel, or another reverse
-proxy. A Coding Agents-only setup does not need a tunnel or public URL.
+If you select ChatGPT, setup also asks which local project folders it may open
+and for your public HTTPS base URL from Cloudflare Tunnel, ngrok, Pinggy,
+Tailscale Funnel, or another reverse proxy. A Coding Agents-only setup asks
+neither question: local commands use the current Git project, or the current
+directory outside a repository.
 
 Use the public origin without `/mcp` during setup:
 
