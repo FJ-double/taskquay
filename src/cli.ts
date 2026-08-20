@@ -314,12 +314,11 @@ function printHelp(): void {
 
 async function runAgentsCommand(args: string[]): Promise<void> {
   const [subcommand, ...rest] = args;
-  const json = rest.includes("--json");
-  const commandArgs = rest.filter((arg) => arg !== "--json");
+  const { args: commandArgs, json } = extractJsonOption(rest);
   switch (subcommand) {
     case "ls":
     case "list":
-      await runAgentsList(json);
+      await runAgentsList(commandArgs, json);
       return;
     case "run":
       await runAgentsRun(commandArgs, json);
@@ -344,7 +343,8 @@ async function runAgentsCommand(args: string[]): Promise<void> {
   }
 }
 
-async function runAgentsList(json: boolean): Promise<void> {
+async function runAgentsList(args: string[], json: boolean): Promise<void> {
+  if (args.length > 0) throw new Error("Usage: devspace agents ls [--json]");
   const config = loadConfig();
   const client = createLocalAgentClient(config);
   const result = await client.list(resolveCliWorkspaceContext(config.allowedRoots));
@@ -407,8 +407,8 @@ async function runAgentsContinue(args: string[], json: boolean): Promise<void> {
 }
 
 async function runAgentsShow(args: string[], json: boolean): Promise<void> {
-  const [id] = args;
-  if (!id) throw new Error("Usage: devspace agents show <id>");
+  const [id, ...extra] = args;
+  if (!id || extra.length > 0) throw new Error("Usage: devspace agents show <id> [--json]");
 
   const config = loadConfig();
   const client = createLocalAgentClient(config);
@@ -445,7 +445,8 @@ async function runAgentsShow(args: string[], json: boolean): Promise<void> {
 }
 
 async function runAgentsDaemon(args: string[], json: boolean): Promise<void> {
-  const [subcommand] = args;
+  const [subcommand, ...extra] = args;
+  if (extra.length > 0) throw new Error("Usage: devspace agents daemon <status|stop|logs> [--json]");
   const config = loadConfig();
   const client = createLocalAgentClient(config);
   switch (subcommand) {
@@ -470,6 +471,25 @@ async function runAgentsDaemon(args: string[], json: boolean): Promise<void> {
     default:
       throw new Error("Usage: devspace agents daemon <status|stop|logs>");
   }
+}
+
+function extractJsonOption(args: string[]): { args: string[]; json: boolean } {
+  const commandArgs: string[] = [];
+  let json = false;
+  let optionsEnded = false;
+  for (const argument of args) {
+    if (!optionsEnded && argument === "--") {
+      optionsEnded = true;
+      commandArgs.push(argument);
+      continue;
+    }
+    if (!optionsEnded && argument === "--json") {
+      json = true;
+      continue;
+    }
+    commandArgs.push(argument);
+  }
+  return { args: commandArgs, json };
 }
 
 function formatAgentLine(agent: Pick<

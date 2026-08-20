@@ -64,8 +64,17 @@ function parseAgentPromptArgs(
   let model: string | undefined;
   let effort: string | undefined;
   const promptParts: string[] = [];
+  let optionsEnded = false;
   for (let index = 0; index < rest.length; index += 1) {
     const part = rest[index];
+    if (!optionsEnded && part === "--") {
+      optionsEnded = true;
+      continue;
+    }
+    if (optionsEnded) {
+      promptParts.push(part ?? "");
+      continue;
+    }
     if (part === "--model") {
       const value = rest[index + 1]?.trim();
       if (!value) throw new Error("Missing value for --model.");
@@ -91,6 +100,9 @@ function parseAgentPromptArgs(
       if (!value) throw new Error("Missing value for --effort.");
       effort = value;
       continue;
+    }
+    if (part?.startsWith("-")) {
+      throw new Error(`Unknown option: ${part}. Use -- before prompt text that starts with a dash.`);
     }
     promptParts.push(part ?? "");
   }

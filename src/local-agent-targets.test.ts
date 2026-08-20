@@ -73,6 +73,23 @@ assert.throws(
   /Missing value for --effort/,
 );
 
+assert.throws(
+  () => parseLocalAgentRunArgs(["codex", "--thinking", "high", "hello"]),
+  /Unknown option: --thinking/,
+);
+
+assert.throws(
+  () => parseLocalAgentRunArgs(["codex", "--unknown", "hello"]),
+  /Unknown option: --unknown/,
+);
+
+assert.deepEqual(parseLocalAgentRunArgs(["codex", "--", "--json", "literal"]), {
+  target: "codex",
+  prompt: "--json literal",
+  model: undefined,
+  effort: undefined,
+});
+
 {
   const target = resolveLocalAgentTarget("reviewer", profiles);
   assert.equal(target?.kind, "profile");
