@@ -1,147 +1,69 @@
 ---
 name: subagents
-description: Delegate coding tasks to user-configured DevSpace subagents.
+description: Delegate focused coding, research, review, or verification work to a bounded DevSpace subagent. Use when a task benefits from separate context, a specialist perspective, or a follow-up with the same worker.
 ---
 
-# Subagents
+# DevSpace subagents
 
-Use this skill when the user explicitly asks to delegate work to another coding
-agent, use a named subagent, get a second opinion, compare approaches, or run
-a subagent-like workflow.
+Use the DevSpace CLI through the host's shell or process tool. Run commands from
+the project the subagent should work on. DevSpace scopes sessions to the host
+workspace when supplied, otherwise to the current Git repository or project
+directory.
 
-Do not use subagents silently. Tell the user when another subagent is
-being used.
+## Choose a target
 
-## Core commands
-
-Use only these commands for normal delegation. The `npx` form works whether or
-not the user installed DevSpace globally.
+Discover usable targets instead of guessing names:
 
 ```bash
-devspace agents targets
-devspace agents ls
-devspace agents run <profile-or-provider> "<prompt>"
-devspace agents continue <id> "<prompt>"
-devspace agents show <id>
+devspace agents targets --json
 ```
 
-`targets` shows the providers and profiles available for the current project.
-Use an agent or profile already presented by DevSpace. If you do not know which
-ones are available, run `devspace agents targets` before
-delegating.
+Configured profiles include a description and may define provider, model,
+effort, and task instructions. Choose a matching profile when one fits. Use a
+provider target when no profile fits or a specific provider is needed.
+Unavailable and disabled providers are omitted.
 
-`ls` shows existing subagent sessions for the current project. DevSpace selects
-the project from the command environment. Use the returned `agt_...` ID with
-`continue`. Provider session IDs cannot replace DevSpace agent IDs.
+Usually rely on the target's configured model and effort. Pass `--model` or
+`--effort` only with a value supported by that provider. DevSpace passes these
+values through without translating them between providers.
 
-`run <profile> "<prompt>"` starts a new configured profile and prints a
-DevSpace agent id.
+## Start work
 
-`run <provider> "<prompt>"` starts an enabled provider when no configured
-profile is needed. Run `targets` if you do not know which providers are enabled.
-
-`continue <id> "<prompt>"` sends a follow-up to an existing agent. Do not use
-`run <id>` for continuation.
-
-Continuation supports the same per-turn model and effort overrides:
+Give the subagent a self-contained brief. Include the objective, relevant
+paths, constraints, decisions it needs from the current conversation, and the
+expected result. The subagent receives the brief and its profile instructions,
+not the parent conversation.
 
 ```bash
-devspace agents continue <id> --model <model> "<prompt>"
-devspace agents continue <id> --effort <level> "<prompt>"
+devspace agents run <profile-or-provider> "<brief>" --json
+devspace agents run <profile-or-provider> --model <model> --effort <effort> "<brief>" --json
 ```
 
-`show <id>` prints status and the latest response. If the agent is still
-running, `show` waits briefly. If there is still no final response, call `show`
-again later.
+The result contains a DevSpace agent `id` and its current status. Execution
+continues independently, so retain the ID for later inspection or follow-up.
 
-Use DevSpace commands for delegation instead of calling provider commands
-directly. DevSpace manages execution and continuation for you.
-
-## Choosing a profile
-
-Choose from the profiles DevSpace has already presented. If no catalog is
-visible, run `devspace agents targets`. Use the profile name with
-the `agents run` command. If no profile fits, use an enabled provider from the
-same result.
-
-Profiles may declare a model and optional effort level. To override the
-configured/default provider model or effort level for a run, pass `--model`
-or `--effort`:
+## Inspect and continue
 
 ```bash
-devspace agents run <profile-or-provider> --model <model> "<prompt>"
-devspace agents run <profile-or-provider> --effort <level> "<prompt>"
+devspace agents show <id> --json
+devspace agents continue <id> "<follow-up brief>" --json
+devspace agents ls --json
 ```
 
-Use `--effort` only when the user asks for a specific reasoning depth or when
-the task clearly needs a different effort than the configured profile default.
-Effort values are provider-specific. Use a value supported by the selected
-provider. DevSpace does not translate values between providers.
+- `show` waits briefly for active work, then returns the current status and any
+  available response or error.
+- `continue` gives the same subagent another turn with its existing provider
+  session and context.
+- `ls` returns sessions belonging to the current project.
 
-Good delegation targets:
+Call `show --json` again later while the status is `starting` or `running`.
+`idle` means the response is ready. `error` and `stopped` are terminal without
+a successful response. Continue an agent when its existing context is useful;
+start another agent for unrelated work.
 
-- `reviewer`: second opinion, bug risk, security risk, test gaps.
-- `explorer`: read-only codebase investigation.
-- `implementer`: focused implementation when the user asked for delegation.
+## Good uses
 
-Do not delegate ordinary coding work just because a profile exists. Use normal
-DevSpace tools unless the user asked for delegation, another agent's opinion,
-parallel work, or a named subagent.
-
-## Worker prompts
-
-Agents start with only the prompt you send plus their configured profile
-instructions. Make prompts self-contained.
-
-Implementation prompt shape:
-
-```text
-Goal:
-<clear goal>
-
-Context:
-<repo/module/user constraints>
-
-Relevant files:
-<paths and why they matter>
-
-Acceptance criteria:
-- <criterion>
-
-Rules:
-- Keep changes focused.
-- Do not perform unrelated refactors.
-- Report blockers clearly.
-```
-
-Read-only investigation prompt shape:
-
-```text
-Question:
-<specific question>
-
-Scope:
-<files/directories/modules to inspect>
-
-Rules:
-- Do not modify files.
-- Cite relevant file paths and symbols.
-- Separate facts from guesses.
-```
-
-## After the worker responds
-
-Always review the result before presenting it as verified.
-
-For write-capable tasks, inspect changed files and run or explain relevant
-tests. For read-only tasks, verify that important claims are supported by repo
-evidence.
-
-Be transparent in the final response:
-
-```text
-I used <profile>. It reported <summary>. I verified <checks>. Remaining risk:
-<risk or none>.
-```
-
-Never hide that a subagent was used.
+- Review a change for correctness, security, or missing tests.
+- Investigate a bounded part of a codebase and report findings.
+- Implement one isolated change with clear acceptance criteria.
+- Run a focused verification pass after other work.
