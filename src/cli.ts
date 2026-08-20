@@ -8,6 +8,7 @@ import { getShellConfig } from "@earendil-works/pi-coding-agent";
 import { satisfies } from "semver";
 import { loadConfig } from "./config.js";
 import { resolveCliWorkspaceContext } from "./cli-workspace.js";
+import { resolveSubagentsConfig } from "./local-agent-config.js";
 import {
   getLocalAgentProviderAvailabilitySnapshot,
 } from "./local-agent-availability.js";
@@ -18,6 +19,7 @@ import {
   formatLocalAgentProviderStatusSummary,
 } from "./local-agent-catalog.js";
 import { loadLocalAgentProfiles } from "./local-agent-profiles.js";
+import type { LocalAgentProvider } from "./local-agent-profiles.js";
 import {
   parseLocalAgentContinueArgs,
   parseLocalAgentRunArgs,
@@ -26,10 +28,12 @@ import { createLocalAgentClient } from "./local-agent-client.js";
 import { toAgentErrorPayload, type LocalAgentError } from "./local-agent-errors.js";
 import type { LocalAgentRecord } from "./local-agent-store.js";
 import {
-  ensureDevspaceDefaultSkills,
+  SUBAGENT_SKILL_INSTALL_COMMAND,
+  updateOnboardingSubagentsConfig,
+} from "./onboarding.js";
+import {
   generateOwnerToken,
   loadDevspaceFiles,
-  resolveSubagentsFlag,
   writeDevspaceAuth,
   writeDevspaceConfig,
   type DevspaceUserConfig,
@@ -134,31 +138,78 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
     });
     const port = Number(portAnswer);
 
-    prompts.note(
-      [
-        "DevSpace needs a public base URL so ChatGPT or Claude can reach this MCP server.",
-        "Create a tunnel or reverse proxy with Cloudflare Tunnel, ngrok, Pinggy, Tailscale Funnel, or your own HTTPS proxy.",
-        "Paste the public origin here, without /mcp.",
-        "",
-        "Example: https://your-tunnel-host.example.com",
-      ].join("\n"),
-      "Public URL required",
+    const useRemoteMcp = await confirmPrompt({
+      message: "Will a remote MCP host such as ChatGPT connect to DevSpace?",
+      initialValue: Boolean(files.config.publicBaseUrl),
+    });
+    let publicBaseUrl: string | null = null;
+    if (useRemoteMcp) {
+      prompts.note(
+        [
+          "Create a user-controlled tunnel or reverse proxy so the remote host can reach DevSpace.",
+          "Paste its public origin without /mcp.",
+          "",
+          "Example: https://your-tunnel-host.example.com",
+        ].join("\n"),
+        "Remote MCP access",
+      );
+      publicBaseUrl = normalizePublicBaseUrl(await textPrompt({
+        message: files.config.publicBaseUrl
+          ? `What is the public base URL? Press Enter to keep ${files.config.publicBaseUrl}`
+          : "What is the public base URL?",
+        placeholder: files.config.publicBaseUrl ?? "https://your-tunnel-host.example.com",
+        defaultValue: files.config.publicBaseUrl ?? "",
+        validate: validateRequiredPublicBaseUrl,
+      }));
+    }
+
+    const useLocalHarness = await confirmPrompt({
+      message: "Will you use DevSpace subagents from a local coding harness?",
+      initialValue: !useRemoteMcp,
+    });
+    const currentSubagents = resolveSubagentsConfig(files.config.subagents, {});
+    const enableSubagents = await confirmPrompt({
+      message: "Enable DevSpace subagents?",
+      initialValue: currentSubagents.enabled,
+    });
+    let selectedProviders: LocalAgentProvider[] = [];
+    if (enableSubagents) {
+      const availability = getLocalAgentProviderAvailabilitySnapshot();
+      const configuredProviders = currentSubagents.providers
+        .filter((provider) => provider.enabled)
+        .map((provider) => provider.id);
+      const initialValues = configuredProviders.length > 0
+        ? configuredProviders
+        : availability
+            .filter((provider) => provider.available)
+            .map((provider) => provider.name);
+      const providerAnswer = await prompts.multiselect({
+        message: "Which providers may DevSpace launch?",
+        options: availability.map((provider) => ({
+          value: provider.name,
+          label: provider.name,
+          hint: provider.available
+            ? provider.note ?? "available"
+            : `unavailable: ${provider.reason ?? "provider preflight failed"}`,
+        })),
+        initialValues,
+        required: true,
+      });
+      if (prompts.isCancel(providerAnswer)) throw new SetupCancelledError();
+      selectedProviders = providerAnswer as LocalAgentProvider[];
+    }
+    const subagents = updateOnboardingSubagentsConfig(
+      currentSubagents,
+      enableSubagents,
+      selectedProviders,
     );
-    const publicBaseUrl = normalizePublicBaseUrl(await textPrompt({
-      message: files.config.publicBaseUrl
-        ? `What is the public base URL? Press Enter to keep ${files.config.publicBaseUrl}`
-        : "What is the public base URL?",
-      placeholder: files.config.publicBaseUrl ?? "https://your-tunnel-host.example.com",
-      defaultValue: files.config.publicBaseUrl ?? "",
-      validate: validateRequiredPublicBaseUrl,
-    }));
 
     const config: DevspaceUserConfig = {
       host: files.config.host ?? "127.0.0.1",
       port,
       allowedRoots,
       publicBaseUrl,
-      subagents: files.config.subagents,
+      subagents,
     };
     const auth = {
       ownerToken: files.auth.ownerToken ?? generateOwnerToken(),
@@ -166,25 +217,45 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
 
     const configPath = writeDevspaceConfig(config);
     const authPath = writeDevspaceAuth(auth);
-    const seededSkillPaths = resolveSubagentsFlag(config) ? ensureDevspaceDefaultSkills() : [];
 
     const lines = [
       `Config: ${configPath}`,
       `Auth: ${authPath}`,
-      ...seededSkillPaths.map((path) => `Default skill: ${path}`),
       `Local MCP URL: http://${config.host}:${config.port}/mcp`,
       ...(publicBaseUrl ? [`Public MCP URL: ${publicBaseUrl}/mcp`] : []),
     ];
     prompts.note(lines.join("\n"), "DevSpace configured");
-    prompts.note(
-      [
-        `Owner password: ${auth.ownerToken}`,
-        "Use this when ChatGPT or Claude asks you to approve DevSpace access.",
-        `Stored at: ${authPath}`,
-      ].join("\n"),
-      "Owner password",
-    );
-    prompts.outro("Run `devspace serve` to start the MCP server.");
+    if (useRemoteMcp) {
+      prompts.note(
+        [
+          `Owner password: ${auth.ownerToken}`,
+          "Use this when the remote MCP host asks you to approve DevSpace access.",
+          `Stored at: ${authPath}`,
+        ].join("\n"),
+        "Owner password",
+      );
+    }
+    if (useLocalHarness && subagents.enabled) {
+      prompts.note(
+        [
+          SUBAGENT_SKILL_INSTALL_COMMAND,
+          "",
+          "The Skills CLI will let you choose the local harnesses that receive it.",
+          "DevSpace does not write into harness skill directories during setup.",
+        ].join("\n"),
+        "Install the Subagents skill",
+      );
+    }
+    const nextSteps = [
+      useRemoteMcp ? "Run `devspace serve` to start the MCP server." : undefined,
+      useLocalHarness && subagents.enabled
+        ? "Run the skill command above before delegating from a local harness."
+        : undefined,
+      !useRemoteMcp && !(useLocalHarness && subagents.enabled)
+        ? "Run `devspace agents targets` to inspect the local configuration."
+        : undefined,
+    ].filter(Boolean).join(" ");
+    prompts.outro(nextSteps);
   } catch (error) {
     if (error instanceof SetupCancelledError) {
       prompts.cancel("Setup cancelled");
@@ -599,6 +670,14 @@ async function textPrompt(options: TextPromptOptions): Promise<string> {
   if (prompts.isCancel(result)) throw new SetupCancelledError();
   const value = String(result).trim();
   return value || options.defaultValue;
+}
+
+async function confirmPrompt(
+  options: Parameters<typeof prompts.confirm>[0],
+): Promise<boolean> {
+  const result = await prompts.confirm(options);
+  if (prompts.isCancel(result)) throw new SetupCancelledError();
+  return result;
 }
 
 function validatePort(value: string | undefined): string | undefined {

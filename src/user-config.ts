@@ -6,12 +6,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { expandHomePath } from "./roots.js";
-import {
-  resolveSubagentsConfig,
-  type StoredSubagentsConfig,
-} from "./local-agent-config.js";
+import type { StoredSubagentsConfig } from "./local-agent-config.js";
 
 export interface DevspaceUserConfig {
   host?: string;
@@ -101,24 +98,6 @@ export function writeDevspaceAuth(
 
 export function generateOwnerToken(): string {
   return randomBytes(32).toString("base64url");
-}
-
-export function ensureDevspaceDefaultSkills(env: NodeJS.ProcessEnv = process.env): string[] {
-  const targetPath = join(devspaceSkillsDir(env), "subagent-delegation", "SKILL.md");
-  if (existsSync(targetPath)) return [];
-
-  const sourcePath = new URL("../skills/subagent-delegation/SKILL.md", import.meta.url);
-  mkdirSync(dirname(targetPath), { recursive: true });
-  writeFileSync(targetPath, readFileSync(sourcePath, "utf8"), { mode: 0o644 });
-  return [targetPath];
-}
-
-export function resolveSubagentsFlag(
-  config: Pick<DevspaceUserConfig, "subagents">,
-  env: NodeJS.ProcessEnv = process.env,
-): boolean | undefined {
-  if (config.subagents === undefined && env.DEVSPACE_SUBAGENTS === undefined) return undefined;
-  return resolveSubagentsConfig(config.subagents, env).enabled;
 }
 
 function readJsonFile<T>(filePath: string): T {
