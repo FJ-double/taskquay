@@ -15,7 +15,6 @@ import {
 import {
   buildLocalAgentCatalog,
   buildLocalAgentProviderStatuses,
-  formatLocalAgentCatalog,
   formatLocalAgentProviderStatusSummary,
 } from "./local-agent-catalog.js";
 import { loadLocalAgentProfiles } from "./local-agent-profiles.js";
@@ -26,7 +25,16 @@ import {
 } from "./local-agent-targets.js";
 import { createLocalAgentClient } from "./local-agent-client.js";
 import { toAgentErrorPayload, type LocalAgentError } from "./local-agent-errors.js";
-import type { LocalAgentRecord } from "./local-agent-store.js";
+import {
+  formatAgentObservation,
+  formatAgentReceipt,
+  formatAgentSummary,
+  formatAgentTargetCatalog,
+  presentAgentObservation,
+  presentAgentReceipt,
+  presentAgentSummary,
+  presentAgentTargetCatalog,
+} from "./local-agent-presentation.js";
 import {
   type OnboardingDestination,
   SUBAGENT_SKILL_INSTALL_COMMAND,
@@ -437,7 +445,9 @@ async function runAgentsTargets(args: string[], json: boolean): Promise<void> {
     getLocalAgentProviderAvailabilitySnapshot(),
   );
   const catalog = buildLocalAgentCatalog(config.subagents, profiles, providers);
-  console.log(json ? JSON.stringify(catalog, null, 2) : formatLocalAgentCatalog(catalog));
+  const output = presentAgentTargetCatalog(catalog);
+  if (json) printJson(output);
+  else console.log(formatAgentTargetCatalog(output));
 }
 
 async function runAgentsList(args: string[], json: boolean): Promise<void> {
@@ -448,8 +458,9 @@ async function runAgentsList(args: string[], json: boolean): Promise<void> {
   const agents = presentAgentResult(result, json);
   if (!agents) return;
 
+  const summaries = agents.map(presentAgentSummary);
   if (json) {
-    console.log(JSON.stringify(agents, null, 2));
+    printJson(summaries);
     return;
   }
 
@@ -458,8 +469,8 @@ async function runAgentsList(args: string[], json: boolean): Promise<void> {
     return;
   }
 
-  for (const agent of agents) {
-    console.log(formatAgentLine(agent));
+  for (const summary of summaries) {
+    console.log(formatAgentSummary(summary));
   }
 }
 
@@ -478,11 +489,12 @@ async function runAgentsRun(args: string[], json: boolean): Promise<void> {
   });
   const record = presentAgentResult(result, json);
   if (!record) return;
+  const receipt = presentAgentReceipt(record);
   if (json) {
-    console.log(JSON.stringify(record, null, 2));
+    printJson(receipt);
     return;
   }
-  console.log(formatAgentLine(record));
+  console.log(formatAgentReceipt(receipt));
 }
 
 async function runAgentsContinue(args: string[], json: boolean): Promise<void> {
@@ -496,11 +508,12 @@ async function runAgentsContinue(args: string[], json: boolean): Promise<void> {
   }, scope);
   const record = presentAgentResult(result, json);
   if (!record) return;
+  const receipt = presentAgentReceipt(record);
   if (json) {
-    console.log(JSON.stringify(record, null, 2));
+    printJson(receipt);
     return;
   }
-  console.log(formatAgentLine(record));
+  console.log(formatAgentReceipt(receipt));
 }
 
 async function runAgentsShow(args: string[], json: boolean): Promise<void> {
@@ -522,23 +535,9 @@ async function runAgentsShow(args: string[], json: boolean): Promise<void> {
     record = refreshed;
   }
 
-  if (json) {
-    console.log(JSON.stringify(record, null, 2));
-    return;
-  }
-
-  console.log(formatAgentLine(record));
-  if (record.latestResponse) {
-    console.log(record.latestResponse);
-    return;
-  }
-  if (record.error) {
-    console.log(record.error);
-    return;
-  }
-  if (record.status === "starting" || record.status === "running") {
-    console.log(`No final response yet. Call \`devspace agents show ${record.id}\` again later.`);
-  }
+  const observation = presentAgentObservation(record);
+  if (json) printJson(observation);
+  else console.log(formatAgentObservation(observation));
 }
 
 async function runAgentsDaemon(args: string[], json: boolean): Promise<void> {
@@ -550,19 +549,21 @@ async function runAgentsDaemon(args: string[], json: boolean): Promise<void> {
     case "status": {
       const status = presentAgentResult(await client.status(), json);
       if (!status) return;
-      console.log(JSON.stringify(status, null, 2));
+      printJson(status);
       return;
     }
     case "stop": {
       const status = presentAgentResult(await client.stop(), json);
       if (!status) return;
-      console.log(json ? JSON.stringify(status, null, 2) : "Local agent daemon stop requested.");
+      if (json) printJson(status);
+      else console.log("Local agent daemon stop requested.");
       return;
     }
     case "logs": {
       const logs = presentAgentResult(await client.logs(), json);
       if (logs === undefined) return;
-      console.log(json ? JSON.stringify({ logs }, null, 2) : (logs || "No local agent daemon logs found."));
+      if (json) printJson({ logs });
+      else console.log(logs || "No local agent daemon logs found.");
       return;
     }
     default:
@@ -589,26 +590,21 @@ function extractJsonOption(args: string[]): { args: string[]; json: boolean } {
   return { args: commandArgs, json };
 }
 
-function formatAgentLine(agent: Pick<
-  LocalAgentRecord,
-  "id" | "status" | "profileName" | "provider" | "model" | "effort"
->): string {
-  const model = agent.model ? ` ${agent.model}` : "";
-  const effort = agent.effort ? ` effort=${agent.effort}` : "";
-  return `${agent.id} ${agent.status} ${agent.profileName} ${agent.provider}${model}${effort}`;
-}
-
 function presentAgentResult<T, E extends LocalAgentError>(
   result: BetterResult<T, E>,
   json: boolean,
 ): T | undefined {
   if (result.isOk()) return result.value;
   if (json) {
-    console.log(JSON.stringify({ ok: false, error: toAgentErrorPayload(result.error) }, null, 2));
+    printJson({ error: toAgentErrorPayload(result.error) });
     process.exitCode = 1;
     return undefined;
   }
   throw new Error(result.error.message);
+}
+
+function printJson(value: unknown): void {
+  console.log(JSON.stringify(value));
 }
 
 function sleep(ms: number): Promise<void> {

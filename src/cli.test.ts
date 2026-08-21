@@ -63,7 +63,7 @@ try {
       model: "gpt-5.4",
       effort: "high",
     }).id,
-    { status: "idle" },
+    { status: "idle", latestResponse: "Review complete.", providerSessionId: "provider_secret" },
   );
   const other = store.update(
     store.create({
@@ -148,9 +148,32 @@ try {
       },
     });
 
-    assert.match(output, new RegExp(`${current.id} idle reviewer codex gpt-5\\.4 effort=high`));
-    assert.doesNotMatch(output, /profile reviewer/);
+    assert.equal(output.trim(), `${current.id} completed reviewer`);
     assert.doesNotMatch(output, new RegExp(other.id));
+
+    const { stdout: jsonOutput } = await execFileAsync(
+      "node",
+      ["--import", "tsx", "src/cli.ts", "agents", "ls", "--json"],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          DEVSPACE_CONFIG_DIR: configDir,
+          DEVSPACE_ALLOWED_ROOTS: projectRoot,
+          DEVSPACE_STATE_DIR: stateDir,
+          DEVSPACE_WORKSPACE_ID: "ws_current",
+          DEVSPACE_WORKSPACE_ROOT: projectRoot,
+          DEVSPACE_SUBAGENTS: "1",
+          DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
+        },
+      },
+    );
+    assert.equal(
+      jsonOutput,
+      `${JSON.stringify([{ id: current.id, status: "completed", target: "reviewer" }])}\n`,
+    );
+    assert.doesNotMatch(jsonOutput, /Review complete|provider_secret|workspaceRoot|providerSessionId/);
 
     const { stdout: directOutput } = await execFileAsync(
       "node",
@@ -200,10 +223,8 @@ try {
     assert.ok(commandFailure, "structured CLI errors should exit non-zero");
     const stdout = (commandFailure as { stdout?: string }).stdout ?? "";
     const payload = JSON.parse(stdout) as {
-      ok: boolean;
       error: { code: string; message: string; retryable: boolean; target: string };
     };
-    assert.equal(payload.ok, false);
     assert.equal(payload.error.code, "UNKNOWN_TARGET");
     assert.equal(payload.error.message, "Unknown subagent profile or provider: missing.");
     assert.equal(payload.error.retryable, false);
