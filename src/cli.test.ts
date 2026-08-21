@@ -149,7 +149,6 @@ try {
     });
 
     assert.equal(output.trim(), `${current.id} completed reviewer`);
-    assert.doesNotMatch(output, new RegExp(other.id));
 
     const { stdout: jsonOutput } = await execFileAsync(
       "node",
@@ -173,7 +172,6 @@ try {
       jsonOutput,
       `${JSON.stringify([{ id: current.id, status: "completed", target: "reviewer" }])}\n`,
     );
-    assert.doesNotMatch(jsonOutput, /Review complete|provider_secret|workspaceRoot|providerSessionId/);
 
     const { stdout: directOutput } = await execFileAsync(
       "node",

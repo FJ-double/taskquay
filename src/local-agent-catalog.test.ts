@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import {
   buildLocalAgentCatalog,
   buildLocalAgentProviderStatuses,
-  formatLocalAgentCatalog,
 } from "./local-agent-catalog.js";
 import type { LocalAgentProfile } from "./local-agent-profiles.js";
 import type { SubagentsConfig } from "./local-agent-config.js";
@@ -58,4 +57,3 @@ assert.deepEqual(catalog.profiles.map((profile) => profile.name), ["reviewer", "
 assert.equal(catalog.profiles[0]?.model, "gpt-default");
 assert.equal(catalog.profiles[0]?.effort, "medium");
 assert.equal(catalog.profiles[1]?.model, "gpt-custom");
-assert.match(formatLocalAgentCatalog(catalog), /codex \(model=gpt-default, effort=medium\)/);

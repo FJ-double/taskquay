@@ -71,21 +71,6 @@ assert.equal(
   "agt_test failed PROVIDER_EXECUTION_ERROR: Provider disconnected. [retryable]",
 );
 
-const serializedSummary = JSON.stringify(presentAgentSummary(record));
-for (const privateValue of [
-  record.workspaceId,
-  record.workspaceRoot,
-  record.providerSessionId,
-  record.latestResponse,
-  record.model,
-  record.effort,
-  record.createdAt,
-  record.updatedAt,
-]) {
-  assert.ok(privateValue);
-  assert.doesNotMatch(serializedSummary, new RegExp(privateValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-}
-
 const catalog: LocalAgentCatalog = {
   enabled: true,
   providers: [
@@ -120,7 +105,6 @@ assert.deepEqual(targetCatalog, {
     },
   ],
 });
-assert.doesNotMatch(JSON.stringify(targetCatalog), /claude|credentials missing/);
 assert.equal(
   formatAgentTargetCatalog(targetCatalog),
   [

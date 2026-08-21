@@ -73,30 +73,6 @@ export function buildLocalAgentCatalog(
   };
 }
 
-export function formatLocalAgentCatalog(catalog: LocalAgentCatalog): string {
-  if (!catalog.enabled) return "Subagents are disabled.";
-  const providers = catalog.providers.filter((provider) => provider.usable);
-  const providerLines = providers.length > 0
-    ? [
-        "Providers:",
-        ...providers.map((provider) => {
-          const defaults = [
-            provider.model ? `model=${provider.model}` : undefined,
-            provider.effort ? `effort=${provider.effort}` : undefined,
-          ].filter(Boolean).join(", ");
-          return `  ${provider.id}${defaults ? ` (${defaults})` : ""}`;
-        }),
-      ]
-    : ["Providers: none usable"];
-  const profileLines = catalog.profiles.length > 0
-    ? [
-        "Profiles:",
-        ...catalog.profiles.map((profile) => `  ${profile.name} (${profile.provider}) - ${profile.description}`),
-      ]
-    : ["Profiles: none"];
-  return [...providerLines, "", ...profileLines].join("\n");
-}
-
 export function formatLocalAgentProviderStatusSummary(
   providers: readonly LocalAgentProviderStatus[],
 ): string {

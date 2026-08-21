@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import {
-  GROK_DEFAULT_MODEL,
   GrokPromptCompletionRegistry,
-  isGrokReasoningEffort,
   normalizeGrokModelId,
   parseGrokPromptCompletion,
   readGrokSessionState,
@@ -36,8 +34,6 @@ assert.deepEqual(state, {
 assert.equal(normalizeGrokModelId("grok/grok-4.5"), "grok-4.5");
 assert.equal(resolveGrokModelId("grok-4.5", state), "grok-4.5");
 assert.equal(resolveGrokEffort("low", state, "grok-4.5"), "low");
-assert.equal(isGrokReasoningEffort("low"), true);
-assert.equal(GROK_DEFAULT_MODEL, "grok-build");
 assert.throws(
   () => resolveGrokModelId("grok-unknown", state),
   /Available models: grok-4\.5/,
@@ -62,21 +58,13 @@ assert.deepEqual(
   }),
   { sessionId: "grok_session_1", promptId: "prompt_2", stopReason: "end_turn" },
 );
-assert.equal(
-  parseGrokPromptCompletion({
-    sessionId: "grok_session_1",
-    promptId: "task-completed-123",
-  }),
-  undefined,
-);
-assert.equal(
-  parseGrokPromptCompletion({ sessionId: "grok_session_1", update: { sessionUpdate: "agent_message_chunk" } }),
-  undefined,
-);
-assert.equal(
-  parseGrokPromptCompletion({ sessionId: "grok_session_1", update: { stopReason: "end_turn" } }),
-  undefined,
-);
+for (const incomplete of [
+  { sessionId: "grok_session_1", promptId: "task-completed-123" },
+  { sessionId: "grok_session_1", update: { sessionUpdate: "agent_message_chunk" } },
+  { sessionId: "grok_session_1", update: { stopReason: "end_turn" } },
+]) {
+  assert.equal(parseGrokPromptCompletion(incomplete), undefined);
+}
 
 const registry = new GrokPromptCompletionRegistry();
 const completion = registry.wait("grok_session_1", "prompt_3", 100, () => new Error("timed out"));

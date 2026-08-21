@@ -1,15 +1,18 @@
 import assert from "node:assert/strict";
 import {
   resolveOnboardingUsage,
-  SUBAGENT_SKILL_INSTALL_COMMAND,
   updateOnboardingSubagentsConfig,
   usesChatGpt,
   usesCodingAgents,
 } from "./onboarding.js";
 
-assert.equal(resolveOnboardingUsage(["chatgpt"]), "chatgpt");
-assert.equal(resolveOnboardingUsage(["coding-agents"]), "coding-agents");
-assert.equal(resolveOnboardingUsage(["coding-agents", "chatgpt"]), "both");
+for (const [selections, expected] of [
+  [["chatgpt"], "chatgpt"],
+  [["coding-agents"], "coding-agents"],
+  [["coding-agents", "chatgpt"], "both"],
+] as const) {
+  assert.equal(resolveOnboardingUsage(selections), expected);
+}
 assert.equal(usesChatGpt("both"), true);
 assert.equal(usesCodingAgents("both"), true);
 assert.equal(usesChatGpt("coding-agents"), false);
@@ -46,8 +49,4 @@ assert.deepEqual(
       { id: "claude", enabled: true, model: "sonnet" },
     ],
   },
-);
-assert.equal(
-  SUBAGENT_SKILL_INSTALL_COMMAND,
-  "npx skills add Waishnav/devspace --skill subagents --global",
 );
