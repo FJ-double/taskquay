@@ -27,7 +27,7 @@ name: reviewer
 description: Read-only reviewer for bugs, security risks, and missing tests.
 provider: codex
 model: gpt-5.4
-thinking: high
+effort: high
 disabled: false
 ---
 
@@ -100,16 +100,16 @@ model: gpt-5.4
 model: sonnet
 ```
 
-### `thinking`
+### `effort`
 
 Optional provider reasoning effort, thinking level, or model variant. If omitted,
 DevSpace lets the provider default apply. Values are provider-specific
 passthrough strings; DevSpace does not translate names between harnesses.
 
 ```yaml
-thinking: low
-thinking: high
-thinking: xhigh
+effort: low
+effort: high
+effort: xhigh
 ```
 
 DevSpace passes this through to providers that expose a matching control:
@@ -146,6 +146,7 @@ The Subagent skill teaches only:
 
 ```bash
 devspace agents ls
+devspace agents targets
 devspace agents run <profile-or-provider> "<prompt>"
 devspace agents continue <id> "<prompt>"
 devspace agents show <id>
@@ -159,12 +160,13 @@ devspace agents show <id>
   "description": "Read-only reviewer for bugs, security risks, and missing tests.",
   "provider": "codex",
   "model": "gpt-5.4",
-  "thinking": "high"
+  "effort": "high"
 }
 ```
 
-`devspace agents ls` lists existing subagent sessions for the current workspace;
-it does not list profile definitions.
+`devspace agents targets` lists usable providers and profile definitions for the
+current workspace. `devspace agents ls` lists existing subagent sessions; it does
+not list profile definitions.
 
 Use `devspace agents continue <id>` for a later turn. The logical agent ID is
 the `agt_...` value returned by `run` or `ls`; provider session IDs are not

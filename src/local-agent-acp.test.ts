@@ -25,7 +25,7 @@ const connection = {
           sessionId,
           configOptions: [
             { type: "select", category: "model", id: "model", options: [{ value: "model-a" }] },
-            { type: "select", category: "thought_level", id: "thinking", options: [{ value: "high" }] },
+            { type: "select", category: "thought_level", id: "effort", options: [{ value: "high" }] },
           ],
         };
       }
@@ -65,7 +65,7 @@ const firstResult = await runtime.run({
   prompt: "first",
   workspaceRoot: "/tmp/project",
   model: "model-a",
-  thinking: "high",
+  effort: "high",
   writeMode: "read_only",
 }, {
   onSessionId: (sessionId) => { sessionIds.push(sessionId); },
@@ -78,7 +78,7 @@ const warmResult = await runtime.run({
   workspaceRoot: "/tmp/project",
   providerSessionId: first.providerSessionId ?? undefined,
   model: "model-a",
-  thinking: "high",
+  effort: "high",
   writeMode: "full_access",
 }, {
   onSessionId: (sessionId) => { sessionIds.push(sessionId); },
@@ -116,7 +116,7 @@ const resumedPersistedResult = await resumedRuntime.run({
   workspaceRoot: "/tmp/project",
   providerSessionId: first.providerSessionId ?? undefined,
   model: "model-a",
-  thinking: "high",
+  effort: "high",
 });
 assert.equal(resumedPersistedResult.isOk(), true);
 if (resumedPersistedResult.isErr()) throw resumedPersistedResult.error;
@@ -125,7 +125,7 @@ assert.equal(resumedPersisted.finalResponse, "ACP response");
 assert.equal(
   requests.filter(({ method }) => method === "session/set_config_option").length,
   4,
-  "cold resume must not require config metadata just to preserve prior model/thinking state",
+  "cold resume must not require config metadata just to preserve prior model/effort state",
 );
 const resumeFailure = await resumedRuntime.run({
   prompt: "resumed",

@@ -3,7 +3,7 @@ import {
   AcpLocalAgentDriver,
   resolveAcpCommand,
   resolveAcpModelConfigUpdate,
-  resolveAcpThinkingConfigUpdate,
+  resolveAcpEffortConfigUpdate,
 } from "./local-agent-acp.js";
 import {
   ClaudeLocalAgentDriver,
@@ -72,5 +72,5 @@ export {
   extractPiProviderError,
   resolveAcpCommand,
   resolveAcpModelConfigUpdate,
-  resolveAcpThinkingConfigUpdate,
+  resolveAcpEffortConfigUpdate,
 };

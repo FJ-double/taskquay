@@ -265,7 +265,7 @@ export class AcpRuntime implements LocalAgentRuntime {
     if (!canConfigure) {
       const requested = [
         input.model && input.modelOverrideRequested ? "model" : undefined,
-        input.thinking && input.thinkingOverrideRequested ? "thinking" : undefined,
+        input.effort && input.effortOverrideRequested ? "effort" : undefined,
       ]
         .filter(Boolean)
         .join(" and ");
@@ -280,15 +280,15 @@ export class AcpRuntime implements LocalAgentRuntime {
       }
       // A durable resumed session keeps its previously selected provider
       // configuration. If resume does not re-advertise config options, do not
-      // force a redundant set operation for persisted model/thinking values.
+      // force a redundant set operation for persisted model/effort values.
       return;
     }
     if (input.model) {
       const config = resolveAcpModelConfigUpdate(metadata, input.model, this.provider, sessionId);
       await this.connection.agent.request("session/set_config_option", config);
     }
-    if (input.thinking) {
-      const config = resolveAcpThinkingConfigUpdate(metadata, input.thinking, this.provider, sessionId);
+    if (input.effort) {
+      const config = resolveAcpEffortConfigUpdate(metadata, input.effort, this.provider, sessionId);
       await this.connection.agent.request("session/set_config_option", config);
     }
   }
@@ -547,17 +547,17 @@ export function resolveAcpModelConfigUpdate(
   });
 }
 
-export function resolveAcpThinkingConfigUpdate(
+export function resolveAcpEffortConfigUpdate(
   session: unknown,
-  thinking: string,
+  effort: string,
   provider: string,
   sessionIdOverride?: string,
 ): { sessionId: string; configId: string; value: string } {
   return resolveAcpSelectConfigUpdate(session, {
     category: "thought_level",
-    label: "thinking option",
+    label: "reasoning effort option",
     provider,
-    value: thinking,
+    value: effort,
     sessionIdOverride,
   });
 }
