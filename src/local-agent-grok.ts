@@ -1,3 +1,5 @@
+import { AgentProviderProtocolError } from "./local-agent-errors.js";
+
 export const GROK_DEFAULT_MODEL = "grok-build";
 export const GROK_REASONING_EFFORTS = [
   "none",
@@ -172,10 +174,12 @@ export function resolveGrokModelId(
   state: GrokSessionState | undefined,
 ): string {
   const modelId = normalizeGrokModelId(requested);
-  if (!modelId) throw new Error("Grok model must not be empty.");
+  if (!modelId) throw grokConfigurationError("Grok model must not be empty.");
   const available = state?.availableModels ?? [];
   if (available.length > 0 && !available.some((model) => model.id === modelId)) {
-    throw new Error(`Grok does not support '${modelId}'. Available models: ${available.map((model) => model.id).join(", ")}.`);
+    throw grokConfigurationError(
+      `Grok does not support '${modelId}'. Available models: ${available.map((model) => model.id).join(", ")}.`,
+    );
   }
   return modelId;
 }
@@ -187,14 +191,28 @@ export function resolveGrokEffort(
 ): GrokReasoningEffort {
   const normalized = effort.trim().toLowerCase();
   if (!isGrokReasoningEffort(normalized)) {
-    throw new Error(`Grok reasoning effort must be one of: ${GROK_REASONING_EFFORTS.join(", ")}.`);
+    throw grokConfigurationError(
+      `Grok reasoning effort must be one of: ${GROK_REASONING_EFFORTS.join(", ")}.`,
+    );
   }
   const selectedModel = state?.availableModels.find((model) => model.id === modelId);
   const availableEfforts = selectedModel?.reasoningEfforts ?? [];
   if (availableEfforts.length > 0 && !availableEfforts.includes(normalized)) {
-    throw new Error(`Grok model '${modelId ?? GROK_DEFAULT_MODEL}' does not support effort '${normalized}'. Available efforts: ${availableEfforts.join(", ")}.`);
+    throw grokConfigurationError(
+      `Grok model '${modelId ?? GROK_DEFAULT_MODEL}' does not support effort '${normalized}'. Available efforts: ${availableEfforts.join(", ")}.`,
+    );
   }
   return normalized;
+}
+
+function grokConfigurationError(message: string): AgentProviderProtocolError {
+  return new AgentProviderProtocolError({
+    code: "PROVIDER_PROTOCOL_ERROR",
+    provider: "grok",
+    operation: "configure_session",
+    retryable: false,
+    message,
+  });
 }
 
 export function isGrokReasoningEffort(value: string): value is GrokReasoningEffort {

@@ -425,6 +425,57 @@ assert.deepEqual(
 assert.equal(grokCompletionRegistry.size, 0);
 await grokRuntime.close();
 
+const grokConfigurationConnection = {
+  agent: {
+    async request(method: string): Promise<unknown> {
+      if (method === "session/new") {
+        return {
+          sessionId: "grok_configuration_session",
+          models: {
+            currentModelId: "grok-4.5",
+            availableModels: [{
+              modelId: "grok-4.5",
+              _meta: { reasoningEfforts: [{ id: "low", value: "low" }] },
+            }],
+          },
+        };
+      }
+      return {};
+    },
+  },
+  close() {},
+  closed: new Promise<void>(() => undefined),
+};
+const grokConfigurationRuntime = new AcpRuntime({
+  provider: "grok",
+  command: "grok",
+  args: ["agent", "stdio"],
+  env: {},
+}, grokConfigurationConnection);
+const invalidGrokModel = await grokConfigurationRuntime.run({
+  prompt: "invalid model",
+  workspaceRoot: "/tmp/project",
+  model: "grok-unknown",
+});
+assert.equal(invalidGrokModel.isErr(), true);
+if (invalidGrokModel.isErr()) {
+  assert.equal(invalidGrokModel.error.code, "PROVIDER_PROTOCOL_ERROR");
+  assert.equal(invalidGrokModel.error.retryable, false);
+  assert.match(invalidGrokModel.error.message, /Available models: grok-4\.5/);
+}
+const invalidGrokEffort = await grokConfigurationRuntime.run({
+  prompt: "invalid effort",
+  workspaceRoot: "/tmp/project",
+  effort: "high",
+});
+assert.equal(invalidGrokEffort.isErr(), true);
+if (invalidGrokEffort.isErr()) {
+  assert.equal(invalidGrokEffort.error.code, "PROVIDER_PROTOCOL_ERROR");
+  assert.equal(invalidGrokEffort.error.retryable, false);
+  assert.match(invalidGrokEffort.error.message, /Available efforts: low/);
+}
+await grokConfigurationRuntime.close();
+
 await resumedRuntime.close();
 await resumedRuntime.close();
 assert.equal(resumedRuntime.isAlive(), false);
