@@ -148,11 +148,11 @@ Recommended body content:
 The Subagent skill teaches only:
 
 ```bash
-devspace agents ls
-devspace agents targets
-devspace agents run <profile-or-provider> "<prompt>"
-devspace agents continue <id> "<prompt>"
-devspace agents show <id>
+devspace agents ls --json
+devspace agents targets --json
+devspace agents run <profile-or-provider> "<prompt>" --json
+devspace agents continue <id> "<prompt>" --json
+devspace agents show <id> --json
 ```
 
 `open_workspace` exposes compact profile metadata:
