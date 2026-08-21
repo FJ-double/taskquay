@@ -10,6 +10,7 @@ import {
   resolveAcpCommand,
   selectAcpPermissionOption,
 } from "./local-agent-acp.js";
+import { GrokPromptCompletionRegistry } from "./local-agent-grok.js";
 
 const requests: Array<{ method: string; params?: unknown }> = [];
 const queues = new Map<string, { values: unknown[] }>();
@@ -278,6 +279,18 @@ assert.equal(resolverCalls, 1, "ACP executable identity is resolved once per dri
 assert.deepEqual(acpCommandArgs("cursor", cachedContext), [
   "acp", "--sandbox", "enabled", "--workspace", resolvedProject,
 ]);
+assert.deepEqual(acpCommandArgs("grok", {
+  ...cachedContext,
+  provider: "grok",
+  effort: "low",
+}), ["agent", "--reasoning-effort", "low", "stdio"]);
+assert.deepEqual(acpCommandArgs("grok", {
+  ...cachedContext,
+  provider: "grok",
+  effort: "low",
+}, { GROK_AGENT_PROFILE: " /tmp/grok-coding-only.md " }), [
+  "agent", "--agent-profile", "/tmp/grok-coding-only.md", "--reasoning-effort", "low", "stdio",
+]);
 assert.deepEqual(acpCommandArgs("copilot", cachedContext), [
   "--acp", "--experimental", "--sandbox", "--allow-all-tools", "--add-dir", resolvedProject, "-C", resolvedProject,
 ]);
@@ -343,6 +356,74 @@ if (process.platform !== "win32") {
     await rm(commandRoot, { recursive: true, force: true });
   }
 }
+
+const grokRequests: Array<{ method: string; params?: unknown }> = [];
+const grokQueues = new Map<string, { values: unknown[] }>();
+const grokCompletionRegistry = new GrokPromptCompletionRegistry();
+const grokConnection = {
+  agent: {
+    async request(method: string, params?: unknown): Promise<unknown> {
+      grokRequests.push({ method, params });
+      const input = params as { sessionId?: string; _meta?: { promptId?: string } } | undefined;
+      if (method === "session/new") {
+        grokQueues.set("grok_session_1", { values: [] });
+        return {
+          sessionId: "grok_session_1",
+          models: {
+            currentModelId: "grok-4.5",
+            availableModels: [{
+              modelId: "grok-4.5",
+              _meta: { reasoningEfforts: [{ id: "low", value: "low" }] },
+            }],
+          },
+        };
+      }
+      if (method === "session/set_model") return {};
+      if (method === "session/prompt") {
+        grokQueues.get(input?.sessionId ?? "")?.values.push({
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Grok response" },
+          },
+        });
+        setImmediate(() => grokCompletionRegistry.resolve({
+          sessionId: input?.sessionId ?? "",
+          promptId: input?._meta?.promptId,
+          stopReason: "end_turn",
+        }));
+        return new Promise(() => undefined);
+      }
+      return {};
+    },
+  },
+  close() {},
+  closed: new Promise<void>(() => undefined),
+};
+const grokRuntime = new AcpRuntime({
+  provider: "grok",
+  command: "grok",
+  args: ["agent", "--reasoning-effort", "low", "stdio"],
+  env: {},
+  capabilities: { resume: true, close: true },
+  queues: grokQueues,
+  grokCompletionRegistry,
+  promptCompletionTimeoutMs: 100,
+}, grokConnection);
+const grokResult = await grokRuntime.run({
+  prompt: "which model are you",
+  workspaceRoot: "/tmp/project",
+  model: "grok-4.5",
+  effort: "low",
+});
+assert.equal(grokResult.isOk(), true);
+if (grokResult.isErr()) throw grokResult.error;
+assert.equal(grokResult.value.finalResponse, "Grok response");
+assert.deepEqual(
+  grokRequests.filter(({ method }) => method === "session/set_model").map(({ params }) => params),
+  [{ sessionId: "grok_session_1", modelId: "grok-4.5", _meta: { reasoningEffort: "low" } }],
+);
+assert.equal(grokCompletionRegistry.size, 0);
+await grokRuntime.close();
 
 await resumedRuntime.close();
 await resumedRuntime.close();
