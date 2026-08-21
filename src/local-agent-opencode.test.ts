@@ -186,6 +186,79 @@ assert.equal(readinessActiveCalls >= 3, true);
 assert.equal(readinessMessageCalls >= 3, true);
 await readinessPool.close();
 
+const longSessionRequests: Array<{ cursor?: string; order?: string }> = [];
+const longSessionClient = {
+  v2: {
+    session: {
+      async create() {
+        return { data: { data: { id: "session_long" } } };
+      },
+      async switchAgent() {},
+      async prompt() {
+        return { data: { data: { id: "prompt_long" } } };
+      },
+      async active() {
+        return { data: { data: {} } };
+      },
+      async messages(input: unknown) {
+        const request = input as { cursor?: string; order?: string };
+        longSessionRequests.push({ cursor: request.cursor, order: request.order });
+        if (!request.cursor) {
+          return {
+            data: {
+              data: Array.from({ length: 100 }, (_, index) => ({
+                type: "assistant",
+                id: `old-assistant-${index}`,
+                finish: "stop",
+                content: [{ type: "text", text: `old response ${index}` }],
+              })),
+              cursor: { next: "long-session-next" },
+            },
+          };
+        }
+        return {
+          data: {
+            data: [
+              { type: "user", id: "prompt_long" },
+              {
+                type: "assistant",
+                id: "assistant_long",
+                finish: "stop",
+                content: [{ type: "text", text: "long response" }],
+              },
+            ],
+            cursor: {},
+          },
+        };
+      },
+    },
+  },
+} as unknown as OpencodeClientLike;
+const longSessionPool = new LocalAgentRuntimePool();
+const longSessionDriver = new OpencodeLocalAgentDriver(async () => ({
+  client: longSessionClient,
+  server: { close: () => undefined },
+}));
+const longSessionResult = await longSessionPool.run(longSessionDriver, {
+  agentId: "agt_long_session",
+  provider: "opencode",
+  workspaceRoot: "/tmp/project",
+}, { prompt: "long session", workspaceRoot: "/tmp/project" });
+assert.equal(longSessionResult.isOk(), true, "OpenCode should find completions past the first message page");
+if (longSessionResult.isOk()) {
+  assert.equal(longSessionResult.value.finalResponse, "long response");
+}
+assert.equal(longSessionRequests.length, 4, "wait and final extraction should each traverse both pages");
+assert.deepEqual(longSessionRequests.filter((request) => request.cursor === undefined), [
+  { cursor: undefined, order: "asc" },
+  { cursor: undefined, order: "asc" },
+]);
+assert.deepEqual(longSessionRequests.filter((request) => request.cursor !== undefined), [
+  { cursor: "long-session-next", order: undefined },
+  { cursor: "long-session-next", order: undefined },
+]);
+await longSessionPool.close();
+
 assert.equal(opencodeAgentFor("read_only"), "devspace_read_only");
 assert.equal(opencodeAgentFor("full_access"), "devspace_full_access");
 assert.deepEqual(opencodePermissionFor("allowed"), {

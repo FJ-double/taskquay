@@ -75,7 +75,8 @@ export class OpencodeRuntime implements LocalAgentRuntime {
           }
           const promptResult = await promptOpencodeSession(this.client, sessionId, input);
           await waitForOpencodeSession(this.client, sessionId, promptResult);
-          const messages = await readOpencodeMessages(this.client, sessionId);
+          const promptId = extractOpenCodePromptId(promptResult);
+          const messages = await readOpencodeMessages(this.client, sessionId, promptId);
           const finalResponse = requireFinalResponse(
             extractOpenCodeFinalResponse(messages) || extractOpenCodeFinalResponse(promptResult),
           );
@@ -289,7 +290,7 @@ async function waitForOpencodeSession(
   const deadline = Date.now() + OPENCODE_SESSION_POLL_TIMEOUT_MS;
   let observedActive = false;
   while (true) {
-    const messages = await readOpencodeMessages(client, sessionId);
+    const messages = await readOpencodeMessages(client, sessionId, promptId);
     const activity = await active({ throwOnError: true });
     const running = isOpenCodeSessionActive(activity, sessionId);
     if (running) observedActive = true;
@@ -312,9 +313,35 @@ async function waitForOpencodeSession(
 async function readOpencodeMessages(
   client: OpencodeClientLike,
   sessionId: string,
+  promptId?: string,
 ): Promise<SessionMessagesResponse> {
-  const result = await client.v2.session.messages({ sessionID: sessionId, order: "asc", limit: 100 }, { throwOnError: true });
-  return result.data;
+  const messages: SessionMessagesResponse["data"] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+
+  while (true) {
+    const result = await client.v2.session.messages({
+      sessionID: sessionId,
+      limit: 100,
+      ...(cursor ? { cursor } : { order: "asc" }),
+    }, { throwOnError: true });
+    const page = result.data;
+    messages.push(...page.data);
+
+    // A prompt-specific read can stop as soon as the submitted turn is
+    // complete. Reads without a prompt id still walk the full history because
+    // they are used to extract the final response after the wait fallback.
+    if (promptId !== undefined && hasCompletedOpenCodeTurn({ data: messages }, promptId)) {
+      break;
+    }
+
+    const nextCursor = page.cursor?.next;
+    if (!nextCursor || seenCursors.has(nextCursor)) break;
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+
+  return { data: messages, cursor: {} };
 }
 
 function extractOpenCodePromptId(value: unknown): string | undefined {
