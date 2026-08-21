@@ -73,6 +73,7 @@ provider: opencode
 provider: pi
 provider: cursor
 provider: copilot
+provider: grok
 ```
 
 Unsupported or custom providers are rejected. DevSpace maps providers to their
@@ -84,6 +85,7 @@ native integration:
 - `pi`: the installed Pi coding-agent SDK, one in-process session per DevSpace agent
 - `cursor`: ACP
 - `copilot`: ACP
+- `grok`: Grok Build ACP (`grok agent stdio`)
 
 Codex is resolved from the user's environment rather than bundled with
 DevSpace. Run `codex login` normally before using it; set `CODEX_COMMAND` when
@@ -119,6 +121,7 @@ DevSpace passes this through to providers that expose a matching control:
 - `pi`: the AgentSession thinking-level control.
 - `opencode`: model variant.
 - `cursor` and `copilot`: ACP thought-level config when supported.
+- `grok`: `--reasoning-effort` on startup and xAI's ACP model metadata for resumed sessions.
 
 ### `disabled`
 
