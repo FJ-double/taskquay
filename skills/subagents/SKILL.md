@@ -44,7 +44,10 @@ devspace agents ls --json
   session and context.
 - `ls` returns sessions belonging to the current project.
 
-Call `show --json` again later while the status is `starting` or `running`. `idle` means the response is ready. `error` and `stopped` are terminal without a successful response. Continue an agent when its existing context is useful; start another agent for unrelated work.
+Run `devspace agents show <id> --json` again later while the status is `running`.
+`completed` includes the response. `failed` includes a structured error, and
+`stopped` is terminal without a successful response. Continue an agent when its
+existing context is useful; start another agent for unrelated work.
 
 ## Good uses
 

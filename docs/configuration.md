@@ -182,9 +182,10 @@ profile value, which wins over the provider default. The legacy boolean
 configuration should use the explicit object form.
 
 `devspace agents targets` shows usable providers and profiles for the current
-workspace. Add `--json` to inspect the availability and usability of enabled
-providers. Disabled and unconfigured providers are omitted. Provider
-availability is runtime state and never rewrites the configuration.
+workspace. Add `--json` for a compact list of exact target names and their
+selection metadata. Disabled, unavailable, and unconfigured providers are
+omitted. Provider availability is runtime state and never rewrites the
+configuration.
 
 Grok Build is discovered from the `grok` executable. Authenticate it with
 `grok login` or `XAI_API_KEY`; DevSpace does not read or store Grok credentials.
