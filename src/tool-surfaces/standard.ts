@@ -14,6 +14,7 @@ import {
   WRITE_TOOL_ANNOTATIONS,
   toolNames,
   workspaceIdDescription,
+  type ToolInstructionContext,
   type ToolRegistrationContext,
 } from "./types.js";
 import {
@@ -30,6 +31,18 @@ import {
 } from "./shared.js";
 
 type StandardRegistration = (context: ToolRegistrationContext) => void;
+
+const MINIMAL_INSPECTION = `In minimal tool mode, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} are disabled; use ${toolNames.shell} with command-line tools such as grep, rg, find, ls, and tree for search and directory inspection. `;
+
+const FULL_INSPECTION = `Prefer ${toolNames.read}, ${toolNames.grep}, ${toolNames.glob}, and ${toolNames.ls} for file inspection. `;
+
+const STANDARD_EDITING = `Prefer ${toolNames.edit} for targeted modifications, ${toolNames.write} only for new files or complete rewrites, and ${toolNames.shell} for tests, builds, git inspection, package scripts, and commands that are better executed by the shell. Do not create or modify files with ${toolNames.shell}; avoid shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or any command whose purpose is to write project files.`;
+
+export function standardInstructions(mode: "minimal" | "full") {
+  const inspection = mode === "minimal" ? MINIMAL_INSPECTION : FULL_INSPECTION;
+  return ({ agents, skills }: ToolInstructionContext): string =>
+    `${agents}${skills}${inspection}${STANDARD_EDITING}`;
+}
 
 export function registerStandardTools(
   context: ToolRegistrationContext,
