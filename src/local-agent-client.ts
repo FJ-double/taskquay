@@ -84,7 +84,7 @@ export class LocalAgentClient {
     this.endpoint = options.endpoint ?? this.paths.endpoint;
     this.startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-    this.spawnDaemon = options.spawnDaemon ?? (() => spawnLocalAgentDaemon(options.stateDir));
+    this.spawnDaemon = options.spawnDaemon ?? (() => spawnLocalAgentDaemon());
   }
 
   async run(
@@ -408,13 +408,13 @@ export function createLocalAgentClient(config: Pick<ServerConfig, "stateDir">): 
   return new LocalAgentClient({ stateDir: config.stateDir });
 }
 
-export function spawnLocalAgentDaemon(stateDir: string, env: NodeJS.ProcessEnv = process.env): void {
+export function spawnLocalAgentDaemon(env: NodeJS.ProcessEnv = process.env): void {
   const entrypoint = resolveDaemonEntrypoint();
   const child = spawn(process.execPath, [...daemonExecArgv(process.execArgv), entrypoint], {
     detached: true,
     stdio: "ignore",
     windowsHide: true,
-    env: { ...env, DEVSPACE_STATE_DIR: stateDir },
+    env,
   });
   child.unref();
 }

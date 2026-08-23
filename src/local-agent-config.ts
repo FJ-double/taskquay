@@ -39,19 +39,10 @@ export type StoredSubagentsConfig = z.infer<typeof storedSubagentsConfigSchema>;
 
 export function resolveSubagentsConfig(
   value: unknown,
-  env: NodeJS.ProcessEnv = process.env,
 ): SubagentsConfig {
-  const stored = value === undefined
+  return value === undefined
     ? { enabled: false, providers: [] }
-    : typeof value === "boolean"
-      ? legacySubagentsConfig(value)
-      : subagentsConfigSchema.parse(value);
-  return {
-    ...stored,
-    enabled: env.DEVSPACE_SUBAGENTS === undefined
-      ? stored.enabled
-      : parseBoolean(env.DEVSPACE_SUBAGENTS),
-  };
+    : subagentsConfigSchema.parse(value);
 }
 
 export function subagentProviderConfig(
@@ -66,17 +57,4 @@ export function isSubagentProviderEnabled(
   provider: LocalAgentProvider,
 ): boolean {
   return config.enabled && subagentProviderConfig(config, provider)?.enabled === true;
-}
-
-function legacySubagentsConfig(enabled: boolean): SubagentsConfig {
-  return {
-    enabled,
-    providers: enabled
-      ? LOCAL_AGENT_PROVIDERS.map((id) => ({ id, enabled: true }))
-      : [],
-  };
-}
-
-function parseBoolean(value: string): boolean {
-  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
 }
