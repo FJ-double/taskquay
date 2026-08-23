@@ -12,6 +12,7 @@ import { join } from "node:path";
 import {
   loadDevspaceFiles,
   setDevspaceConfigValue,
+  setDevspaceConfigValues,
 } from "./user-config.js";
 
 withConfigDir((configDir, env) => {
@@ -80,6 +81,15 @@ withConfigDir((configDir, env) => {
   const updated = readFileSync(join(configDir, "config.jsonc"), "utf8");
   assert.match(updated, /This comment must survive config updates/);
   assert.equal(loadDevspaceFiles(env).config.server.publicBaseUrl, "https://new.example.com");
+
+  setDevspaceConfigValues([
+    { path: ["server", "port"], value: 7676 },
+    { path: ["tools", "mode"], value: "claude" },
+  ], env);
+  const multiUpdated = readFileSync(join(configDir, "config.jsonc"), "utf8");
+  assert.match(multiUpdated, /This comment must survive config updates/);
+  assert.equal(loadDevspaceFiles(env).config.server.port, 7676);
+  assert.equal(loadDevspaceFiles(env).config.tools.mode, "claude");
 });
 
 withConfigDir((configDir, env) => {

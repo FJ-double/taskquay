@@ -45,6 +45,11 @@ export interface DevspaceFiles {
   migratedLegacyConfig: boolean;
 }
 
+export interface DevspaceConfigEdit {
+  path: (string | number)[];
+  value: unknown;
+}
+
 export function devspaceConfigDir(env: NodeJS.ProcessEnv = process.env): string {
   return resolve(expandHomePath(env.DEVSPACE_CONFIG_DIR ?? join(homedir(), ".devspace")));
 }
@@ -111,13 +116,23 @@ export function setDevspaceConfigValue(
   value: unknown,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
+  return setDevspaceConfigValues([{ path, value }], env);
+}
+
+export function setDevspaceConfigValues(
+  edits: DevspaceConfigEdit[],
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   const files = loadDevspaceFiles(env);
   const source = files.configExists
     ? readFileSync(files.configPath, "utf8")
     : serializeConfig(files.config);
-  const updated = applyEdits(source, modify(source, path, value, {
-    formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" },
-  }));
+  const updated = edits.reduce(
+    (document, edit) => applyEdits(document, modify(document, edit.path, edit.value, {
+      formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" },
+    })),
+    source,
+  );
   parseJsoncConfig(updated, files.configPath);
   atomicWrite(files.configPath, updated.endsWith("\n") ? updated : `${updated}\n`, 0o600);
   return files.configPath;

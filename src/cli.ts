@@ -46,9 +46,8 @@ import {
   generateOwnerToken,
   loadDevspaceFiles,
   setDevspaceConfigValue,
+  setDevspaceConfigValues,
   writeDevspaceAuth,
-  writeDevspaceConfig,
-  type DevspaceUserConfig,
 } from "./user-config.js";
 import { expandHomePath } from "./roots.js";
 import { shutdownHttpServer } from "./server-shutdown.js";
@@ -221,24 +220,20 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       selectedProviders,
     );
 
-    const config: DevspaceUserConfig = {
-      ...files.config,
-      server: {
-        ...files.config.server,
-        port,
-        ...(useChatGpt ? { publicBaseUrl } : {}),
-      },
-      workspaces: {
-        ...files.config.workspaces,
-        ...(allowedRoots ? { allowedRoots } : {}),
-      },
-      subagents,
-    };
     const auth = {
       ownerToken: files.auth.ownerToken ?? generateOwnerToken(),
     };
 
-    writeDevspaceConfig(config);
+    setDevspaceConfigValues([
+      { path: ["server", "port"], value: port },
+      ...(useChatGpt
+        ? [{ path: ["server", "publicBaseUrl"], value: publicBaseUrl }]
+        : []),
+      ...(allowedRoots
+        ? [{ path: ["workspaces", "allowedRoots"], value: allowedRoots }]
+        : []),
+      { path: ["subagents"], value: subagents },
+    ]);
     writeDevspaceAuth(auth);
 
     const lines = [
