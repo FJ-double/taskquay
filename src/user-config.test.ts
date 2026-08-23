@@ -32,7 +32,7 @@ try {
   assert.throws(() => loadDevspaceFiles(env), /expected number/i);
 
   writeFileSync(join(configDir, "config.json"), JSON.stringify({ unknownSetting: true }));
-  assert.throws(() => loadDevspaceFiles(env), /unrecognized key/i);
+  assert.equal(loadDevspaceFiles(env).config.unknownSetting, true);
 
   writeFileSync(join(configDir, "config.json"), "{");
   assert.throws(() => loadDevspaceFiles(env), /Unable to read .*config\.json/);

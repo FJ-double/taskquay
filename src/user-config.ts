@@ -23,11 +23,11 @@ const devspaceUserConfigSchema = z.object({
   artifactMaxFileBytes: z.number().optional(),
   agentDir: z.string().optional(),
   subagents: storedSubagentsConfigSchema.optional(),
-}).strict();
+}).passthrough();
 
 const devspaceAuthConfigSchema = z.object({
   ownerToken: z.string().optional(),
-}).strict();
+}).passthrough();
 
 export type DevspaceUserConfig = z.infer<typeof devspaceUserConfigSchema>;
 export type DevspaceAuthConfig = z.infer<typeof devspaceAuthConfigSchema>;
