@@ -1,4 +1,5 @@
 import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
+import { existsSync } from "node:fs";
 import * as z from "zod/v4";
 import {
   editFileTool,
@@ -99,7 +100,8 @@ function registerStandardMutationTools(context: ToolRegistrationContext): void {
     async ({ workspaceId, ...input }) => {
       const startedAt = performance.now();
       const workspace = workspaces.getWorkspace(workspaceId);
-      workspaces.resolvePath(workspace, input.path);
+      const absolutePath = workspaces.resolvePath(workspace, input.path);
+      const overwritesExistingFile = existsSync(absolutePath);
       const response = await writeFileTool(input, {
         cwd: workspace.root,
         root: workspace.root,
@@ -119,7 +121,11 @@ function registerStandardMutationTools(context: ToolRegistrationContext): void {
         return response;
       }
 
-      const patch = newFilePatch(input.path, input.content);
+      // An aggregate review can show the real replacement diff. A new-file
+      // patch would misrepresent an overwrite as additions with no removals.
+      const patch = overwritesExistingFile
+        ? undefined
+        : newFilePatch(input.path, input.content);
       const stats = countDiffStats(patch);
       const summary = {
         ...stats,
