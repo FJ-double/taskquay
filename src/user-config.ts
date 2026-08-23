@@ -143,7 +143,10 @@ function migrateLegacyConfigFile(
   backupPath: string,
 ): boolean {
   if (existsSync(backupPath)) {
-    throw new Error(`Unable to migrate ${legacyPath}: backup already exists at ${backupPath}`);
+    throw new Error(
+      `Unable to migrate ${legacyPath}: backup already exists at ${backupPath}. `
+      + `Move ${backupPath} out of the way, then run DevSpace again.`,
+    );
   }
 
   let migrated: DevspaceConfig;

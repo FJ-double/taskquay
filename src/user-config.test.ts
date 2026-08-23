@@ -107,6 +107,20 @@ withConfigDir((configDir, env) => {
   assert.equal(existsSync(join(configDir, "config.json.v1.0.bak")), false);
 });
 
+withConfigDir((configDir, env) => {
+  const legacyPath = join(configDir, "config.json");
+  const backupPath = join(configDir, "config.json.v1.0.bak");
+  writeFileSync(legacyPath, JSON.stringify({ port: 8787 }));
+  writeFileSync(backupPath, JSON.stringify({ port: 7676 }));
+
+  assert.throws(
+    () => loadDevspaceFiles(env),
+    (error: unknown) => error instanceof Error
+      && error.message.includes(`backup already exists at ${backupPath}`)
+      && error.message.includes(`Move ${backupPath} out of the way, then run DevSpace again.`),
+  );
+});
+
 console.log("user config tests passed");
 
 function withConfigDir(
