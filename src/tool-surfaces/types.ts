@@ -58,14 +58,6 @@ export interface DiffStats {
   removals: number;
 }
 
-export type ToolWidgetKind =
-  | "workspace"
-  | "read"
-  | "write"
-  | "edit"
-  | "shell"
-  | "show_changes";
-
 export interface ToolDefinitionMeta extends Record<string, unknown> {
   ui: {
     resourceUri: string;

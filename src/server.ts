@@ -62,7 +62,7 @@ import {
   resultOutputSchema,
   textBlock,
   textSummary,
-  toolWidgetDescriptorMeta,
+  workspaceAppDescriptorMeta,
 } from "./tool-surfaces/shared.js";
 import {
   WORKSPACE_APP_URI,
@@ -103,9 +103,7 @@ function serverInstructions(
       ? " When the user supplies or generates a file that is not present on the DevSpace host, use download_artifact with its native file value, the existing workspace ID, and a suitable relative destination path chosen from the user's request and project structure. The tool refuses to overwrite an existing destination and returns the normalized workspace-relative path. Use normal workspace tools when explicit inspection, replacement, movement, renaming, or deletion is needed. Do not recreate binary files with write/edit calls or place signed URLs, native file objects, base64 content, or invented host paths in shell commands or logs."
       : "";
   const showChangesInstruction =
-    config.widgets === "changes"
-      ? " If the turn successfully modifies files by creating, editing, overwriting, deleting, moving, or applying patches, call show_changes exactly once for that workspace after the final related file change and before your final response so the user can inspect the aggregate diff for that turn. Do not call it after every individual file change; do not skip it because individual file-change tools already returned diffs."
-      : "";
+    " If the turn successfully modifies files by creating, editing, overwriting, deleting, moving, or applying patches, call show_changes exactly once for that workspace after the final related file change and before your final response so the user can inspect the aggregate diff for that turn. Do not call it after every individual file change.";
   const skills = config.skillsEnabled
     ? `When ${toolNames.openWorkspace} returns available skills and a task matches a skill, use ${toolNames.read} to read that skill's path before proceeding. Skill paths may be outside the workspace, but ${toolNames.read} only permits advertised SKILL.md files and files under already-loaded skill directories. `
     : "";
@@ -393,9 +391,16 @@ export function createMcpServer(
         agentProviders: z.array(workspaceLocalAgentProviderOutputSchema).optional(),
         agents: z.array(workspaceLocalAgentOutputSchema).optional(),
         skillDiagnostics: z.array(z.unknown()).optional(),
+        review: z.discriminatedUnion("available", [
+          z.object({ available: z.literal(true) }),
+          z.object({
+            available: z.literal(false),
+            reason: z.string(),
+          }),
+        ]),
         instruction: z.string(),
       },
-      ...toolWidgetDescriptorMeta(config, "workspace"),
+      ...workspaceAppDescriptorMeta(config),
       annotations: { readOnlyHint: true },
     },
     async ({ path, mode, baseRef }, { _meta }) => {
@@ -410,12 +415,10 @@ export function createMcpServer(
         { path, mode, baseRef },
         { conversationScopeId: openAiConversationScopeId(_meta) },
       );
-      if (config.widgets === "changes") {
-        await reviewCheckpoints.initializeWorkspace({
-          workspaceId: workspace.id,
-          root: workspace.root,
-        });
-      }
+      const review = await reviewCheckpoints.initializeWorkspace({
+        workspaceId: workspace.id,
+        root: workspace.root,
+      });
       const cardSkills = workspace.skills
         .filter((skill) => !skill.disableModelInvocation)
         .map((skill) => ({
@@ -517,6 +520,7 @@ export function createMcpServer(
             skills: cardSkills,
             agentProviders: cardAgentProviders,
             agents: cardAgents,
+            review,
             instruction: cardInstruction,
             summary: {
               mode: workspace.mode,
@@ -534,6 +538,7 @@ export function createMcpServer(
           mode: workspace.mode,
           sourceRoot: workspace.sourceRoot,
           worktree: workspace.worktree,
+          review,
           ...(includeBootstrapContext
             ? {
                 agentsFiles: loadedAgentsFiles,
@@ -550,8 +555,7 @@ export function createMcpServer(
     },
   );
 
-  registerAppTool(
-    server,
+  server.registerTool(
     toolNames.read,
     {
       title: "Read file",
@@ -590,7 +594,6 @@ export function createMcpServer(
           .describe("Maximum number of lines to read."),
       },
       outputSchema: resultOutputSchema(),
-      ...toolWidgetDescriptorMeta(config, "read"),
       annotations: { readOnlyHint: true },
     },
     async ({ workspaceId, ...input }) => {
@@ -654,58 +657,56 @@ export function createMcpServer(
     processSessions,
   });
 
-  if (config.widgets === "changes") {
-    registerAppTool(
-      server,
-      "show_changes",
-      {
-        title: "Show changes",
-        description:
-          "Show the changes made in this turn for an open workspace. Call this once after the final related file change and before your final response so the user can review the combined diff. Do not call it after each individual file change.",
-        inputSchema: {
-          workspaceId: z.string().describe(workspaceIdDescription),
-        },
-        outputSchema: resultOutputSchema(),
-        ...toolWidgetDescriptorMeta(config, "show_changes"),
-        annotations: { readOnlyHint: true },
+  registerAppTool(
+    server,
+    "show_changes",
+    {
+      title: "Show changes",
+      description:
+        "Show the changes made in this turn for an open workspace. Call this once after the final related file change and before your final response so the user can review the combined diff. Do not call it after each individual file change.",
+      inputSchema: {
+        workspaceId: z.string().describe(workspaceIdDescription),
       },
-      async ({ workspaceId }) => {
-        const startedAt = performance.now();
-        const workspace = workspaces.getWorkspace(workspaceId);
-        const review = await reviewCheckpoints.reviewChanges({
-          workspaceId,
-          root: workspace.root,
-          markReviewed: true,
-        });
+      outputSchema: resultOutputSchema(),
+      ...workspaceAppDescriptorMeta(config),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ workspaceId }) => {
+      const startedAt = performance.now();
+      const workspace = workspaces.getWorkspace(workspaceId);
+      const review = await reviewCheckpoints.reviewChanges({
+        workspaceId,
+        root: workspace.root,
+        markReviewed: true,
+      });
 
-        const content = [textBlock(review.result)];
-        logToolCall(config, {
+      const content = [textBlock(review.result)];
+      logToolCall(config, {
+        tool: "show_changes",
+        workspaceId,
+        success: true,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+
+      return {
+        content,
+        _meta: {
           tool: "show_changes",
-          workspaceId,
-          success: true,
-          durationMs: Math.round(performance.now() - startedAt),
-        });
-
-        return {
-          content,
-          _meta: {
-            tool: "show_changes",
-            card: {
-              workspaceId,
-              summary: review.summary,
-              files: review.files,
-              payload: {
-                patch: review.patch,
-              },
+          card: {
+            workspaceId,
+            summary: review.summary,
+            files: review.files,
+            payload: {
+              patch: review.patch,
             },
           },
-          structuredContent: {
-            result: contentText(content),
-          },
-        };
-      },
-    );
-  }
+        },
+        structuredContent: {
+          result: contentText(content),
+        },
+      };
+    },
+  );
 
   if (config.artifactsEnabled && isArtifactDownloadSupportedPlatform()) {
     registerArtifactTools(server, {

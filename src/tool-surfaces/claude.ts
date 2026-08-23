@@ -1,4 +1,3 @@
-import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
 import { existsSync } from "node:fs";
 import * as z from "zod/v4";
 import {
@@ -25,7 +24,6 @@ import {
   resultOutputSchema,
   textBlock,
   textSummary,
-  toolWidgetDescriptorMeta,
 } from "./shared.js";
 
 const CLAUDE_INSTRUCTIONS = `Use ${toolNames.read} for direct file reads, ${toolNames.shell} with command-line tools such as rg, find, ls, and tree for search and directory inspection, ${toolNames.edit} for targeted modifications, and ${toolNames.write} only for new files or complete rewrites. Use ${toolNames.shell} for tests, builds, git inspection, package scripts, and other commands, but do not create or modify files through shell commands. Shell commands run with the local user's authority and are not sandboxed; workspace validation only selects their initial working directory. Follow instructions returned by ${toolNames.openWorkspace}; read applicable instruction and skill files before working in their scope.`;
@@ -47,8 +45,7 @@ const CLAUDE_SHELL_DESCRIPTION = `Run a shell command in a workspace with the lo
 function registerClaudeMutationTools(context: ToolRegistrationContext): void {
   const { server, config, workspaces } = context;
 
-  registerAppTool(
-    server,
+  server.registerTool(
     toolNames.write,
     {
       title: "Write file",
@@ -61,7 +58,6 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
         content: z.string().describe("Complete new file content."),
       },
       outputSchema: resultOutputSchema(),
-      ...toolWidgetDescriptorMeta(config, "write"),
       annotations: WRITE_TOOL_ANNOTATIONS,
     },
     async ({ workspaceId, ...input }) => {
@@ -128,8 +124,7 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
     },
   );
 
-  registerAppTool(
-    server,
+  server.registerTool(
     toolNames.edit,
     {
       title: "Edit file",
@@ -155,7 +150,6 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
       outputSchema: resultOutputSchema({
         status: z.literal("applied"),
       }),
-      ...toolWidgetDescriptorMeta(config, "edit"),
       annotations: EDIT_TOOL_ANNOTATIONS,
     },
     async ({ workspaceId, ...input }) => {
@@ -224,8 +218,7 @@ function registerClaudeMutationTools(context: ToolRegistrationContext): void {
 function registerShellTool(context: ToolRegistrationContext): void {
   const { server, config, workspaces } = context;
 
-  registerAppTool(
-    server,
+  server.registerTool(
     toolNames.shell,
     {
       title: "Bash",
@@ -251,7 +244,6 @@ function registerShellTool(context: ToolRegistrationContext): void {
           .describe("Timeout in seconds. Defaults to 30, max 300."),
       },
       outputSchema: resultOutputSchema(),
-      ...toolWidgetDescriptorMeta(config, "shell"),
       annotations: SHELL_TOOL_ANNOTATIONS,
     },
     async ({ workspaceId, workingDirectory, ...input }) => {

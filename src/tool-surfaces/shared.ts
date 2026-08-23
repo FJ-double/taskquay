@@ -1,13 +1,12 @@
 import * as z from "zod/v4";
 import { logEvent, commandPreview } from "../logger.js";
-import type { ServerConfig, WidgetMode } from "../config.js";
+import type { ServerConfig } from "../config.js";
 import {
   WORKSPACE_APP_URI,
   type DiffStats,
   type ToolContent,
   type ToolLogFields,
   type ToolWidgetDescriptorMeta,
-  type ToolWidgetKind,
 } from "./types.js";
 
 export function resultOutputSchema(extra: z.ZodRawShape = {}): z.ZodRawShape {
@@ -21,11 +20,8 @@ export function resultOutputSchema(extra: z.ZodRawShape = {}): z.ZodRawShape {
   };
 }
 
-export function toolWidgetDescriptorMeta(
-  config: ServerConfig,
-  kind: ToolWidgetKind,
-): ToolWidgetDescriptorMeta {
-  if (!shouldAttachWidget(config.widgets, kind)) return { _meta: {} };
+export function workspaceAppDescriptorMeta(config: ServerConfig): ToolWidgetDescriptorMeta {
+  if (!config.uiEnabled) return { _meta: {} };
 
   return {
     _meta: {
@@ -162,15 +158,4 @@ export function newFilePatch(path: string, content: string): string {
   ]
     .filter((line) => line.length > 0)
     .join("\n");
-}
-
-function shouldAttachWidget(mode: WidgetMode, kind: ToolWidgetKind): boolean {
-  switch (mode) {
-    case "off":
-      return false;
-    case "changes":
-      return kind === "workspace" || kind === "show_changes";
-    case "full":
-      return true;
-  }
 }

@@ -7,7 +7,7 @@ import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { loadConfig, type ServerConfig, type ToolMode, type WidgetMode } from "./config.js";
+import { loadConfig, type ServerConfig, type ToolMode } from "./config.js";
 import type { LocalAgentProviderAvailability } from "./local-agent-availability.js";
 import { buildLocalAgentProviderStatuses } from "./local-agent-catalog.js";
 import type { SubagentsConfig } from "./local-agent-config.js";
@@ -26,17 +26,17 @@ test("tool modes expose the expected host-facing tool surface", async (t) => {
   }> = [
     {
       mode: "claude",
-      expected: ["open_workspace", "read", "write", "edit", "bash"],
+      expected: ["open_workspace", "read", "write", "edit", "bash", "show_changes"],
     },
     {
       mode: "codex",
-      expected: ["open_workspace", "read", "apply_patch", "exec_command", "write_stdin"],
+      expected: ["open_workspace", "read", "apply_patch", "exec_command", "write_stdin", "show_changes"],
     },
   ];
 
   for (const { mode, expected } of cases) {
     await t.test(mode, async (nested) => {
-      const context = await fixture(nested, { toolMode: mode, widgets: "off" });
+      const context = await fixture(nested, { toolMode: mode, uiEnabled: false });
       const tools = await context.client.listTools();
 
       assert.deepEqual(
@@ -47,29 +47,30 @@ test("tool modes expose the expected host-facing tool surface", async (t) => {
   }
 });
 
-test("widget modes compose independently from tool modes", async (t) => {
-  const cases: Array<{
-    widgets: WidgetMode;
-    showChanges: boolean;
-    workspaceCard: boolean;
-  }> = [
-    { widgets: "off", showChanges: false, workspaceCard: false },
-    { widgets: "changes", showChanges: true, workspaceCard: true },
-    { widgets: "full", showChanges: false, workspaceCard: true },
-  ];
-
-  for (const { widgets, showChanges, workspaceCard } of cases) {
-    await t.test(widgets, async (nested) => {
-      const context = await fixture(nested, { toolMode: "claude", widgets });
+test("UI metadata is limited to workspace and aggregate review", async (t) => {
+  for (const uiEnabled of [true, false]) {
+    await t.test(uiEnabled ? "enabled" : "disabled", async (nested) => {
+      const context = await fixture(nested, { toolMode: "claude", uiEnabled });
       const tools = await context.client.listTools();
-      const workspace = tools.tools.find((tool) => tool.name === "open_workspace");
-      const changes = tools.tools.find((tool) => tool.name === "show_changes");
-      const workspaceMeta = workspace?._meta as { ui?: unknown } | undefined;
+      const toolsWithUi = tools.tools
+        .filter((tool) => Boolean((tool._meta as { ui?: unknown } | undefined)?.ui))
+        .map((tool) => tool.name)
+        .sort();
 
-      assert.equal(Boolean(changes), showChanges);
-      assert.equal(Boolean(workspaceMeta?.ui), workspaceCard);
+      assert.deepEqual(toolsWithUi, uiEnabled ? ["open_workspace", "show_changes"] : []);
     });
   }
+});
+
+test("open_workspace reports aggregate review availability", async (t) => {
+  const plain = await fixture(t);
+  const gitWorkspace = await fixture(t, { git: true });
+
+  const plainReview = structuredContent(await callOpen(plain.client, plain.project, "plain")).review;
+  const gitReview = structuredContent(await callOpen(gitWorkspace.client, gitWorkspace.project, "git")).review;
+
+  assert.equal((plainReview as { available: boolean }).available, false);
+  assert.deepEqual(gitReview, { available: true });
 });
 
 test("open_workspace keeps lifecycle flags out of model output and preserves complete card metadata", async (t) => {
@@ -301,7 +302,7 @@ async function fixture(
     localAgentProviders?: LocalAgentProviderAvailability[] | (() => LocalAgentProviderAvailability[]);
     subagents?: SubagentsConfig;
     toolMode?: ToolMode;
-    widgets?: WidgetMode;
+    uiEnabled?: boolean;
   } = {},
 ): Promise<ServerFixture> {
   const root = await mkdtemp(join(tmpdir(), "devspace-server-test-"));
@@ -339,7 +340,6 @@ async function fixture(
     DEVSPACE_ALLOWED_ROOTS: root,
     DEVSPACE_WORKTREE_ROOT: join(root, ".worktrees"),
     DEVSPACE_AGENT_DIR: agentDir,
-    DEVSPACE_WIDGETS: options.widgets ?? "full",
     DEVSPACE_SUBAGENTS: options.localAgentProviders ? "1" : "0",
     DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
     PORT: "1",
@@ -347,6 +347,7 @@ async function fixture(
   const modeConfig: ServerConfig = {
     ...loadedConfig,
     toolMode: options.toolMode ?? loadedConfig.toolMode,
+    uiEnabled: options.uiEnabled ?? loadedConfig.uiEnabled,
   };
   const config: ServerConfig = options.localAgentProviders
     ? {

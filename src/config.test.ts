@@ -11,10 +11,7 @@ const baseEnv = {
   DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
 };
 
-assert.equal(loadConfig(baseEnv).widgets, "full");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "changes" }).widgets, "changes");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "full" }).widgets, "full");
-assert.equal(loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "off" }).widgets, "off");
+assert.equal(loadConfig(baseEnv).uiEnabled, true);
 assert.equal(loadConfig(baseEnv).toolMode, "codex");
 assert.equal(loadConfig(baseEnv).skillsEnabled, true);
 assert.equal(loadConfig(baseEnv).devspaceSkillsDir, join(emptyConfigDir, "skills"));
@@ -33,18 +30,6 @@ assert.deepEqual(loadConfig({ ...baseEnv, DEVSPACE_SUBAGENTS: "1" }).subagents, 
   enabled: true,
   providers: [],
 });
-assert.throws(
-  () => loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "invalid" }),
-  /Invalid DEVSPACE_WIDGETS: invalid/,
-);
-assert.throws(
-  () => loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "minimal" }),
-  /Invalid DEVSPACE_WIDGETS: minimal/,
-);
-assert.throws(
-  () => loadConfig({ ...baseEnv, DEVSPACE_WIDGETS: "write-only" }),
-  /Invalid DEVSPACE_WIDGETS: write-only/,
-);
 assert.deepEqual(loadConfig(baseEnv).logging, {
   level: "info",
   format: "json",
@@ -154,6 +139,7 @@ writeFileSync(
     artifactsEnabled: true,
     artifactMaxFileBytes: 321,
     tools: { mode: "claude" },
+    ui: { enabled: false },
   }),
 );
 writeFileSync(
@@ -172,6 +158,7 @@ assert.equal(fileConfig.subagents.providers.length, 7);
 assert.equal(fileConfig.artifactsEnabled, true);
 assert.equal(fileConfig.artifactMaxFileBytes, 321);
 assert.equal(fileConfig.toolMode, "claude");
+assert.equal(fileConfig.uiEnabled, false);
 assert.deepEqual(fileConfig.allowedHosts, [
   "localhost",
   "127.0.0.1",

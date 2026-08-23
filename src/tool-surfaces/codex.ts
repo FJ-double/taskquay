@@ -1,4 +1,3 @@
-import { registerAppTool } from "@modelcontextprotocol/ext-apps/server";
 import * as z from "zod/v4";
 import { applyPatch } from "../apply-patch.js";
 import type { ProcessSnapshot } from "../process-sessions.js";
@@ -15,7 +14,6 @@ import {
   runLoggedToolOperation,
   textBlock,
   textSummary,
-  toolWidgetDescriptorMeta,
 } from "./shared.js";
 
 type CodexRegistration = (context: ToolRegistrationContext) => void;
@@ -95,8 +93,7 @@ function processToolResponse(
 function registerApplyPatchTool(context: ToolRegistrationContext): void {
   const { server, config, workspaces } = context;
 
-  registerAppTool(
-    server,
+  server.registerTool(
     "apply_patch",
     {
       title: "Apply patch",
@@ -121,7 +118,6 @@ function registerApplyPatchTool(context: ToolRegistrationContext): void {
           }),
         ),
       }),
-      ...toolWidgetDescriptorMeta(config, "edit"),
       annotations: EDIT_TOOL_ANNOTATIONS,
     },
     async ({ workspaceId, patch }) => {
@@ -173,8 +169,7 @@ function registerApplyPatchTool(context: ToolRegistrationContext): void {
 function registerCodexProcessTools(context: ToolRegistrationContext): void {
   const { server, config, workspaces, processSessions } = context;
 
-  registerAppTool(
-    server,
+  server.registerTool(
     "exec_command",
     {
       title: "Execute command",
@@ -227,7 +222,6 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
           .describe("Approximate output token budget. Defaults to 10000."),
       },
       outputSchema: processOutputSchema(),
-      ...toolWidgetDescriptorMeta(config, "shell"),
       annotations: SHELL_TOOL_ANNOTATIONS,
     },
     async ({
@@ -281,8 +275,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
     },
   );
 
-  registerAppTool(
-    server,
+  server.registerTool(
     "write_stdin",
     {
       title: "Write to process",
@@ -333,7 +326,6 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
           .describe("Approximate output token budget. Defaults to 10000."),
       },
       outputSchema: processOutputSchema(),
-      ...toolWidgetDescriptorMeta(config, "shell"),
       annotations: SHELL_TOOL_ANNOTATIONS,
     },
     async ({

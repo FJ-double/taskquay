@@ -26,6 +26,9 @@ const devspaceUserConfigSchema = z.object({
   tools: z.object({
     mode: z.enum(["claude", "codex"]).optional(),
   }).strict().optional(),
+  ui: z.object({
+    enabled: z.boolean().optional(),
+  }).strict().optional(),
 }).passthrough();
 
 const devspaceAuthConfigSchema = z.object({
