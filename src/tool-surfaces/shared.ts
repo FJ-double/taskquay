@@ -114,7 +114,7 @@ export function textSummary(content: ToolContent[]): {
 } {
   const text = contentText(content);
   return {
-    lines: text.length === 0 ? 0 : text.split("\n").length,
+    lines: contentLineCount(text),
     characters: text.length,
   };
 }
