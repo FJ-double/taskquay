@@ -73,6 +73,44 @@ test("open_workspace reports aggregate review availability", async (t) => {
   assert.deepEqual(gitReview, { available: true });
 });
 
+test("show_changes exposes the aggregate diff to plain MCP hosts", async (t) => {
+  const context = await fixture(t, { git: true, uiEnabled: false });
+  const opened = structuredContent(
+    await callOpen(context.client, context.project, "review"),
+  );
+  const workspaceId = opened.workspaceId;
+  assert.equal(typeof workspaceId, "string");
+
+  await writeFile(join(context.project, "README.md"), "goodbye\n");
+  const review = await context.client.callTool({
+    name: "show_changes",
+    arguments: { workspaceId },
+  });
+  const structured = structuredContent(review);
+
+  assert.deepEqual(structured.summary, {
+    files: 1,
+    additions: 1,
+    removals: 1,
+  });
+  assert.deepEqual(structured.files, [
+    {
+      path: "README.md",
+      type: "change",
+      additions: 1,
+      removals: 1,
+    },
+  ]);
+  assert.match(structured.patch as string, /-hello\n\+goodbye/);
+
+  const tools = await context.client.listTools();
+  const outputProperties = tools.tools.find((tool) => tool.name === "show_changes")
+    ?.outputSchema?.properties;
+  assert.ok(outputProperties && "summary" in outputProperties);
+  assert.ok(outputProperties && "files" in outputProperties);
+  assert.ok(outputProperties && "patch" in outputProperties);
+});
+
 test("open_workspace keeps lifecycle flags out of model output and preserves complete card metadata", async (t) => {
   const providerNote = "available";
   const context = await fixture(t, {

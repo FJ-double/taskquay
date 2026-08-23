@@ -667,7 +667,11 @@ export function createMcpServer(
       inputSchema: {
         workspaceId: z.string().describe(workspaceIdDescription),
       },
-      outputSchema: resultOutputSchema(),
+      outputSchema: resultOutputSchema({
+        summary: reviewSummaryOutputSchema,
+        files: z.array(reviewFileOutputSchema),
+        patch: z.string(),
+      }),
       ...workspaceAppDescriptorMeta(config),
       annotations: { readOnlyHint: true },
     },
@@ -703,6 +707,9 @@ export function createMcpServer(
         },
         structuredContent: {
           result: contentText(content),
+          summary: review.summary,
+          files: review.files,
+          patch: review.patch,
         },
       };
     },
