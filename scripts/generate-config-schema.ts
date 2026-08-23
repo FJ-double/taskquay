@@ -1,10 +1,9 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
 import {
   devspaceConfigJsonSchema,
 } from "../src/config-schema.js";
 
-const outputPath = resolve("schema/v1/devspace.schema.json");
+const outputPath = new URL("../schema/v1/devspace.schema.json", import.meta.url);
 
-mkdirSync(dirname(outputPath), { recursive: true });
+mkdirSync(new URL(".", outputPath), { recursive: true });
 writeFileSync(outputPath, `${JSON.stringify(devspaceConfigJsonSchema(), null, 2)}\n`);

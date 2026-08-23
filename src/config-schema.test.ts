@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import {
   defaultDevspaceConfig,
   devspaceConfigJsonSchema,
@@ -19,7 +18,7 @@ assert.throws(
 
 const generatedSchema = `${JSON.stringify(devspaceConfigJsonSchema(), null, 2)}\n`;
 const committedSchema = readFileSync(
-  resolve("schema/v1/devspace.schema.json"),
+  new URL("../schema/v1/devspace.schema.json", import.meta.url),
   "utf8",
 ).replace(/\r\n/g, "\n");
 assert.equal(committedSchema, generatedSchema, "run `npm run schema:config` after changing config-schema.ts");
