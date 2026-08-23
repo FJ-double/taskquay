@@ -150,7 +150,7 @@ sessions for that workspace.
 
 ## Tool Names
 
-DevSpace exposes these tool names:
+The Claude surface exposes these tool names:
 
 - `open_workspace`
 - `read`
