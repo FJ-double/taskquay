@@ -99,6 +99,9 @@ function normalizeCommand(command: string | undefined): Command {
 
 async function ensureConfigured(): Promise<void> {
   const files = loadDevspaceFiles();
+  if (files.migratedLegacyConfig) {
+    console.log(`Migrated ${files.dir}/config.json to ${files.configPath}`);
+  }
   if (files.configExists && files.authExists) return;
   if (process.env.DEVSPACE_OAUTH_OWNER_TOKEN) return;
 
@@ -672,10 +675,6 @@ async function textPrompt(options: TextPromptOptions): Promise<string> {
   if (prompts.isCancel(result)) throw new SetupCancelledError();
   const value = String(result).trim();
   return value || options.defaultValue;
-}
-
-function isValidPort(value: unknown): value is number {
-  return Number.isInteger(value) && Number(value) >= 1 && Number(value) <= 65535;
 }
 
 function validateRequiredPublicBaseUrl(value: string | undefined): string | undefined {

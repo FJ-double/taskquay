@@ -69,10 +69,10 @@ npx @waishnav/devspace config set publicBaseUrl https://your-tunnel-host.example
 
 Temporary tunnels often change URLs between runs.
 
-For a one-off run:
+Update the configured URL:
 
 ```bash
-DEVSPACE_PUBLIC_BASE_URL="https://new-tunnel.example.com" npx @waishnav/devspace serve
+npx @waishnav/devspace config set publicBaseUrl https://new-tunnel.example.com
 ```
 
 For a stable URL:
@@ -94,11 +94,8 @@ npx @waishnav/devspace doctor
 Confirm the public URL hostname appears in allowed hosts. If you changed tunnel
 URLs, update `publicBaseUrl`.
 
-Use this only for intentional local debugging:
-
-```bash
-DEVSPACE_ALLOWED_HOSTS="*" npx @waishnav/devspace serve
-```
+For intentional local debugging only, set `server.allowedHosts` to `["*"]` in
+`~/.devspace/config.jsonc`.
 
 ## OAuth Redirect Host Rejected
 
@@ -110,11 +107,8 @@ localhost
 127.0.0.1
 ```
 
-If another MCP client uses a different redirect host, configure:
-
-```bash
-DEVSPACE_OAUTH_ALLOWED_REDIRECT_HOSTS="chatgpt.com,example.com" npx @waishnav/devspace serve
-```
+If another MCP client uses a different redirect host, add it to
+`oauth.allowedRedirectHosts` in `~/.devspace/config.jsonc`.
 
 ## Owner Password Not Accepted
 
@@ -204,11 +198,8 @@ Confirm Bash is detected.
 
 ## Skills Do Not Appear
 
-Skills are enabled by default. Check:
-
-```bash
-DEVSPACE_SKILLS=1 npx @waishnav/devspace serve
-```
+Skills are enabled by default. Confirm `skills.enabled` is `true` in
+`~/.devspace/config.jsonc`.
 
 DevSpace looks in standard Agent Skills locations:
 
@@ -219,8 +210,8 @@ DevSpace looks in standard Agent Skills locations:
 It also checks compatibility and custom paths:
 
 - the bundled `subagents` skill when Subagents are enabled, unless `~/.devspace/skills/subagents/SKILL.md` exists
-- `DEVSPACE_AGENT_DIR/skills`, defaulting to `~/.codex/skills`
-- additional paths from `DEVSPACE_SKILL_PATHS`
+- `skills.agentDir/skills`, defaulting to `~/.codex/skills`
+- additional paths from `skills.paths`
 
 When Subagents are enabled, DevSpace loads agent profiles from
 `~/.devspace/agents/*.md` and project `.devspace/agents/*.md`, then exposes a
@@ -246,7 +237,7 @@ not copy files into agent skill directories.
 Packaged agent profile examples under `examples/agents/` are starter templates.
 Copy or adapt them into one of the active profile directories before use.
 
-Legacy project paths such as `.pi/skills` can be added through `DEVSPACE_SKILL_PATHS` when needed.
+Legacy project paths such as `.pi/skills` can be added to `skills.paths` when needed.
 
 If a skill appears in `open_workspace`, the model must read that skill's
 `SKILL.md` before reading other files inside the skill directory.
@@ -259,4 +250,4 @@ to avoid one iframe per call. Plain MCP clients may ignore ChatGPT Apps widget
 metadata and only show text results; `show_changes` remains available there.
 
 If both cards are missing in ChatGPT, confirm that `ui.enabled` is not `false`
-in `~/.devspace/config.json` and reconnect the MCP server.
+in `~/.devspace/config.jsonc` and reconnect the MCP server.

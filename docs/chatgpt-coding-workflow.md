@@ -117,8 +117,8 @@ DevSpace discovers standard Agent Skills from:
 It also keeps compatibility with:
 
 - the bundled `subagents` skill when Subagents are enabled, unless `~/.devspace/skills/subagents/SKILL.md` exists
-- `DEVSPACE_AGENT_DIR/skills`, defaulting to `~/.codex/skills`
-- additional paths from `DEVSPACE_SKILL_PATHS`
+- `skills.agentDir/skills`, defaulting to `~/.codex/skills`
+- additional paths from `skills.paths`
 
 When Subagents are enabled, DevSpace discovers agent profiles
 from `~/.devspace/agents/*.md` and project `.devspace/agents/*.md`.
@@ -130,7 +130,7 @@ Example profiles are packaged under `examples/agents/` for users who want
 starter templates. Copy or adapt them into one of the active profile directories
 before use.
 
-Legacy project paths such as `.pi/skills` can be added through `DEVSPACE_SKILL_PATHS` when needed.
+Legacy project paths such as `.pi/skills` can be added to `skills.paths` when needed.
 
 When `open_workspace` returns matching skills, the model should read the
 advertised `SKILL.md` before following that skill.
@@ -140,8 +140,8 @@ Skill paths may be outside the workspace. DevSpace only permits reading:
 - advertised `SKILL.md` files
 - files under a skill directory after that skill's `SKILL.md` has been read
 
-Set `DEVSPACE_SKILLS=0` to hide skills from workspace output. Enable Subagents
-and choose providers through `devspace init` or the persisted provider
+Set `skills.enabled` to `false` to hide skills from workspace output. Enable
+Subagents and choose providers through `devspace init` or the persisted provider
 configuration. The bundled `subagents` skill teaches the minimal
 `devspace agents targets`, `devspace agents ls`, `devspace agents run`,
 `devspace agents continue`, and `devspace agents show` workflow. The catalog
@@ -173,7 +173,7 @@ returns a process session ID when a command is still
 running after its yield window. Use `write_stdin` to poll it, send input, resize
 a PTY, or send Ctrl-C. Set `tty: true` only for commands that need a terminal.
 
-Set `tools.mode` to `claude` in `~/.devspace/config.json` to expose `write`,
+Set `tools.mode` to `claude` in `~/.devspace/config.jsonc` to expose `write`,
 `edit`, and `bash` instead of the Codex mutation and command tools. Dedicated
 MCP tools for `grep`, `glob`, and `ls` are not registered in either mode; use
 the configured shell tool with command-line tools such as `rg`, `find`, and
@@ -184,7 +184,7 @@ the configured shell tool with command-line tools such as `rg`, `find`, and
 DevSpace exposes `show_changes` in both tool modes and attaches widget UI only
 to `open_workspace` and `show_changes`. Reads, edits, and commands return normal
 MCP results without creating an iframe for each call. Set `ui.enabled` to
-`false` in `~/.devspace/config.json` to disable UI metadata while keeping the
+`false` in `~/.devspace/config.jsonc` to disable UI metadata while keeping the
 aggregate review tool available.
 
 Call `show_changes` exactly once after the final file modification in any turn

@@ -56,7 +56,7 @@ remain limited to the roots configured for ChatGPT.
 
 Setup detects supported Coding Agents and asks which ones DevSpace may use.
 These choices are stored as provider objects under `subagents` in
-`~/.devspace/config.json`.
+`~/.devspace/config.jsonc`.
 
 If you selected Coding Agents, setup prints:
 
@@ -99,13 +99,7 @@ Run:
 npx @waishnav/devspace serve
 ```
 
-If your tunnel URL changes for one run, override it without rewriting config:
-
-```bash
-DEVSPACE_PUBLIC_BASE_URL="https://new-tunnel.example.com" npx @waishnav/devspace serve
-```
-
-For a stable public URL, persist it:
+If your tunnel URL changes, update the persisted value before starting:
 
 ```bash
 npx @waishnav/devspace config set publicBaseUrl https://devspace.example.com
@@ -120,7 +114,7 @@ password approval page. Enter the Owner password printed during setup.
 The default config files are:
 
 ```text
-~/.devspace/config.json
+~/.devspace/config.jsonc
 ~/.devspace/auth.json
 ```
 
