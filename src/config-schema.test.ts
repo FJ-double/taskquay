@@ -21,7 +21,7 @@ const generatedSchema = `${JSON.stringify(devspaceConfigJsonSchema(), null, 2)}\
 const committedSchema = readFileSync(
   resolve("schema/v1/devspace.schema.json"),
   "utf8",
-);
+).replace(/\r\n/g, "\n");
 assert.equal(committedSchema, generatedSchema, "run `npm run schema:config` after changing config-schema.ts");
 
 console.log("config schema tests passed");
