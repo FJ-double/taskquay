@@ -158,14 +158,7 @@ DevSpace exposes these tool names:
 - `edit`
 - `bash`
 
-By default, DevSpace also runs in `DEVSPACE_TOOL_MODE=minimal`, so dedicated
-`grep`, `glob`, and `ls` tools are hidden. Use `bash` with command-line tools
-such as `rg`, `find`, and `ls` for search and directory inspection.
-
-Use `DEVSPACE_TOOL_MODE=full` to restore dedicated search and directory tools.
-
-The experimental Codex-style surface is enabled with
-`DEVSPACE_TOOL_MODE=codex`. It exposes:
+DevSpace uses the Codex-style surface by default. It exposes:
 
 - `open_workspace`
 - `read`
@@ -173,10 +166,16 @@ The experimental Codex-style surface is enabled with
 - `exec_command`
 - `write_stdin`
 
-In this mode, `write`, `edit`, `bash`, `grep`, `glob`, and `ls` are not
-registered. `exec_command` returns a process session ID when a command is still
+In this mode, `write`, `edit`, and `bash` are not registered. `exec_command`
+returns a process session ID when a command is still
 running after its yield window. Use `write_stdin` to poll it, send input, resize
 a PTY, or send Ctrl-C. Set `tty: true` only for commands that need a terminal.
+
+Set `tools.mode` to `claude` in `~/.devspace/config.json` to expose `write`,
+`edit`, and `bash` instead of the Codex mutation and command tools. Dedicated
+MCP tools for `grep`, `glob`, and `ls` are not registered in either mode; use
+the configured shell tool with command-line tools such as `rg`, `find`, and
+`ls`.
 
 ## Show Changes
 

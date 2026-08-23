@@ -91,18 +91,23 @@ MCP clients discover metadata from:
 
 ## Tool Modes
 
-`DEVSPACE_TOOL_MODE` controls the tool surface.
+`tools.mode` in `~/.devspace/config.json` controls the tool surface:
+
+```json
+{
+  "tools": {
+    "mode": "codex"
+  }
+}
+```
 
 | Value | Behavior |
 | --- | --- |
-| `minimal` | Default. Exposes `open_workspace`, `read`, `write`, `edit`, and `bash`. Clients use `bash` with tools such as `rg`, `find`, and `ls` for inspection. |
-| `full` | Exposes the minimal tools plus dedicated `grep`, `glob`, and `ls` tools. |
-| `codex` | Experimental. Exposes `open_workspace`, `read`, `apply_patch`, `exec_command`, and `write_stdin`. Existing mutation and shell tools are hidden. |
+| `codex` | Default. Exposes `open_workspace`, `read`, `apply_patch`, `exec_command`, and `write_stdin`. |
+| `claude` | Exposes `open_workspace`, `read`, `write`, `edit`, and `bash`. Clients use `bash` with tools such as `rg`, `find`, and `ls` for inspection. |
 
-`DEVSPACE_MINIMAL_TOOLS` remains a backward-compatible alias when
-`DEVSPACE_TOOL_MODE` is unset: `1` selects `minimal` and `0` selects `full`.
-The `codex` mode must be selected through `DEVSPACE_TOOL_MODE` and always uses
-its fixed short tool names regardless of `DEVSPACE_TOOL_NAMING`.
+The dedicated MCP tools `grep`, `glob`, and `ls` are no longer exposed. Both
+modes use their shell tool for search, file discovery, and directory inspection.
 
 Codex-mode commands run without a PTY by default. Set `tty: true` on
 `exec_command` for interactive terminal programs. PTY support uses the optional
@@ -250,7 +255,6 @@ DEVSPACE_ALLOWED_ROOTS="$HOME/personal,$HOME/work" \
 DEVSPACE_PUBLIC_BASE_URL="https://devspace.example.com" \
 DEVSPACE_WORKTREE_ROOT="$HOME/.devspace/worktrees" \
 DEVSPACE_ARTIFACTS="1" \
-DEVSPACE_TOOL_MODE="minimal" \
 DEVSPACE_WIDGETS="full" \
 npx @waishnav/devspace serve
 ```
