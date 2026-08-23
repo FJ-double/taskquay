@@ -26,6 +26,10 @@ export interface ReviewChangesResult {
   patch: string;
 }
 
+export type ReviewAvailability =
+  | { available: true }
+  | { available: false; reason: string };
+
 interface WorkspaceReviewState {
   root: string;
   gitRoot?: string;
@@ -37,7 +41,7 @@ interface WorkspaceReviewState {
 }
 
 export interface ReviewCheckpointManager {
-  initializeWorkspace(input: { workspaceId: string; root: string }): Promise<void>;
+  initializeWorkspace(input: { workspaceId: string; root: string }): Promise<ReviewAvailability>;
   reviewChanges(input: {
     workspaceId: string;
     root: string;
@@ -57,14 +61,15 @@ export function createReviewCheckpointManager(): ReviewCheckpointManager {
       const existingState = states.get(workspaceId);
       assertWorkspaceRoot(existingState, workspaceId, root);
       if (existingState?.root === root && existingState.gitRoot !== undefined) {
-        return;
+        return reviewAvailability(existingState);
       }
 
       const pending = initializations.get(workspaceId);
       if (pending) {
         await pending;
-        assertWorkspaceRoot(states.get(workspaceId), workspaceId, root);
-        return;
+        const initializedState = states.get(workspaceId);
+        assertWorkspaceRoot(initializedState, workspaceId, root);
+        return reviewAvailability(initializedState);
       }
 
       const initialize = initializeWorkspaceState(states, workspaceId, root);
@@ -76,6 +81,7 @@ export function createReviewCheckpointManager(): ReviewCheckpointManager {
           initializations.delete(workspaceId);
         }
       }
+      return reviewAvailability(states.get(workspaceId));
     },
 
     async reviewChanges({ workspaceId, root, since = "last_shown", markReviewed = true }) {
@@ -191,6 +197,15 @@ async function initializeWorkspaceState(
   } finally {
     states.set(workspaceId, state);
   }
+}
+
+function reviewAvailability(state: WorkspaceReviewState | undefined): ReviewAvailability {
+  return state?.gitRoot
+    ? { available: true }
+    : {
+        available: false,
+        reason: state?.diagnostic ?? "show_changes is unavailable for this workspace.",
+      };
 }
 
 function isReadyState(state: WorkspaceReviewState | undefined): boolean {

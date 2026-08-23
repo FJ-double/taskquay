@@ -21,6 +21,24 @@ test("a clean workspace reports no changes from the last-shown checkpoint", asyn
   assert.match(clean.result, /No changes since last shown changes/);
 });
 
+test("initialization reports whether aggregate review is available", async (t) => {
+  const gitRoot = await committedRepository(t);
+  const plainRoot = await mkdtemp(join(tmpdir(), "devspace-review-plain-test-"));
+  t.after(() => rm(plainRoot, { recursive: true, force: true }));
+  const manager = createReviewCheckpointManager();
+
+  assert.deepEqual(
+    await manager.initializeWorkspace({ workspaceId: "ws_git", root: gitRoot }),
+    { available: true },
+  );
+  const unavailable = await manager.initializeWorkspace({
+    workspaceId: "ws_plain",
+    root: plainRoot,
+  });
+  assert.equal(unavailable.available, false);
+  if (!unavailable.available) assert.match(unavailable.reason, /git repository/i);
+});
+
 test("show_changes reports and advances the last-shown checkpoint", async (t) => {
   const root = await committedRepository(t);
   const manager = createReviewCheckpointManager();
