@@ -50,6 +50,31 @@ export function logToolCall(config: ServerConfig, fields: ToolLogFields): void {
   });
 }
 
+export async function runLoggedToolOperation<T>(
+  config: ServerConfig,
+  fields: Omit<ToolLogFields, "success" | "durationMs" | "error">,
+  startedAt: number,
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    const result = await operation();
+    logToolCall(config, {
+      ...fields,
+      success: true,
+      durationMs: Math.round(performance.now() - startedAt),
+    });
+    return result;
+  } catch (error) {
+    logToolCall(config, {
+      ...fields,
+      success: false,
+      durationMs: Math.round(performance.now() - startedAt),
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+}
+
 export function contentText(content: ToolContent[]): string {
   return content
     .filter(

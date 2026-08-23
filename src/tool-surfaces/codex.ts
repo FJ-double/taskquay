@@ -10,8 +10,8 @@ import {
 } from "./types.js";
 import {
   contentText,
-  logToolCall,
   resultOutputSchema,
+  runLoggedToolOperation,
   textBlock,
   textSummary,
   toolWidgetDescriptorMeta,
@@ -119,8 +119,15 @@ function registerApplyPatchTool(context: ToolRegistrationContext): void {
     },
     async ({ workspaceId, patch }) => {
       const startedAt = performance.now();
-      const workspace = workspaces.getWorkspace(workspaceId);
-      const applied = await applyPatch(workspace.root, patch);
+      const applied = await runLoggedToolOperation(
+        config,
+        { tool: "apply_patch", workspaceId },
+        startedAt,
+        async () => {
+          const workspace = workspaces.getWorkspace(workspaceId);
+          return applyPatch(workspace.root, patch);
+        },
+      );
       const paths = applied.files.map((file) => file.path).join(", ");
       const result = `Applied patch to ${applied.files.length} file(s): ${paths}`;
       const content = [textBlock(result)];
@@ -128,13 +135,6 @@ function registerApplyPatchTool(context: ToolRegistrationContext): void {
         applied.files.length === 1
           ? applied.files[0]?.path
           : `${applied.files.length} files`;
-
-      logToolCall(config, {
-        tool: "apply_patch",
-        workspaceId,
-        success: true,
-        durationMs: Math.round(performance.now() - startedAt),
-      });
 
       return {
         content,
@@ -234,32 +234,35 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
       maxOutputTokens,
     }) => {
       const startedAt = performance.now();
-      const workspace = workspaces.getWorkspace(workspaceId);
-      const cwd = workspaces.resolveWorkingDirectory(
-        workspace,
-        workingDirectory,
+      const snapshot = await runLoggedToolOperation(
+        config,
+        {
+          tool: "exec_command",
+          workspaceId,
+          workingDirectory: workingDirectory ?? ".",
+          command: cmd,
+          commandLength: cmd.length,
+        },
+        startedAt,
+        async () => {
+          const workspace = workspaces.getWorkspace(workspaceId);
+          const cwd = workspaces.resolveWorkingDirectory(
+            workspace,
+            workingDirectory,
+          );
+          return processSessions.start({
+            workspaceId,
+            command: cmd,
+            cwd,
+            workspaceRoot: workspace.root,
+            tty,
+            columns,
+            rows,
+            yieldTimeMs,
+            maxOutputTokens,
+          });
+        },
       );
-      const snapshot = await processSessions.start({
-        workspaceId,
-        command: cmd,
-        cwd,
-        workspaceRoot: workspace.root,
-        tty,
-        columns,
-        rows,
-        yieldTimeMs,
-        maxOutputTokens,
-      });
-
-      logToolCall(config, {
-        tool: "exec_command",
-        workspaceId,
-        workingDirectory: workingDirectory ?? ".",
-        command: cmd,
-        commandLength: cmd.length,
-        success: true,
-        durationMs: Math.round(performance.now() - startedAt),
-      });
 
       return processToolResponse("exec_command", workspaceId, snapshot, {
         command: cmd,
@@ -336,23 +339,23 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
       maxOutputTokens,
     }) => {
       const startedAt = performance.now();
-      workspaces.getWorkspace(workspaceId);
-      const snapshot = await processSessions.write({
-        workspaceId,
-        sessionId,
-        chars,
-        columns,
-        rows,
-        yieldTimeMs,
-        maxOutputTokens,
-      });
-
-      logToolCall(config, {
-        tool: "write_stdin",
-        workspaceId,
-        success: true,
-        durationMs: Math.round(performance.now() - startedAt),
-      });
+      const snapshot = await runLoggedToolOperation(
+        config,
+        { tool: "write_stdin", workspaceId },
+        startedAt,
+        async () => {
+          workspaces.getWorkspace(workspaceId);
+          return processSessions.write({
+            workspaceId,
+            sessionId,
+            chars,
+            columns,
+            rows,
+            yieldTimeMs,
+            maxOutputTokens,
+          });
+        },
+      );
 
       return processToolResponse("write_stdin", workspaceId, snapshot, {
         sessionId,
