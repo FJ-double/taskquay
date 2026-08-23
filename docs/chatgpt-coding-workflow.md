@@ -157,6 +157,7 @@ The Claude surface exposes these tool names:
 - `write`
 - `edit`
 - `bash`
+- `show_changes`
 
 DevSpace uses the Codex-style surface by default. It exposes:
 
@@ -165,6 +166,7 @@ DevSpace uses the Codex-style surface by default. It exposes:
 - `apply_patch`
 - `exec_command`
 - `write_stdin`
+- `show_changes`
 
 In this mode, `write`, `edit`, and `bash` are not registered. `exec_command`
 returns a process session ID when a command is still
