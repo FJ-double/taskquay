@@ -23,6 +23,9 @@ const devspaceUserConfigSchema = z.object({
   artifactMaxFileBytes: z.number().optional(),
   agentDir: z.string().optional(),
   subagents: storedSubagentsConfigSchema.optional(),
+  tools: z.object({
+    mode: z.enum(["claude", "codex"]).optional(),
+  }).strict().optional(),
 }).passthrough();
 
 const devspaceAuthConfigSchema = z.object({

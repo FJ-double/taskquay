@@ -25,12 +25,8 @@ test("tool modes expose the expected host-facing tool surface", async (t) => {
     expected: string[];
   }> = [
     {
-      mode: "minimal",
+      mode: "claude",
       expected: ["open_workspace", "read", "write", "edit", "bash"],
-    },
-    {
-      mode: "full",
-      expected: ["open_workspace", "read", "write", "edit", "bash", "grep", "glob", "ls"],
     },
     {
       mode: "codex",
@@ -64,7 +60,7 @@ test("widget modes compose independently from tool modes", async (t) => {
 
   for (const { widgets, showChanges, workspaceCard } of cases) {
     await t.test(widgets, async (nested) => {
-      const context = await fixture(nested, { toolMode: "full", widgets });
+      const context = await fixture(nested, { toolMode: "claude", widgets });
       const tools = await context.client.listTools();
       const workspace = tools.tools.find((tool) => tool.name === "open_workspace");
       const changes = tools.tools.find((tool) => tool.name === "show_changes");
@@ -344,14 +340,17 @@ async function fixture(
     DEVSPACE_WORKTREE_ROOT: join(root, ".worktrees"),
     DEVSPACE_AGENT_DIR: agentDir,
     DEVSPACE_WIDGETS: options.widgets ?? "full",
-    DEVSPACE_TOOL_MODE: options.toolMode ?? "full",
     DEVSPACE_SUBAGENTS: options.localAgentProviders ? "1" : "0",
     DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
     PORT: "1",
   });
+  const modeConfig: ServerConfig = {
+    ...loadedConfig,
+    toolMode: options.toolMode ?? loadedConfig.toolMode,
+  };
   const config: ServerConfig = options.localAgentProviders
     ? {
-        ...loadedConfig,
+        ...modeConfig,
         subagents: options.subagents ?? {
           enabled: true,
           providers: initialProviderAvailability.map((provider) => ({
@@ -360,7 +359,7 @@ async function fixture(
           })),
         },
       }
-    : loadedConfig;
+    : modeConfig;
   const resolveProviderAvailability: () => LocalAgentProviderAvailability[] =
     typeof options.localAgentProviders === "function"
       ? options.localAgentProviders
