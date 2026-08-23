@@ -1,16 +1,12 @@
 import type { ToolMode } from "../config.js";
 import { codexInstructions, registerCodexTools } from "./codex.js";
-import { registerStandardTools, standardInstructions } from "./standard.js";
+import { claudeInstructions, registerClaudeTools } from "./claude.js";
 import { type ToolSurface } from "./types.js";
 
 const TOOL_SURFACES: Record<ToolMode, ToolSurface> = {
-  minimal: {
-    register: (context) => registerStandardTools(context, "minimal"),
-    instructions: standardInstructions("minimal"),
-  },
-  full: {
-    register: (context) => registerStandardTools(context, "full"),
-    instructions: standardInstructions("full"),
+  claude: {
+    register: registerClaudeTools,
+    instructions: claudeInstructions,
   },
   codex: {
     register: registerCodexTools,

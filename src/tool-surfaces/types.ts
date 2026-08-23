@@ -10,9 +10,6 @@ export const toolNames = {
   read: "read",
   write: "write",
   edit: "edit",
-  grep: "grep",
-  glob: "glob",
-  ls: "ls",
   shell: "bash",
 } as const;
 
@@ -66,8 +63,6 @@ export type ToolWidgetKind =
   | "read"
   | "write"
   | "edit"
-  | "search"
-  | "directory"
   | "shell"
   | "show_changes";
 
