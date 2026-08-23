@@ -73,6 +73,7 @@ try {
   writeDevspaceAuth({ ownerToken: "persisted-owner-token-long-enough" }, env);
 
   const configured = loadConfig({ DEVSPACE_CONFIG_DIR: configDir });
+  assert.equal(configured.configDir, configDir);
   assert.equal(configured.host, "0.0.0.0");
   assert.equal(configured.port, 8787);
   assert.equal(configured.publicBaseUrl, "https://devspace.example.com");

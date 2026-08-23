@@ -5,7 +5,11 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { createConnection, createServer as createNetServer } from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { daemonExecArgv, LocalAgentClient } from "./local-agent-client.js";
+import {
+  daemonExecArgv,
+  localAgentDaemonEnvironment,
+  LocalAgentClient,
+} from "./local-agent-client.js";
 import { LocalAgentDaemon, type LocalAgentDaemonManager } from "./local-agent-daemon.js";
 import {
   ensureLocalAgentDaemonSecret,
@@ -110,6 +114,12 @@ assert.deepEqual(
   ]),
   ["--enable-source-maps", "--trace-warnings"],
   "detached daemon startup must not inherit inspector flags",
+);
+
+assert.deepEqual(
+  localAgentDaemonEnvironment("/alternate/config", { PATH: "/bin" }),
+  { PATH: "/bin", DEVSPACE_CONFIG_DIR: "/alternate/config" },
+  "the daemon must reload the same persisted configuration as its client",
 );
 
 let shutdownSocket: ReturnType<typeof createConnection> | undefined;

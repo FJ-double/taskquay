@@ -153,13 +153,18 @@ function migrateLegacyConfigFile(
   }
 
   const temporaryPath = temporaryFilePath(configPath);
+  let published = false;
   try {
     mkdirSync(dirname(configPath), { recursive: true });
     writeFileSync(temporaryPath, serializeConfig(migrated), { mode: 0o600, flag: "wx" });
     readJsoncConfig(temporaryPath);
     renameSync(temporaryPath, configPath);
+    published = true;
     renameSync(legacyPath, backupPath);
   } catch (error) {
+    if (published && existsSync(legacyPath)) {
+      rmSync(configPath, { force: true });
+    }
     rmSync(temporaryPath, { force: true });
     throw fileError("migrate", legacyPath, error);
   }

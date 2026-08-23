@@ -9,6 +9,7 @@ import type { SubagentsConfig } from "./local-agent-config.js";
 export type { ToolMode } from "./config-schema.js";
 
 export interface ServerConfig {
+  configDir: string;
   host: string;
   port: number;
   oauth: OAuthConfig;
@@ -48,6 +49,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   ];
 
   return {
+    configDir: files.dir,
     host,
     port,
     oauth: {

@@ -100,7 +100,7 @@ function normalizeCommand(command: string | undefined): Command {
 async function ensureConfigured(): Promise<void> {
   const files = loadDevspaceFiles();
   if (files.migratedLegacyConfig) {
-    console.log(`Migrated ${files.dir}/config.json to ${files.configPath}`);
+    console.log(`Migrated legacy configuration to ${files.configPath}`);
   }
   if (files.configExists && files.authExists) return;
   if (process.env.DEVSPACE_OAUTH_OWNER_TOKEN) return;
