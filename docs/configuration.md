@@ -101,6 +101,10 @@ MCP clients discover metadata from:
 }
 ```
 
+`DEVSPACE_TOOL_MODE` and `DEVSPACE_MINIMAL_TOOLS` are no longer read. Set
+`tools.mode` in the configuration file when selecting the Claude surface;
+omitting it selects Codex.
+
 | Value | Behavior |
 | --- | --- |
 | `codex` | Default. Exposes `open_workspace`, `read`, `apply_patch`, `exec_command`, and `write_stdin`. |
