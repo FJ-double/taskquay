@@ -225,9 +225,8 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       ...files.config,
       server: {
         ...files.config.server,
-        host: files.config.server.host,
         port,
-        publicBaseUrl,
+        ...(useChatGpt ? { publicBaseUrl } : {}),
       },
       workspaces: {
         ...files.config.workspaces,
