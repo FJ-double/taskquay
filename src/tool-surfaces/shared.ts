@@ -104,24 +104,6 @@ export function textBlock(text: string): ToolContent {
   return { type: "text", text };
 }
 
-export function textSummary(content: ToolContent[]): {
-  lines: number;
-  characters: number;
-} {
-  const text = contentText(content);
-  return {
-    lines: contentLineCount(text),
-    characters: text.length,
-  };
-}
-
-export function contentLineCount(content: string): number {
-  if (content.length === 0) return 0;
-  return content.endsWith("\n")
-    ? content.slice(0, -1).split("\n").length
-    : content.split("\n").length;
-}
-
 export function countDiffStats(diff: string | undefined): DiffStats {
   if (!diff) return { additions: 0, removals: 0 };
 
@@ -134,28 +116,4 @@ export function countDiffStats(diff: string | undefined): DiffStats {
   }
 
   return { additions, removals };
-}
-
-export function newFilePatch(path: string, content: string): string {
-  const lines =
-    content.length === 0
-      ? []
-      : content.endsWith("\n")
-        ? content.slice(0, -1).split("\n")
-        : content.split("\n");
-  const hunkLength = lines.length;
-  const hunkRange = hunkLength === 0 ? "+0,0" : `+1,${hunkLength}`;
-  const body = lines.map((line) => `+${line}`).join("\n");
-
-  return [
-    `diff --git a/${path} b/${path}`,
-    "new file mode 100644",
-    "index 0000000..0000000",
-    "--- /dev/null",
-    `+++ b/${path}`,
-    `@@ -0,0 ${hunkRange} @@`,
-    body,
-  ]
-    .filter((line) => line.length > 0)
-    .join("\n");
 }

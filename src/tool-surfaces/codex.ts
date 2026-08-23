@@ -13,7 +13,6 @@ import {
   resultOutputSchema,
   runLoggedToolOperation,
   textBlock,
-  textSummary,
 } from "./shared.js";
 
 type CodexRegistration = (context: ToolRegistrationContext) => void;
@@ -57,27 +56,11 @@ function processOutputSchema(): z.ZodRawShape {
   });
 }
 
-function processToolResponse(
-  tool: "exec_command" | "write_stdin",
-  workspaceId: string,
-  snapshot: ProcessSnapshot,
-  summary: Record<string, unknown>,
-) {
+function processToolResponse(snapshot: ProcessSnapshot) {
   const result = processResult(snapshot);
   const content = [textBlock(result)];
-  const outputSummary = textSummary(
-    snapshot.output ? [textBlock(snapshot.output)] : [],
-  );
   return {
     content,
-    _meta: {
-      tool,
-      card: {
-        workspaceId,
-        summary: { ...summary, ...outputSummary },
-        payload: { content },
-      },
-    },
     structuredContent: {
       result,
       sessionId: snapshot.sessionId,
@@ -134,27 +117,9 @@ function registerApplyPatchTool(context: ToolRegistrationContext): void {
       const paths = applied.files.map((file) => file.path).join(", ");
       const result = `Applied patch to ${applied.files.length} file(s): ${paths}`;
       const content = [textBlock(result)];
-      const displayPath =
-        applied.files.length === 1
-          ? applied.files[0]?.path
-          : `${applied.files.length} files`;
 
       return {
         content,
-        _meta: {
-          tool: "apply_patch",
-          card: {
-            workspaceId,
-            path: displayPath,
-            summary: {
-              files: applied.files.length,
-              additions: applied.additions,
-              removals: applied.removals,
-            },
-            files: applied.files,
-            payload: { patch: applied.patch },
-          },
-        },
         structuredContent: {
           result,
           additions: applied.additions,
@@ -265,13 +230,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
         },
       );
 
-      return processToolResponse("exec_command", workspaceId, snapshot, {
-        command: cmd,
-        workingDirectory: workingDirectory ?? ".",
-        running: snapshot.running,
-        exitCode: snapshot.exitCode,
-        wallTimeMs: snapshot.wallTimeMs,
-      });
+      return processToolResponse(snapshot);
     },
   );
 
@@ -356,13 +315,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
         },
       );
 
-      return processToolResponse("write_stdin", workspaceId, snapshot, {
-        sessionId,
-        charactersWritten: chars?.length ?? 0,
-        running: snapshot.running,
-        exitCode: snapshot.exitCode,
-        wallTimeMs: snapshot.wallTimeMs,
-      });
+      return processToolResponse(snapshot);
     },
   );
 }

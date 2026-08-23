@@ -61,7 +61,6 @@ import {
   logToolCall,
   resultOutputSchema,
   textBlock,
-  textSummary,
   workspaceAppDescriptorMeta,
 } from "./tool-surfaces/shared.js";
 import {
@@ -619,11 +618,6 @@ export function createMcpServer(
       }
       workspaces.markReadPathLoaded(workspace, readPath);
 
-      const summary = {
-        ...textSummary(response.content),
-        offset: input.offset ?? 1,
-        limited: input.limit !== undefined,
-      };
       logToolCall(config, {
         tool: toolNames.read,
         workspaceId,
@@ -634,15 +628,6 @@ export function createMcpServer(
 
       return {
         ...response,
-        _meta: {
-          tool: toolNames.read,
-          card: {
-            workspaceId,
-            path: input.path,
-            summary,
-            payload: { content: response.content },
-          },
-        },
         structuredContent: {
           result: contentText(response.content),
         },
