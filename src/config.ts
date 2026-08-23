@@ -69,7 +69,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     artifactsEnabled: stored.artifacts.enabled,
     artifactMaxFileBytes: stored.artifacts.maxFileBytes,
     skillsEnabled: stored.skills.enabled,
-    skillPaths: normalizePaths(stored.skills.paths),
+    skillPaths: stored.skills.paths,
     devspaceSkillsDir: devspaceSkillsDir(env),
     devspaceAgentsDir: devspaceAgentsDir(env),
     subagents: stored.subagents,

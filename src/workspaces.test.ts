@@ -9,6 +9,7 @@ import { loadConfig, type ServerConfig } from "./config.js";
 import { GitWorktreeError } from "./git-worktrees.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
+import { writeTestDevspaceConfig } from "./test-support/config.test.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -47,14 +48,17 @@ test("a checkout exposes initial and nested instruction context while filtering 
     await writeFile(join(context.outsideRoot, "secret.txt"), "outside secret\n");
     await symlink(join(context.outsideRoot, "secret.txt"), join(unsafeAgentDir, "AGENTS.md"));
 
-    const unsafeConfig = loadConfig({
-      DEVSPACE_CONFIG_DIR: join(context.root, ".devspace-unsafe-home"),
-      DEVSPACE_ALLOWED_ROOTS: context.root,
-      DEVSPACE_WORKTREE_ROOT: join(context.root, ".devspace", "unsafe-worktrees"),
-      DEVSPACE_AGENT_DIR: unsafeAgentDir,
-      DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
-      PORT: "1",
-    });
+    const unsafeConfig = loadConfig(writeTestDevspaceConfig(
+      join(context.root, ".devspace-unsafe-home"),
+      {
+        server: { port: 1 },
+        workspaces: {
+          allowedRoots: [context.root],
+          worktreeRoot: join(context.root, ".devspace", "unsafe-worktrees"),
+        },
+        skills: { agentDir: unsafeAgentDir },
+      },
+    ));
     const unsafeWorkspace = await new WorkspaceRegistry(unsafeConfig).openWorkspace(context.root);
 
     assert.deepEqual(
@@ -144,13 +148,17 @@ test("a symlinked allowed root preserves checkout and worktree path behavior", {
   await symlink(context.root, aliasRoot, "dir");
   await createGitProject(context.root);
 
-  const aliasConfig = loadConfig({
-    DEVSPACE_ALLOWED_ROOTS: aliasRoot,
-    DEVSPACE_WORKTREE_ROOT: join(aliasRoot, ".devspace", "alias-worktrees"),
-    DEVSPACE_AGENT_DIR: context.agentDir,
-    DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
-    PORT: "1",
-  });
+  const aliasConfig = loadConfig(writeTestDevspaceConfig(
+    join(context.root, ".devspace-alias-home"),
+    {
+      server: { port: 1 },
+      workspaces: {
+        allowedRoots: [aliasRoot],
+        worktreeRoot: join(aliasRoot, ".devspace", "alias-worktrees"),
+      },
+      skills: { agentDir: context.agentDir },
+    },
+  ));
   const aliasRegistry = new WorkspaceRegistry(aliasConfig);
 
   const worktree = await aliasRegistry.openWorkspace({
@@ -207,15 +215,15 @@ async function fixture(t: TestContext): Promise<WorkspaceFixture> {
   await writeFile(join(root, "nested", "AGENTS.md"), "nested instructions\n");
   await writeFile(join(root, "nested", "file.txt"), "hello\n");
 
-  const config = loadConfig({
-    DEVSPACE_CONFIG_DIR: join(root, ".devspace-home"),
-    DEVSPACE_ALLOWED_ROOTS: root,
-    DEVSPACE_WORKTREE_ROOT: join(root, ".devspace", "worktrees"),
-    DEVSPACE_AGENT_DIR: agentDir,
-    DEVSPACE_SUBAGENTS: "1",
-    DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
-    PORT: "1",
-  });
+  const config = loadConfig(writeTestDevspaceConfig(join(root, ".devspace-home"), {
+    server: { port: 1 },
+    workspaces: {
+      allowedRoots: [root],
+      worktreeRoot: join(root, ".devspace", "worktrees"),
+    },
+    skills: { agentDir },
+    subagents: { enabled: true, providers: [] },
+  }));
 
   t.after(async () => {
     await rm(root, { recursive: true, force: true });

@@ -16,6 +16,7 @@ import { ProcessSessionManager } from "./process-sessions.js";
 import { createMcpServer } from "./server.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
+import { writeTestDevspaceConfig } from "./test-support/config.test.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -373,15 +374,12 @@ async function fixture(
   const initialProviderAvailability = typeof options.localAgentProviders === "function"
     ? options.localAgentProviders()
     : options.localAgentProviders ?? [];
-  const loadedConfig = loadConfig({
-    DEVSPACE_CONFIG_DIR: join(root, ".config"),
-    DEVSPACE_ALLOWED_ROOTS: root,
-    DEVSPACE_WORKTREE_ROOT: join(root, ".worktrees"),
-    DEVSPACE_AGENT_DIR: agentDir,
-    DEVSPACE_SUBAGENTS: options.localAgentProviders ? "1" : "0",
-    DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
-    PORT: "1",
-  });
+  const loadedConfig = loadConfig(writeTestDevspaceConfig(join(root, ".config"), {
+    server: { port: 1 },
+    workspaces: { allowedRoots: [root], worktreeRoot: join(root, ".worktrees") },
+    skills: { agentDir },
+    subagents: { enabled: options.localAgentProviders !== undefined, providers: [] },
+  }));
   const modeConfig: ServerConfig = {
     ...loadedConfig,
     toolMode: options.toolMode ?? loadedConfig.toolMode,

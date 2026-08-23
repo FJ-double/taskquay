@@ -92,7 +92,7 @@ try {
   assert.equal(configured.artifactsEnabled, true);
   assert.equal(configured.artifactMaxFileBytes, 321);
   assert.equal(configured.skillsEnabled, false);
-  assert.deepEqual(configured.skillPaths, [resolve(process.env.HOME!, "skills")]);
+  assert.deepEqual(configured.skillPaths, ["~/skills"]);
   assert.equal(configured.agentDir, resolve(process.env.HOME!, "agent"));
   assert.equal(configured.subagents.enabled, true);
   assert.equal(configured.oauth.ownerToken, "persisted-owner-token-long-enough");
