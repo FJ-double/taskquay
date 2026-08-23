@@ -7,6 +7,10 @@ import {
 } from "./patch-display.js";
 
 test("review titles describe a uniform or mixed file set", () => {
+  assert.equal(getPatchDisplayParts(
+    { files: [] },
+    { emptyTitle: "Changes ready" },
+  ).title, "Changes ready");
   assert.equal(getPatchDisplayParts({
     files: [{ path: "a.ts", type: "new" }],
   }).title, "Added 1 file");
