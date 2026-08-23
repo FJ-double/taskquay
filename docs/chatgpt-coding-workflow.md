@@ -179,18 +179,16 @@ the configured shell tool with command-line tools such as `rg`, `find`, and
 
 ## Show Changes
 
-By default, `DEVSPACE_WIDGETS=full`.
+DevSpace exposes `show_changes` in both tool modes and attaches widget UI only
+to `open_workspace` and `show_changes`. Reads, edits, and commands return normal
+MCP results without creating an iframe for each call. Set `ui.enabled` to
+`false` in `~/.devspace/config.json` to disable UI metadata while keeping the
+aggregate review tool available.
 
-In that mode, DevSpace attaches widget UI to the exposed workspace, file, edit,
-and shell tools. The aggregate `show_changes` tool is not exposed by default.
-
-Use `DEVSPACE_WIDGETS=off` to disable widget UI, or `DEVSPACE_WIDGETS=changes`
-to expose the aggregate show-changes flow.
-
-When `show_changes` is exposed, call it exactly once after the final file
-modification in any turn that changes files. It shows the combined changes for
-that turn and advances the review point automatically. Reusing a workspace does
-not change this workflow.
+Call `show_changes` exactly once after the final file modification in any turn
+that changes files. It shows the combined changes for that turn and advances
+the review point automatically. Reusing a workspace does not change this
+workflow.
 
 ## Shell Use
 

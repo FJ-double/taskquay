@@ -253,12 +253,10 @@ If a skill appears in `open_workspace`, the model must read that skill's
 
 ## Review Card Does Not Appear
 
-Per-tool widget cards are enabled by default with:
+DevSpace attaches widget UI only to `open_workspace` and `show_changes`.
+Ordinary reads, edits, and commands intentionally render as normal tool results
+to avoid one iframe per call. Plain MCP clients may ignore ChatGPT Apps widget
+metadata and only show text results; `show_changes` remains available there.
 
-```bash
-DEVSPACE_WIDGETS=full
-```
-
-The aggregate `show_changes` tool is only exposed with
-`DEVSPACE_WIDGETS=changes`. Plain MCP clients may ignore ChatGPT Apps widget
-metadata and only show text results.
+If both cards are missing in ChatGPT, confirm that `ui.enabled` is not `false`
+in `~/.devspace/config.json` and reconnect the MCP server.

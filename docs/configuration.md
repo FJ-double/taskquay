@@ -118,15 +118,22 @@ Codex-mode commands run without a PTY by default. Set `tty: true` on
 `node-pty` dependency; `write_stdin` can send input, poll output, and resize PTY
 sessions.
 
-## Widgets
+## UI
 
-`DEVSPACE_WIDGETS` controls ChatGPT Apps iframe usage.
+DevSpace attaches ChatGPT Apps UI metadata only to `open_workspace` and
+`show_changes`. This avoids creating an iframe for every read, edit, or command
+tool call. The aggregate `show_changes` tool remains available to every MCP
+host, including hosts that ignore UI metadata.
 
-| Value | Behavior |
-| --- | --- |
-| `full` | Default. Widget UI is attached to exposed workspace, file, edit, and shell tools. |
-| `changes` | Enables the aggregate `show_changes` tool and attaches widget UI to `open_workspace` and `show_changes`. |
-| `off` | Disables widget UI. |
+UI is enabled by default. Disable it without removing `show_changes`:
+
+```json
+{
+  "ui": {
+    "enabled": false
+  }
+}
+```
 
 ## Skills
 
@@ -259,7 +266,6 @@ DEVSPACE_ALLOWED_ROOTS="$HOME/personal,$HOME/work" \
 DEVSPACE_PUBLIC_BASE_URL="https://devspace.example.com" \
 DEVSPACE_WORKTREE_ROOT="$HOME/.devspace/worktrees" \
 DEVSPACE_ARTIFACTS="1" \
-DEVSPACE_WIDGETS="full" \
 npx @waishnav/devspace serve
 ```
 
