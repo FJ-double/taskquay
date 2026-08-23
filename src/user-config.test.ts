@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import {
   existsSync,
   mkdtempSync,
@@ -42,6 +43,24 @@ withConfigDir((configDir, env) => {
 
   const nextLoad = loadDevspaceFiles(env);
   assert.equal(nextLoad.migratedLegacyConfig, false);
+});
+
+await withConfigDirAsync(async (configDir) => {
+  writeFileSync(join(configDir, "config.json"), JSON.stringify({
+    port: 8787,
+    allowedRoots: ["/work"],
+  }));
+
+  const results = await Promise.all([
+    migrateInChildProcess(configDir),
+    migrateInChildProcess(configDir),
+  ]);
+  assert.equal(results.filter((result) => result.migrated).length, 1);
+  assert.equal(results.filter((result) => !result.migrated).length, 1);
+  assert.equal(existsSync(join(configDir, "config.json")), false);
+  assert.equal(existsSync(join(configDir, "config.jsonc")), true);
+  assert.equal(existsSync(join(configDir, "config.json.v1.0.bak")), true);
+  assert.equal(loadDevspaceFiles({ DEVSPACE_CONFIG_DIR: configDir }).config.server.port, 8787);
 });
 
 withConfigDir((configDir, env) => {
@@ -100,4 +119,53 @@ function withConfigDir(
   } finally {
     rmSync(configDir, { recursive: true, force: true });
   }
+}
+
+async function withConfigDirAsync(
+  test: (configDir: string) => Promise<void>,
+): Promise<void> {
+  const configDir = mkdtempSync(join(tmpdir(), "devspace-user-config-test-"));
+  try {
+    await test(configDir);
+  } finally {
+    rmSync(configDir, { recursive: true, force: true });
+  }
+}
+
+async function migrateInChildProcess(
+  configDir: string,
+): Promise<{ migrated: boolean }> {
+  const moduleUrl = new URL("./user-config.ts", import.meta.url).href;
+  const source = [
+    `import { loadDevspaceFiles } from ${JSON.stringify(moduleUrl)};`,
+    "const files = loadDevspaceFiles();",
+    "process.stdout.write(JSON.stringify({ migrated: files.migratedLegacyConfig }));",
+  ].join("\n");
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      ["--import", "tsx", "--input-type=module", "--eval", source],
+      {
+        env: { ...process.env, DEVSPACE_CONFIG_DIR: configDir },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.once("error", reject);
+    child.once("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`migration child exited with ${code}: ${stderr}`));
+        return;
+      }
+      resolve(JSON.parse(stdout) as { migrated: boolean });
+    });
+  });
 }

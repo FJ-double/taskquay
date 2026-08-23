@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import {
   existsSync,
+  linkSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -140,7 +141,7 @@ function migrateLegacyConfigFile(
   legacyPath: string,
   configPath: string,
   backupPath: string,
-): true {
+): boolean {
   if (existsSync(backupPath)) {
     throw new Error(`Unable to migrate ${legacyPath}: backup already exists at ${backupPath}`);
   }
@@ -158,15 +159,24 @@ function migrateLegacyConfigFile(
     mkdirSync(dirname(configPath), { recursive: true });
     writeFileSync(temporaryPath, serializeConfig(migrated), { mode: 0o600, flag: "wx" });
     readJsoncConfig(temporaryPath);
-    renameSync(temporaryPath, configPath);
+    try {
+      // A hard link publishes the complete temporary file atomically without
+      // replacing config.jsonc if another first-start process won the race.
+      linkSync(temporaryPath, configPath);
+    } catch (error) {
+      if (!isErrnoException(error) || error.code !== "EEXIST") throw error;
+      readJsoncConfig(configPath);
+      return false;
+    }
     published = true;
     renameSync(legacyPath, backupPath);
   } catch (error) {
     if (published && existsSync(legacyPath)) {
       rmSync(configPath, { force: true });
     }
-    rmSync(temporaryPath, { force: true });
     throw fileError("migrate", legacyPath, error);
+  } finally {
+    rmSync(temporaryPath, { force: true });
   }
   return true;
 }
@@ -234,6 +244,10 @@ function writeJsonFile(filePath: string, value: unknown, mode: number): void {
 function fileError(action: "read" | "migrate", filePath: string, error: unknown): Error {
   const reason = error instanceof Error ? error.message : String(error);
   return new DevspaceConfigFileError(`Unable to ${action} ${filePath}: ${reason}`);
+}
+
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
 
 class DevspaceConfigFileError extends Error {}
