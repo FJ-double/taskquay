@@ -1,21 +1,26 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { writeTestDevspaceConfig } from "./test-support/config.test.js";
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
-const tsxLoader = pathToFileURL(require.resolve("tsx")).href;
-const cliPath = fileURLToPath(new URL("./cli.ts", import.meta.url));
+const repoRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
+const cliPath = join(repoRoot, "dist", "cli.js");
+const tscPath = require.resolve("typescript/bin/tsc");
 
 test("show-changes prints a Git-backed historical review", async (t) => {
+  await execFileAsync(process.execPath, [tscPath, "-p", join(repoRoot, "tsconfig.build.json")], {
+    cwd: repoRoot,
+  });
+
   const root = await mkdtemp(join(tmpdir(), "devspace-cli-show-changes-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const project = join(root, "project");
@@ -36,7 +41,7 @@ test("show-changes prints a Git-backed historical review", async (t) => {
     workspaces: { allowedRoots: [project] },
     storage: { stateDir: join(root, ".state") },
   });
-  const cliArgs = ["--import", tsxLoader, cliPath, "show-changes", review.reviewRef];
+  const cliArgs = [cliPath, "show-changes", review.reviewRef];
   const plain = await execFileAsync("node", cliArgs, {
     cwd: project,
     env: {
@@ -65,6 +70,30 @@ test("show-changes prints a Git-backed historical review", async (t) => {
   };
   assert.equal(parsed.reviewRef, review.reviewRef);
   assert.equal(parsed.patch, review.patch);
+
+  const head = (await execFileAsync("git", ["rev-parse", "HEAD"], {
+    cwd: project,
+    encoding: "utf8",
+  })).stdout.trim();
+  await assert.rejects(
+    execFileAsync("node", [cliPath, "show-changes", head], {
+      cwd: project,
+      env: {
+        ...process.env,
+        ...env,
+        DEVSPACE_WORKSPACE_ID: "",
+        DEVSPACE_WORKSPACE_ROOT: "",
+      },
+      encoding: "utf8",
+    }),
+    (error: unknown) => {
+      assert.match(
+        (error as { stderr?: string }).stderr ?? "",
+        /Unknown DevSpace review reference/,
+      );
+      return true;
+    },
+  );
 });
 
 async function git(cwd: string, args: string[]): Promise<void> {

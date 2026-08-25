@@ -19,7 +19,7 @@ export function decodeToolResult(result: CallToolResult): DecodedToolResult {
     const workspaceId = stringField(structured.workspaceId);
     const reviewRef = stringField(structured.reviewRef);
     if (workspaceId && reviewRef) {
-      if (metaCard) {
+      if (isCompleteReviewCard(metaCard)) {
         return {
           kind: "card",
           card: {
@@ -71,6 +71,21 @@ export function decodeToolResult(result: CallToolResult): DecodedToolResult {
   }
 
   return { kind: "invalid" };
+}
+
+function isCompleteReviewCard(
+  card: Partial<ToolResultCard> | undefined,
+): card is Partial<ToolResultCard> & {
+  files: NonNullable<ToolResultCard["files"]>;
+  payload: { patch: string };
+  summary: Record<string, unknown>;
+} {
+  if (!card || !Array.isArray(card.files) || typeof card.payload?.patch !== "string") {
+    return false;
+  }
+  return numberField(card.summary?.files) !== undefined
+    && numberField(card.summary?.additions) !== undefined
+    && numberField(card.summary?.removals) !== undefined;
 }
 
 export function toolResultFromChatGptGlobals(

@@ -70,6 +70,24 @@ test("review structured content becomes a reload reference when metadata is miss
   });
 });
 
+test("incomplete review metadata falls back to the durable review reference", () => {
+  const decoded = decodeToolResult({
+    content: [],
+    structuredContent: {
+      workspaceId: "ws_1",
+      reviewRef: "e".repeat(40),
+      result: "Changed 1 file (+1 -0).",
+    },
+    _meta: { card: {} },
+  });
+
+  assert.deepEqual(decoded, {
+    kind: "review-reference",
+    workspaceId: "ws_1",
+    reviewRef: "e".repeat(40),
+  });
+});
+
 test("older review results can reload from their structured patch", () => {
   const decoded = decodeToolResult({
     content: [],

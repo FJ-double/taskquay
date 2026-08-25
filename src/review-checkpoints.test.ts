@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
-import { createReviewCheckpointManager } from "./review-checkpoints.js";
+import { createReviewCheckpointManager, readReviewRef } from "./review-checkpoints.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -111,6 +111,10 @@ test("review refs are scoped to the workspace review history", async (t) => {
   await assert.rejects(
     () => manager.reviewByRef({ workspaceId: "ws_scoped", root, reviewRef: head }),
     /Unknown review reference/,
+  );
+  await assert.rejects(
+    () => readReviewRef(root, head),
+    /Unknown DevSpace review reference/,
   );
 });
 

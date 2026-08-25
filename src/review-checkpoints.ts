@@ -188,6 +188,9 @@ export async function readReviewRef(root: string, reviewRef: string): Promise<Re
   }
 
   const commit = await resolveReviewCommit(eligibility.gitRoot, reviewRef);
+  if (!await isKnownReviewCommit(eligibility.gitRoot, commit)) {
+    throw new Error(`Unknown DevSpace review reference: ${reviewRef}`);
+  }
   return readReviewCommit(eligibility.gitRoot, commit);
 }
 
@@ -346,6 +349,42 @@ async function isAncestor(gitRoot: string, ancestor: string, descendant: string)
   } catch {
     return false;
   }
+}
+
+async function isKnownReviewCommit(gitRoot: string, reviewCommit: string): Promise<boolean> {
+  const refs = (await git(gitRoot, [
+    "for-each-ref",
+    "--format=%(refname)\t%(objectname)",
+    REVIEW_REF_PREFIX,
+  ])).stdout.trim();
+  if (!refs) return false;
+
+  const histories = new Map<string, { open?: string; baseline?: string }>();
+  for (const line of refs.split("\n")) {
+    const [ref, commit] = line.split("\t");
+    if (!ref || !commit) continue;
+
+    const match = ref.match(/^refs\/devspace\/review\/(.+)\/(open|baseline)$/);
+    if (!match) continue;
+    const [, workspace, kind] = match;
+    if (!workspace || !kind) continue;
+
+    const history = histories.get(workspace) ?? {};
+    history[kind as "open" | "baseline"] = commit;
+    histories.set(workspace, history);
+  }
+
+  const memberships = await Promise.all(
+    [...histories.values()].map(async ({ open, baseline }) => {
+      if (!open || !baseline || reviewCommit === open) return false;
+      const [isAfterOpen, isBeforeBaseline] = await Promise.all([
+        isAncestor(gitRoot, open, reviewCommit),
+        isAncestor(gitRoot, reviewCommit, baseline),
+      ]);
+      return isAfterOpen && isBeforeBaseline;
+    }),
+  );
+  return memberships.some(Boolean);
 }
 
 function isReviewRef(value: string): boolean {
