@@ -74,7 +74,7 @@ test("open_workspace reports aggregate review availability", async (t) => {
   assert.deepEqual(gitReview, { available: true });
 });
 
-test("show_changes exposes the aggregate diff to plain MCP hosts", async (t) => {
+test("show_changes keeps model output compact and preserves the rich review card", async (t) => {
   const context = await fixture(t, { git: true, uiEnabled: false });
   const opened = structuredContent(
     await callOpen(context.client, context.project, "review"),
@@ -88,13 +88,22 @@ test("show_changes exposes the aggregate diff to plain MCP hosts", async (t) => 
     arguments: { workspaceId },
   });
   const structured = structuredContent(review);
+  assert.equal((review._meta as Record<string, unknown> | undefined)?.tool, undefined);
 
-  assert.deepEqual(structured.summary, {
+  assert.equal(structured.workspaceId, workspaceId);
+  assert.match(structured.reviewRef as string, /^[0-9a-f]{40,64}$/);
+  assert.match(structured.result as string, /Changed 1 file \(\+1 -1\)/);
+  assert.equal("summary" in structured, false);
+  assert.equal("files" in structured, false);
+  assert.equal("patch" in structured, false);
+
+  const card = responseCard(review);
+  assert.deepEqual(card.summary, {
     files: 1,
     additions: 1,
     removals: 1,
   });
-  assert.deepEqual(structured.files, [
+  assert.deepEqual(card.files, [
     {
       path: "README.md",
       type: "change",
@@ -102,14 +111,59 @@ test("show_changes exposes the aggregate diff to plain MCP hosts", async (t) => 
       removals: 1,
     },
   ]);
-  assert.match(structured.patch as string, /-hello\n\+goodbye/);
+  assert.match(
+    ((card.payload as { patch?: string } | undefined)?.patch) ?? "",
+    /-hello\n\+goodbye/,
+  );
 
   const tools = await context.client.listTools();
   const outputProperties = tools.tools.find((tool) => tool.name === "show_changes")
     ?.outputSchema?.properties;
-  assert.ok(outputProperties && "summary" in outputProperties);
-  assert.ok(outputProperties && "files" in outputProperties);
-  assert.ok(outputProperties && "patch" in outputProperties);
+  assert.ok(outputProperties && "workspaceId" in outputProperties);
+  assert.ok(outputProperties && "reviewRef" in outputProperties);
+  assert.equal(outputProperties && "summary" in outputProperties, false);
+  assert.equal(outputProperties && "files" in outputProperties, false);
+  assert.equal(outputProperties && "patch" in outputProperties, false);
+  const inputProperties = tools.tools.find((tool) => tool.name === "show_changes")
+    ?.inputSchema?.properties;
+  assert.equal(inputProperties && "reviewRef" in inputProperties, false);
+});
+
+test("show_changes can reopen a historical review without advancing the checkpoint", async (t) => {
+  const context = await fixture(t, { git: true });
+  const workspaceId = structuredContent(
+    await callOpen(context.client, context.project, "review-history"),
+  ).workspaceId;
+  assert.equal(typeof workspaceId, "string");
+
+  await writeFile(join(context.project, "README.md"), "first\n");
+  const first = structuredContent(await context.client.callTool({
+    name: "show_changes",
+    arguments: { workspaceId },
+  }));
+  const reviewRef = first.reviewRef;
+  assert.equal(typeof reviewRef, "string");
+
+  await writeFile(join(context.project, "README.md"), "second\n");
+  const reopened = await context.client.callTool({
+    name: "show_changes",
+    arguments: { workspaceId },
+    _meta: { "devspace/reviewRef": reviewRef },
+  } as Parameters<Client["callTool"]>[0]);
+  assert.equal(structuredContent(reopened).reviewRef, reviewRef);
+  assert.match(
+    (((responseCard(reopened).payload as { patch?: string } | undefined)?.patch) ?? ""),
+    /\+first/,
+  );
+
+  const current = await context.client.callTool({
+    name: "show_changes",
+    arguments: { workspaceId },
+  });
+  assert.match(
+    (((responseCard(current).payload as { patch?: string } | undefined)?.patch) ?? ""),
+    /-first\n\+second/,
+  );
 });
 
 test("open_workspace keeps lifecycle flags out of model output and preserves complete card metadata", async (t) => {
@@ -119,6 +173,8 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
   });
   const first = await callOpen(context.client, context.project, "chat-1");
   const repeated = await callOpen(context.client, context.project, "chat-1");
+  assert.equal((first._meta as Record<string, unknown> | undefined)?.tool, undefined);
+  assert.equal((repeated._meta as Record<string, unknown> | undefined)?.tool, undefined);
 
   const tools = await context.client.listTools();
   const openTool = tools.tools.find((tool) => tool.name === "open_workspace");

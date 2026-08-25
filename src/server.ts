@@ -167,20 +167,6 @@ const workspaceAvailableAgentsFileOutputSchema = z.object({
   path: z.string(),
 });
 
-const reviewFileOutputSchema = z.object({
-  path: z.string(),
-  previousPath: z.string().optional(),
-  type: z.enum(["change", "rename-pure", "rename-changed", "new", "deleted"]),
-  additions: z.number(),
-  removals: z.number(),
-});
-
-const reviewSummaryOutputSchema = z.object({
-  files: z.number(),
-  additions: z.number(),
-  removals: z.number(),
-});
-
 function sendJsonRpcError(
   res: Response,
   status: number,
@@ -504,7 +490,6 @@ export function createMcpServer(
       return {
         content: resultContent,
         _meta: {
-          tool: "open_workspace",
           card: {
             workspaceId: workspace.id,
             root: workspace.root,
@@ -653,21 +638,29 @@ export function createMcpServer(
         workspaceId: z.string().describe(workspaceIdDescription),
       },
       outputSchema: resultOutputSchema({
-        summary: reviewSummaryOutputSchema,
-        files: z.array(reviewFileOutputSchema),
-        patch: z.string(),
+        workspaceId: z.string(),
+        reviewRef: z.string().regex(/^[0-9a-f]{40,64}$/),
       }),
       ...workspaceAppDescriptorMeta(config),
       annotations: { readOnlyHint: true },
     },
-    async ({ workspaceId }) => {
+    async ({ workspaceId }, { _meta }) => {
       const startedAt = performance.now();
       const workspace = workspaces.getWorkspace(workspaceId);
-      const review = await reviewCheckpoints.reviewChanges({
-        workspaceId,
-        root: workspace.root,
-        markReviewed: true,
-      });
+      const reviewRef = typeof _meta?.["devspace/reviewRef"] === "string"
+        ? _meta["devspace/reviewRef"]
+        : undefined;
+      const review = reviewRef
+        ? await reviewCheckpoints.reviewByRef({
+            workspaceId,
+            root: workspace.root,
+            reviewRef,
+          })
+        : await reviewCheckpoints.reviewChanges({
+            workspaceId,
+            root: workspace.root,
+            markReviewed: true,
+          });
 
       const content = [textBlock(review.result)];
       logToolCall(config, {
@@ -680,7 +673,6 @@ export function createMcpServer(
       return {
         content,
         _meta: {
-          tool: "show_changes",
           card: {
             workspaceId,
             summary: review.summary,
@@ -691,10 +683,9 @@ export function createMcpServer(
           },
         },
         structuredContent: {
+          workspaceId,
+          reviewRef: review.reviewRef,
           result: contentText(content),
-          summary: review.summary,
-          files: review.files,
-          patch: review.patch,
         },
       };
     },

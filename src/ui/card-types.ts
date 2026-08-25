@@ -67,14 +67,6 @@ export interface ToolResultCard {
   instruction?: string;
 }
 
-export function isToolName(value: unknown): value is ToolName {
-  return value === "open_workspace" || value === "show_changes";
-}
-
-export function isToolResultCard(value: unknown): value is Omit<ToolResultCard, "tool"> {
-  return Boolean(value && typeof value === "object");
-}
-
 export function summaryNumber(
   summary: Record<string, unknown> | undefined,
   key: string,

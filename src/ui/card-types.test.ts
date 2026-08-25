@@ -3,14 +3,7 @@ import test from "node:test";
 import {
   isExpandableCard,
   isInitiallyExpandedCard,
-  isToolName,
 } from "./card-types.js";
-
-test("only UI-backed tools are recognized as card tools", () => {
-  assert.equal(isToolName("open_workspace"), true);
-  assert.equal(isToolName("show_changes"), true);
-  assert.equal(isToolName("read"), false);
-});
 
 test("aggregate review opens when a patch is available", () => {
   const card = {

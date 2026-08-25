@@ -8,11 +8,8 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   isExpandableCard,
   isInitiallyExpandedCard,
-  isToolName,
-  isToolResultCard,
   summaryNumber,
   type HostContext,
-  type ToolName,
   type ToolResultCard,
 } from "./card-types.js";
 import { getProviderLogo, renderIcon, toolIcons, type ToolIcon } from "./icons.js";
@@ -20,6 +17,11 @@ import {
   getFileChangePathDisplay,
   getPatchDisplayParts,
 } from "./patch-display.js";
+import {
+  decodeToolResult,
+  toolResultFromChatGptGlobals,
+  type ChatGptToolGlobals,
+} from "./tool-result.js";
 import "./workspace-app.css";
 
 interface CardDisplay {
@@ -51,6 +53,8 @@ let currentPayload: MountedPayload | null = null;
 let currentPayloadContainer: HTMLElement | null = null;
 let openWorkspaceInstructionKey: string | null = null;
 let showAvailableWorkspaceInstructions = false;
+let pendingToolResult: CallToolResult | null = null;
+let pendingReviewKey: string | null = null;
 
 const maybeAppRoot = document.querySelector<HTMLElement>("#app");
 
@@ -71,32 +75,11 @@ async function boot(): Promise<void> {
   );
 
   app.ontoolresult = (result) => {
-    const structuredContent = getStructuredContent<Partial<ToolResultCard>>(result);
-    const metaCard = cardFromMeta(result);
-    const structured = metaCard
-      ? { ...structuredContent, ...metaCard }
-      : structuredContent;
-    const tool = toolNameFromMeta(result);
-
-    if (!tool || !isToolResultCard(structured)) {
-      card = null;
-      expanded = false;
-      reviewFilesExpanded = false;
-      openWorkspaceInstructionKey = null;
-      showAvailableWorkspaceInstructions = false;
-      errorMessage = "No result card is available for this tool result.";
-      render();
+    if (!connected) {
+      pendingToolResult = result;
       return;
     }
-
-    const nextCard = { ...structured, tool };
-    card = nextCard;
-    expanded = isInitiallyExpandedCard(nextCard);
-    reviewFilesExpanded = false;
-    openWorkspaceInstructionKey = null;
-    showAvailableWorkspaceInstructions = false;
-    errorMessage = null;
-    render();
+    void applyToolResult(result);
   };
 
   app.onhostcontextchanged = (ctx) => {
@@ -111,6 +94,7 @@ async function boot(): Promise<void> {
   };
 
   app.onteardown = async () => {
+    window.removeEventListener("openai:set_globals", handleChatGptGlobalsChanged);
     unmountPayload();
     return {};
   };
@@ -121,13 +105,112 @@ async function boot(): Promise<void> {
     if (initialContext) hostContext = initialContext;
     applyHostContext();
     connected = true;
+    window.addEventListener("openai:set_globals", handleChatGptGlobalsChanged);
   } catch (connectError) {
     connectionError = connectError instanceof Error
       ? connectError.message
       : String(connectError);
   }
 
+  const initialResult = pendingToolResult ?? chatGptRestoredResult();
+  pendingToolResult = null;
+  if (initialResult) {
+    await applyToolResult(initialResult);
+  } else {
+    render();
+  }
+}
+
+async function applyToolResult(result: CallToolResult): Promise<void> {
+  const decoded = decodeToolResult(result);
+  if (decoded.kind === "card") {
+    setCard(decoded.card);
+    return;
+  }
+  if (decoded.kind === "invalid") {
+    clearCard("No result card is available for this tool result.");
+    return;
+  }
+
+  const reviewKey = `${decoded.workspaceId}:${decoded.reviewRef}`;
+  pendingReviewKey = reviewKey;
+  card = null;
+  errorMessage = null;
+  resetCardInteractions();
   render();
+
+  try {
+    const restored = await reopenReview(decoded.workspaceId, decoded.reviewRef);
+    if (pendingReviewKey !== reviewKey) return;
+
+    const restoredResult = decodeToolResult(restored);
+    if (restoredResult.kind !== "card" || restoredResult.card.tool !== "show_changes") {
+      throw new Error("The host returned an incomplete historical review.");
+    }
+    setCard(restoredResult.card);
+  } catch (reviewError) {
+    if (pendingReviewKey !== reviewKey) return;
+    clearCard(
+      reviewError instanceof Error
+        ? reviewError.message
+        : String(reviewError),
+    );
+  }
+}
+
+function setCard(nextCard: ToolResultCard): void {
+  pendingReviewKey = null;
+  card = nextCard;
+  expanded = isInitiallyExpandedCard(nextCard);
+  reviewFilesExpanded = false;
+  openWorkspaceInstructionKey = null;
+  showAvailableWorkspaceInstructions = false;
+  errorMessage = null;
+  render();
+}
+
+function clearCard(message: string): void {
+  pendingReviewKey = null;
+  card = null;
+  errorMessage = message;
+  resetCardInteractions();
+  render();
+}
+
+function resetCardInteractions(): void {
+  expanded = false;
+  reviewFilesExpanded = false;
+  openWorkspaceInstructionKey = null;
+  showAvailableWorkspaceInstructions = false;
+}
+
+async function reopenReview(
+  workspaceId: string,
+  reviewRef: string,
+): Promise<CallToolResult> {
+  if (!app) throw new Error("The app bridge is not connected.");
+  if (!app.getHostCapabilities()?.serverTools) {
+    throw new Error("This host cannot reload historical review details.");
+  }
+
+  return app.callServerTool({
+    name: "show_changes",
+    arguments: { workspaceId },
+    _meta: { "devspace/reviewRef": reviewRef },
+  });
+}
+
+function chatGptRestoredResult(): CallToolResult | undefined {
+  return toolResultFromChatGptGlobals(window.openai);
+}
+
+function handleChatGptGlobalsChanged(event: Event): void {
+  if (!connected || card) return;
+
+  const customEvent = event as CustomEvent<{ globals?: ChatGptToolGlobals }>;
+  const restored = toolResultFromChatGptGlobals(customEvent.detail?.globals)
+    ?? chatGptRestoredResult();
+  if (restored) void applyToolResult(restored);
 }
 
 function applyHostContext(): void {
@@ -401,9 +484,14 @@ function toolCardClassName(display: CardDisplay): string {
 
 function cardDisplay(card: ToolResultCard): CardDisplay {
   if (card.tool === "open_workspace") {
+    const title = card.workspaceReused === true
+      ? "Reused workspace"
+      : card.workspaceReused === false
+        ? "Opened workspace"
+        : "Workspace";
     return {
       icon: card.mode === "worktree" ? toolIcons.gitBranch : toolIcons.folderOpen,
-      title: `${card.workspaceReused ? "Reused" : "Opened"} workspace`,
+      title,
       label: card.root ?? card.path,
       tone: "workspace",
     };
@@ -835,22 +923,6 @@ function renderWorkspaceChips(chips: WorkspaceChip[]): HTMLElement {
     list.append(item);
   }
   return list;
-}
-
-function toolNameFromMeta(result: CallToolResult): ToolName | undefined {
-  const meta = result._meta as Record<string, unknown> | undefined;
-  const tool = meta?.tool;
-  return isToolName(tool) ? tool : undefined;
-}
-
-function cardFromMeta(result: CallToolResult): Partial<ToolResultCard> | undefined {
-  const meta = result._meta as Record<string, unknown> | undefined;
-  const metaCard = meta?.card;
-  return metaCard && typeof metaCard === "object" ? metaCard : undefined;
-}
-
-function getStructuredContent<T>(result: CallToolResult): T | undefined {
-  return result.structuredContent as T | undefined;
 }
 
 function element<K extends keyof HTMLElementTagNameMap>(
