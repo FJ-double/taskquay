@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -12,8 +13,14 @@ import { writeTestDevspaceConfig } from "./test-support/config.test.js";
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
-const repoRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
-const cliPath = join(repoRoot, "dist", "cli.js");
+const packageJsonPath = fileURLToPath(new URL("../package.json", import.meta.url));
+const repoRoot = dirname(packageJsonPath);
+const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
+  bin: { devspace: string };
+};
+// This verifies the compiled entrypoint declared for the installed `devspace`
+// command. npm's package-install shim itself is outside this focused test.
+const cliPath = join(repoRoot, packageJson.bin.devspace);
 const tscPath = require.resolve("typescript/bin/tsc");
 
 test("show-changes prints a Git-backed historical review", async (t) => {
