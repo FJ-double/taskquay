@@ -192,6 +192,16 @@ that changes files. It shows the combined changes for that turn and advances
 the review point automatically. Reusing a workspace does not change this
 workflow.
 
+The model-facing result stays compact: DevSpace returns the workspace ID, a
+Git-backed `reviewRef`, and the summary text. MCP Apps hosts receive the full
+file list and patch in result metadata for immediate rendering. If a host later
+restores only the structured result, the review card can reopen that exact
+`reviewRef` from DevSpace's Git review history without advancing the current
+review point.
+
+For local inspection, run `devspace show-changes <review-ref>`. Add `--json` to
+include the parsed summary, file list, and patch.
+
 ## Shell Use
 
 The shell tool is for commands that belong in a terminal:

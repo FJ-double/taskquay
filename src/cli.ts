@@ -50,9 +50,18 @@ import {
   writeDevspaceAuth,
 } from "./user-config.js";
 import { expandHomePath } from "./roots.js";
+import { readReviewRef } from "./review-checkpoints.js";
 import { shutdownHttpServer } from "./server-shutdown.js";
 
-type Command = "serve" | "init" | "doctor" | "config" | "agents" | "help" | "version";
+type Command =
+  | "serve"
+  | "init"
+  | "doctor"
+  | "config"
+  | "agents"
+  | "show-changes"
+  | "help"
+  | "version";
 const require = createRequire(import.meta.url);
 const SUPPORTED_NODE_RANGE = ">=20.12 <27";
 
@@ -79,6 +88,9 @@ async function main(argv: string[]): Promise<void> {
     case "agents":
       await runAgentsCommand(args);
       return;
+    case "show-changes":
+      await runShowChanges(args);
+      return;
     case "help":
       printHelp();
       return;
@@ -90,7 +102,13 @@ async function main(argv: string[]): Promise<void> {
 
 function normalizeCommand(command: string | undefined): Command {
   if (!command || command === "serve" || command === "start") return "serve";
-  if (command === "init" || command === "doctor" || command === "config" || command === "agents") return command;
+  if (
+    command === "init"
+    || command === "doctor"
+    || command === "config"
+    || command === "agents"
+    || command === "show-changes"
+  ) return command;
   if (command === "help" || command === "--help" || command === "-h") return "help";
   if (command === "version" || command === "--version" || command === "-v") return "version";
   throw new Error(`Unknown command: ${command}`);
@@ -391,6 +409,7 @@ function printHelp(): void {
       "  devspace doctor          Show config, runtime, and native dependency status",
       "  devspace config get      Print persisted config",
       "  devspace config set publicBaseUrl <url|null>",
+      "  devspace show-changes <review-ref> [--json]",
       "  devspace agents ls       List subagent sessions",
       "  devspace agents run <profile-or-provider> [--model <model>] [--effort <level>] <prompt>",
       "  devspace agents continue <id> [--model <model>] [--effort <level>] <prompt>",
@@ -403,6 +422,23 @@ function printHelp(): void {
       "  devspace serve",
     ].join("\n"),
   );
+}
+
+async function runShowChanges(args: string[]): Promise<void> {
+  const { args: commandArgs, json } = extractJsonOption(args);
+  const [reviewRef, ...extra] = commandArgs;
+  if (!reviewRef || extra.length > 0) {
+    throw new Error("Usage: devspace show-changes <review-ref> [--json]");
+  }
+
+  const config = loadConfig();
+  const scope = resolveCliWorkspaceContext(config.allowedRoots);
+  const review = await readReviewRef(scope.workspaceRoot, reviewRef);
+  if (json) {
+    printJson(review);
+    return;
+  }
+  console.log(review.patch || review.result);
 }
 
 async function runAgentsCommand(args: string[]): Promise<void> {
