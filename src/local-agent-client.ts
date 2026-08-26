@@ -49,6 +49,7 @@ import type {
   StartLocalAgentInput,
 } from "./local-agent-manager.js";
 import type { LocalAgentRecord, LocalAgentWorkspaceScope } from "./local-agent-store.js";
+import { devspaceConfigDir } from "./user-config.js";
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 8_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -63,6 +64,7 @@ type RequestError<M extends LocalAgentDaemonRequest["method"]> =
 
 export interface LocalAgentClientOptions {
   stateDir: string;
+  configDir?: string;
   startupTimeoutMs?: number;
   requestTimeoutMs?: number;
   spawnDaemon?: () => void;
@@ -84,7 +86,9 @@ export class LocalAgentClient {
     this.endpoint = options.endpoint ?? this.paths.endpoint;
     this.startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-    this.spawnDaemon = options.spawnDaemon ?? (() => spawnLocalAgentDaemon(options.stateDir));
+    this.spawnDaemon = options.spawnDaemon ?? (() => spawnLocalAgentDaemon(
+      options.configDir ?? devspaceConfigDir(),
+    ));
   }
 
   async run(
@@ -404,19 +408,31 @@ export class LocalAgentClient {
   }
 }
 
-export function createLocalAgentClient(config: Pick<ServerConfig, "stateDir">): LocalAgentClient {
-  return new LocalAgentClient({ stateDir: config.stateDir });
+export function createLocalAgentClient(
+  config: Pick<ServerConfig, "configDir" | "stateDir">,
+): LocalAgentClient {
+  return new LocalAgentClient({ configDir: config.configDir, stateDir: config.stateDir });
 }
 
-export function spawnLocalAgentDaemon(stateDir: string, env: NodeJS.ProcessEnv = process.env): void {
+export function spawnLocalAgentDaemon(
+  configDir: string,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
   const entrypoint = resolveDaemonEntrypoint();
   const child = spawn(process.execPath, [...daemonExecArgv(process.execArgv), entrypoint], {
     detached: true,
     stdio: "ignore",
     windowsHide: true,
-    env: { ...env, DEVSPACE_STATE_DIR: stateDir },
+    env: localAgentDaemonEnvironment(configDir, env),
   });
   child.unref();
+}
+
+export function localAgentDaemonEnvironment(
+  configDir: string,
+  env: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  return { ...env, DEVSPACE_CONFIG_DIR: configDir };
 }
 
 export function daemonExecArgv(execArgv: readonly string[]): string[] {

@@ -8,7 +8,6 @@ import { getShellConfig } from "@earendil-works/pi-coding-agent";
 import { satisfies } from "semver";
 import { loadConfig } from "./config.js";
 import { resolveCliWorkspaceContext } from "./cli-workspace.js";
-import { resolveSubagentsConfig } from "./local-agent-config.js";
 import {
   getLocalAgentProviderAvailabilitySnapshot,
 } from "./local-agent-availability.js";
@@ -46,14 +45,23 @@ import {
 import {
   generateOwnerToken,
   loadDevspaceFiles,
+  setDevspaceConfigValue,
+  setDevspaceConfigValues,
   writeDevspaceAuth,
-  writeDevspaceConfig,
-  type DevspaceUserConfig,
 } from "./user-config.js";
 import { expandHomePath } from "./roots.js";
+import { readReviewRef } from "./review-checkpoints.js";
 import { shutdownHttpServer } from "./server-shutdown.js";
 
-type Command = "serve" | "init" | "doctor" | "config" | "agents" | "help" | "version";
+type Command =
+  | "serve"
+  | "init"
+  | "doctor"
+  | "config"
+  | "agents"
+  | "show-changes"
+  | "help"
+  | "version";
 const require = createRequire(import.meta.url);
 const SUPPORTED_NODE_RANGE = ">=20.12 <27";
 
@@ -80,6 +88,9 @@ async function main(argv: string[]): Promise<void> {
     case "agents":
       await runAgentsCommand(args);
       return;
+    case "show-changes":
+      await runShowChanges(args);
+      return;
     case "help":
       printHelp();
       return;
@@ -91,7 +102,13 @@ async function main(argv: string[]): Promise<void> {
 
 function normalizeCommand(command: string | undefined): Command {
   if (!command || command === "serve" || command === "start") return "serve";
-  if (command === "init" || command === "doctor" || command === "config" || command === "agents") return command;
+  if (
+    command === "init"
+    || command === "doctor"
+    || command === "config"
+    || command === "agents"
+    || command === "show-changes"
+  ) return command;
   if (command === "help" || command === "--help" || command === "-h") return "help";
   if (command === "version" || command === "--version" || command === "-v") return "version";
   throw new Error(`Unknown command: ${command}`);
@@ -99,6 +116,9 @@ function normalizeCommand(command: string | undefined): Command {
 
 async function ensureConfigured(): Promise<void> {
   const files = loadDevspaceFiles();
+  if (files.migratedLegacyConfig) {
+    console.log(`Migrated legacy configuration to ${files.configPath}`);
+  }
   if (files.configExists && files.authExists) return;
   if (process.env.DEVSPACE_OAUTH_OWNER_TOKEN) return;
 
@@ -143,7 +163,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
           hint: "Use DevSpace from Codex, Claude Code, OpenCode, Pi, and similar tools.",
         },
       ],
-      initialValues: files.config.publicBaseUrl ? ["chatgpt"] : ["coding-agents"],
+      initialValues: files.config.server.publicBaseUrl ? ["chatgpt"] : ["coding-agents"],
       required: true,
     });
     if (prompts.isCancel(destinationAnswer)) throw new SetupCancelledError();
@@ -153,7 +173,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
 
     let allowedRoots: string[] | undefined;
     if (useChatGpt) {
-      const defaultRoots = files.config.allowedRoots?.join(", ") || process.cwd();
+      const defaultRoots = files.config.workspaces.allowedRoots.join(", ") || process.cwd();
       const rootsAnswer = await textPrompt({
         message: `Which project folders can DevSpace access? Press Enter to use ${defaultRoots}`,
         placeholder: defaultRoots,
@@ -166,7 +186,7 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
         .filter(Boolean);
     }
 
-    const port = isValidPort(files.config.port) ? files.config.port : 7676;
+    const port = files.config.server.port;
 
     let publicBaseUrl: string | null = null;
     if (useChatGpt) {
@@ -180,16 +200,16 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
         "Connect ChatGPT",
       );
       publicBaseUrl = normalizePublicBaseUrl(await textPrompt({
-        message: files.config.publicBaseUrl
-          ? `What public URL will ChatGPT connect to? Press Enter to keep ${files.config.publicBaseUrl}`
+        message: files.config.server.publicBaseUrl
+          ? `What public URL will ChatGPT connect to? Press Enter to keep ${files.config.server.publicBaseUrl}`
           : "What public URL will ChatGPT connect to?",
-        placeholder: files.config.publicBaseUrl ?? "https://your-tunnel-host.example.com",
-        defaultValue: files.config.publicBaseUrl ?? "",
+        placeholder: files.config.server.publicBaseUrl ?? "https://your-tunnel-host.example.com",
+        defaultValue: files.config.server.publicBaseUrl ?? "",
         validate: validateRequiredPublicBaseUrl,
       }));
     }
 
-    const currentSubagents = resolveSubagentsConfig(files.config.subagents, {});
+    const currentSubagents = files.config.subagents;
     const availability = getLocalAgentProviderAvailabilitySnapshot();
     const configuredProviders = currentSubagents.providers
       .filter((provider) => provider.enabled)
@@ -218,19 +238,20 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
       selectedProviders,
     );
 
-    const config: DevspaceUserConfig = {
-      ...files.config,
-      host: files.config.host ?? "127.0.0.1",
-      port,
-      ...(allowedRoots ? { allowedRoots } : {}),
-      publicBaseUrl,
-      subagents,
-    };
     const auth = {
       ownerToken: files.auth.ownerToken ?? generateOwnerToken(),
     };
 
-    writeDevspaceConfig(config);
+    setDevspaceConfigValues([
+      { path: ["server", "port"], value: port },
+      ...(useChatGpt
+        ? [{ path: ["server", "publicBaseUrl"], value: publicBaseUrl }]
+        : []),
+      ...(allowedRoots
+        ? [{ path: ["workspaces", "allowedRoots"], value: allowedRoots }]
+        : []),
+      { path: ["subagents"], value: subagents },
+    ]);
     writeDevspaceAuth(auth);
 
     const lines = [
@@ -295,7 +316,7 @@ async function serve(): Promise<void> {
     console.log(`allowed roots: ${config.allowedRoots.join(", ")}`);
     console.log(`allowed hosts: ${config.allowedHosts.join(", ")}`);
     if (config.allowedHosts.includes("*")) {
-      console.warn("warning: Host header allowlist is disabled because DEVSPACE_ALLOWED_HOSTS=*");
+      console.warn("warning: Host header allowlist is disabled because server.allowedHosts contains '*'");
     }
     console.log("auth: Owner password approval required");
     console.log(`logging: ${config.logging.level} ${config.logging.format}`);
@@ -369,10 +390,10 @@ function runConfigCommand(args: string[]): void {
     throw new Error("Missing publicBaseUrl value.");
   }
 
-  writeDevspaceConfig({
-    ...files.config,
-    publicBaseUrl: normalizeOptionalPublicBaseUrl(value),
-  });
+  setDevspaceConfigValue(
+    ["server", "publicBaseUrl"],
+    normalizeOptionalPublicBaseUrl(value),
+  );
   console.log(`Updated ${files.configPath}`);
 }
 
@@ -384,10 +405,11 @@ function printHelp(): void {
       "Usage:",
       "  devspace                 Run first-time setup if needed, then start the server",
       "  devspace serve           Start the server",
-      "  devspace init            Create or update ~/.devspace/config.json and auth.json",
+      "  devspace init            Create or update ~/.devspace/config.jsonc and auth.json",
       "  devspace doctor          Show config, runtime, and native dependency status",
       "  devspace config get      Print persisted config",
       "  devspace config set publicBaseUrl <url|null>",
+      "  devspace show-changes <review-ref> [--json]",
       "  devspace agents ls       List subagent sessions",
       "  devspace agents run <profile-or-provider> [--model <model>] [--effort <level>] <prompt>",
       "  devspace agents continue <id> [--model <model>] [--effort <level>] <prompt>",
@@ -396,9 +418,27 @@ function printHelp(): void {
       "  devspace -v, --version   Print the installed version",
       "",
       "For temporary tunnels:",
-      "  DEVSPACE_PUBLIC_BASE_URL=https://example.trycloudflare.com devspace serve",
+      "  devspace config set publicBaseUrl https://example.trycloudflare.com",
+      "  devspace serve",
     ].join("\n"),
   );
+}
+
+async function runShowChanges(args: string[]): Promise<void> {
+  const { args: commandArgs, json } = extractJsonOption(args);
+  const [reviewRef, ...extra] = commandArgs;
+  if (!reviewRef || extra.length > 0) {
+    throw new Error("Usage: devspace show-changes <review-ref> [--json]");
+  }
+
+  const config = loadConfig();
+  const scope = resolveCliWorkspaceContext(config.allowedRoots);
+  const review = await readReviewRef(scope.workspaceRoot, reviewRef);
+  if (json) {
+    printJson(review);
+    return;
+  }
+  console.log(review.patch || review.result);
 }
 
 async function runAgentsCommand(args: string[]): Promise<void> {
@@ -665,10 +705,6 @@ async function textPrompt(options: TextPromptOptions): Promise<string> {
   if (prompts.isCancel(result)) throw new SetupCancelledError();
   const value = String(result).trim();
   return value || options.defaultValue;
-}
-
-function isValidPort(value: unknown): value is number {
-  return Number.isInteger(value) && Number(value) >= 1 && Number(value) <= 65535;
 }
 
 function validateRequiredPublicBaseUrl(value: string | undefined): string | undefined {

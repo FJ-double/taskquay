@@ -7,7 +7,7 @@ import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { loadConfig, type ServerConfig } from "./config.js";
+import { loadConfig, type ServerConfig, type ToolMode } from "./config.js";
 import type { LocalAgentProviderAvailability } from "./local-agent-availability.js";
 import { buildLocalAgentProviderStatuses } from "./local-agent-catalog.js";
 import type { SubagentsConfig } from "./local-agent-config.js";
@@ -16,8 +16,155 @@ import { ProcessSessionManager } from "./process-sessions.js";
 import { createMcpServer } from "./server.js";
 import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
+import { writeTestDevspaceConfig } from "./test-support/config.test.js";
 
 const execFileAsync = promisify(execFile);
+
+test("tool modes expose the expected host-facing tool surface", async (t) => {
+  const cases: Array<{
+    mode: ToolMode;
+    expected: string[];
+  }> = [
+    {
+      mode: "claude",
+      expected: ["open_workspace", "read", "write", "edit", "bash", "show_changes"],
+    },
+    {
+      mode: "codex",
+      expected: ["open_workspace", "read", "apply_patch", "exec_command", "write_stdin", "show_changes"],
+    },
+  ];
+
+  for (const { mode, expected } of cases) {
+    await t.test(mode, async (nested) => {
+      const context = await fixture(nested, { toolMode: mode, uiEnabled: false });
+      const tools = await context.client.listTools();
+
+      assert.deepEqual(
+        tools.tools.map((tool) => tool.name).sort(),
+        expected.sort(),
+      );
+    });
+  }
+});
+
+test("UI metadata is limited to workspace and aggregate review", async (t) => {
+  for (const uiEnabled of [true, false]) {
+    await t.test(uiEnabled ? "enabled" : "disabled", async (nested) => {
+      const context = await fixture(nested, { toolMode: "claude", uiEnabled });
+      const tools = await context.client.listTools();
+      const toolsWithUi = tools.tools
+        .filter((tool) => Boolean((tool._meta as { ui?: unknown } | undefined)?.ui))
+        .map((tool) => tool.name)
+        .sort();
+
+      assert.deepEqual(toolsWithUi, uiEnabled ? ["open_workspace", "show_changes"] : []);
+    });
+  }
+});
+
+test("open_workspace reports aggregate review availability", async (t) => {
+  const plain = await fixture(t);
+  const gitWorkspace = await fixture(t, { git: true });
+
+  const plainReview = structuredContent(await callOpen(plain.client, plain.project, "plain")).review;
+  const gitReview = structuredContent(await callOpen(gitWorkspace.client, gitWorkspace.project, "git")).review;
+
+  assert.equal((plainReview as { available: boolean }).available, false);
+  assert.deepEqual(gitReview, { available: true });
+});
+
+test("show_changes keeps model output compact and preserves the rich review card", async (t) => {
+  const context = await fixture(t, { git: true, uiEnabled: false });
+  const opened = structuredContent(
+    await callOpen(context.client, context.project, "review"),
+  );
+  const workspaceId = opened.workspaceId;
+  assert.equal(typeof workspaceId, "string");
+
+  await writeFile(join(context.project, "README.md"), "goodbye\n");
+  const review = await context.client.callTool({
+    name: "show_changes",
+    arguments: { workspaceId },
+  });
+  const structured = structuredContent(review);
+  assert.equal((review._meta as Record<string, unknown> | undefined)?.tool, undefined);
+
+  assert.equal(structured.workspaceId, workspaceId);
+  assert.match(structured.reviewRef as string, /^[0-9a-f]{40,64}$/);
+  assert.match(structured.result as string, /Changed 1 file \(\+1 -1\)/);
+  assert.equal("summary" in structured, false);
+  assert.equal("files" in structured, false);
+  assert.equal("patch" in structured, false);
+
+  const card = responseCard(review);
+  assert.deepEqual(card.summary, {
+    files: 1,
+    additions: 1,
+    removals: 1,
+  });
+  assert.deepEqual(card.files, [
+    {
+      path: "README.md",
+      type: "change",
+      additions: 1,
+      removals: 1,
+    },
+  ]);
+  assert.match(
+    ((card.payload as { patch?: string } | undefined)?.patch) ?? "",
+    /-hello\n\+goodbye/,
+  );
+
+  const tools = await context.client.listTools();
+  const outputProperties = tools.tools.find((tool) => tool.name === "show_changes")
+    ?.outputSchema?.properties;
+  assert.ok(outputProperties && "workspaceId" in outputProperties);
+  assert.ok(outputProperties && "reviewRef" in outputProperties);
+  assert.equal(outputProperties && "summary" in outputProperties, false);
+  assert.equal(outputProperties && "files" in outputProperties, false);
+  assert.equal(outputProperties && "patch" in outputProperties, false);
+  const inputProperties = tools.tools.find((tool) => tool.name === "show_changes")
+    ?.inputSchema?.properties;
+  assert.equal(inputProperties && "reviewRef" in inputProperties, false);
+});
+
+test("show_changes can reopen a historical review without advancing the checkpoint", async (t) => {
+  const context = await fixture(t, { git: true });
+  const workspaceId = structuredContent(
+    await callOpen(context.client, context.project, "review-history"),
+  ).workspaceId;
+  assert.equal(typeof workspaceId, "string");
+
+  await writeFile(join(context.project, "README.md"), "first\n");
+  const first = structuredContent(await context.client.callTool({
+    name: "show_changes",
+    arguments: { workspaceId },
+  }));
+  const reviewRef = first.reviewRef;
+  assert.equal(typeof reviewRef, "string");
+
+  await writeFile(join(context.project, "README.md"), "second\n");
+  const reopened = await context.client.callTool({
+    name: "show_changes",
+    arguments: { workspaceId },
+    _meta: { "devspace/reviewRef": reviewRef },
+  } as Parameters<Client["callTool"]>[0]);
+  assert.equal(structuredContent(reopened).reviewRef, reviewRef);
+  assert.match(
+    (((responseCard(reopened).payload as { patch?: string } | undefined)?.patch) ?? ""),
+    /\+first/,
+  );
+
+  const current = await context.client.callTool({
+    name: "show_changes",
+    arguments: { workspaceId },
+  });
+  assert.match(
+    (((responseCard(current).payload as { patch?: string } | undefined)?.patch) ?? ""),
+    /-first\n\+second/,
+  );
+});
 
 test("open_workspace keeps lifecycle flags out of model output and preserves complete card metadata", async (t) => {
   const providerNote = "available";
@@ -26,6 +173,8 @@ test("open_workspace keeps lifecycle flags out of model output and preserves com
   });
   const first = await callOpen(context.client, context.project, "chat-1");
   const repeated = await callOpen(context.client, context.project, "chat-1");
+  assert.equal((first._meta as Record<string, unknown> | undefined)?.tool, undefined);
+  assert.equal((repeated._meta as Record<string, unknown> | undefined)?.tool, undefined);
 
   const tools = await context.client.listTools();
   const openTool = tools.tools.find((tool) => tool.name === "open_workspace");
@@ -247,6 +396,8 @@ async function fixture(
     git?: boolean;
     localAgentProviders?: LocalAgentProviderAvailability[] | (() => LocalAgentProviderAvailability[]);
     subagents?: SubagentsConfig;
+    toolMode?: ToolMode;
+    uiEnabled?: boolean;
   } = {},
 ): Promise<ServerFixture> {
   const root = await mkdtemp(join(tmpdir(), "devspace-server-test-"));
@@ -279,20 +430,20 @@ async function fixture(
   const initialProviderAvailability = typeof options.localAgentProviders === "function"
     ? options.localAgentProviders()
     : options.localAgentProviders ?? [];
-  const loadedConfig = loadConfig({
-    DEVSPACE_CONFIG_DIR: join(root, ".config"),
-    DEVSPACE_ALLOWED_ROOTS: root,
-    DEVSPACE_WORKTREE_ROOT: join(root, ".worktrees"),
-    DEVSPACE_AGENT_DIR: agentDir,
-    DEVSPACE_WIDGETS: "full",
-    DEVSPACE_TOOL_MODE: "full",
-    DEVSPACE_SUBAGENTS: options.localAgentProviders ? "1" : "0",
-    DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
-    PORT: "1",
-  });
+  const loadedConfig = loadConfig(writeTestDevspaceConfig(join(root, ".config"), {
+    server: { port: 1 },
+    workspaces: { allowedRoots: [root], worktreeRoot: join(root, ".worktrees") },
+    skills: { agentDir },
+    subagents: { enabled: options.localAgentProviders !== undefined, providers: [] },
+  }));
+  const modeConfig: ServerConfig = {
+    ...loadedConfig,
+    toolMode: options.toolMode ?? loadedConfig.toolMode,
+    uiEnabled: options.uiEnabled ?? loadedConfig.uiEnabled,
+  };
   const config: ServerConfig = options.localAgentProviders
     ? {
-        ...loadedConfig,
+        ...modeConfig,
         subagents: options.subagents ?? {
           enabled: true,
           providers: initialProviderAvailability.map((provider) => ({
@@ -301,7 +452,7 @@ async function fixture(
           })),
         },
       }
-    : loadedConfig;
+    : modeConfig;
   const resolveProviderAvailability: () => LocalAgentProviderAvailability[] =
     typeof options.localAgentProviders === "function"
       ? options.localAgentProviders

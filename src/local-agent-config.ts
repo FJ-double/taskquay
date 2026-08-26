@@ -11,7 +11,7 @@ const providerSchema = z.object({
   effort: z.string().trim().min(1).optional(),
 }).strict();
 
-const subagentsSchema = z.object({
+export const subagentsConfigSchema = z.object({
   enabled: z.boolean(),
   providers: z.array(providerSchema),
 }).strict().superRefine((value, context) => {
@@ -28,25 +28,21 @@ const subagentsSchema = z.object({
   }
 });
 
+export const storedSubagentsConfigSchema = z.union([
+  z.boolean(),
+  subagentsConfigSchema,
+]);
+
 export type SubagentProviderConfig = z.infer<typeof providerSchema>;
-export type SubagentsConfig = z.infer<typeof subagentsSchema>;
-export type StoredSubagentsConfig = boolean | SubagentsConfig;
+export type SubagentsConfig = z.infer<typeof subagentsConfigSchema>;
+export type StoredSubagentsConfig = z.infer<typeof storedSubagentsConfigSchema>;
 
 export function resolveSubagentsConfig(
   value: unknown,
-  env: NodeJS.ProcessEnv = process.env,
 ): SubagentsConfig {
-  const stored = value === undefined
+  return value === undefined
     ? { enabled: false, providers: [] }
-    : typeof value === "boolean"
-      ? legacySubagentsConfig(value)
-      : subagentsSchema.parse(value);
-  return {
-    ...stored,
-    enabled: env.DEVSPACE_SUBAGENTS === undefined
-      ? stored.enabled
-      : parseBoolean(env.DEVSPACE_SUBAGENTS),
-  };
+    : subagentsConfigSchema.parse(value);
 }
 
 export function subagentProviderConfig(
@@ -61,17 +57,4 @@ export function isSubagentProviderEnabled(
   provider: LocalAgentProvider,
 ): boolean {
   return config.enabled && subagentProviderConfig(config, provider)?.enabled === true;
-}
-
-function legacySubagentsConfig(enabled: boolean): SubagentsConfig {
-  return {
-    enabled,
-    providers: enabled
-      ? LOCAL_AGENT_PROVIDERS.map((id) => ({ id, enabled: true }))
-      : [],
-  };
-}
-
-function parseBoolean(value: string): boolean {
-  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
 }

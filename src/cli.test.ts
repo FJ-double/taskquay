@@ -11,6 +11,7 @@ import { loadConfig } from "./config.js";
 import { localAgentDaemonPaths } from "./local-agent-daemon-lifecycle.js";
 import { encodeLocalAgentDaemonResponse } from "./local-agent-daemon-protocol.js";
 import { LocalAgentStore } from "./local-agent-store.js";
+import { writeTestDevspaceConfig } from "./test-support/config.test.js";
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -38,6 +39,11 @@ try {
   mkdirSync(stateDir, { recursive: true });
   mkdirSync(join(configDir, "agents"), { recursive: true });
   mkdirSync(projectRoot, { recursive: true });
+  const cliConfigEnv = writeTestDevspaceConfig(configDir, {
+    workspaces: { allowedRoots: [projectRoot] },
+    storage: { stateDir },
+    subagents: { enabled: true, providers: [] },
+  });
   writeFileSync(
     join(configDir, "agents", "reviewer.md"),
     [
@@ -138,13 +144,9 @@ try {
       encoding: "utf8",
       env: {
         ...process.env,
-        DEVSPACE_CONFIG_DIR: configDir,
-        DEVSPACE_ALLOWED_ROOTS: projectRoot,
-        DEVSPACE_STATE_DIR: stateDir,
+        ...cliConfigEnv,
         DEVSPACE_WORKSPACE_ID: "ws_current",
         DEVSPACE_WORKSPACE_ROOT: projectRoot,
-        DEVSPACE_SUBAGENTS: "1",
-        DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
       },
     });
 
@@ -158,13 +160,9 @@ try {
         encoding: "utf8",
         env: {
           ...process.env,
-          DEVSPACE_CONFIG_DIR: configDir,
-          DEVSPACE_ALLOWED_ROOTS: projectRoot,
-          DEVSPACE_STATE_DIR: stateDir,
+          ...cliConfigEnv,
           DEVSPACE_WORKSPACE_ID: "ws_current",
           DEVSPACE_WORKSPACE_ROOT: projectRoot,
-          DEVSPACE_SUBAGENTS: "1",
-          DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
         },
       },
     );
@@ -181,11 +179,7 @@ try {
         encoding: "utf8",
         env: {
           ...process.env,
-          DEVSPACE_CONFIG_DIR: configDir,
-          DEVSPACE_ALLOWED_ROOTS: stateDir,
-          DEVSPACE_STATE_DIR: stateDir,
-          DEVSPACE_SUBAGENTS: "1",
-          DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
+          ...cliConfigEnv,
           DEVSPACE_WORKSPACE_ID: "",
           DEVSPACE_WORKSPACE_ROOT: stateDir,
         },
@@ -205,13 +199,9 @@ try {
           encoding: "utf8",
           env: {
             ...process.env,
-            DEVSPACE_CONFIG_DIR: configDir,
-            DEVSPACE_ALLOWED_ROOTS: projectRoot,
-            DEVSPACE_STATE_DIR: stateDir,
+            ...cliConfigEnv,
             DEVSPACE_WORKSPACE_ID: "ws_current",
             DEVSPACE_WORKSPACE_ROOT: projectRoot,
-            DEVSPACE_SUBAGENTS: "1",
-            DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
           },
         },
       );
@@ -247,13 +237,9 @@ try {
           encoding: "utf8",
           env: {
             ...process.env,
-            DEVSPACE_CONFIG_DIR: configDir,
-            DEVSPACE_ALLOWED_ROOTS: projectRoot,
-            DEVSPACE_STATE_DIR: stateDir,
+            ...cliConfigEnv,
             DEVSPACE_WORKSPACE_ID: "ws_current",
             DEVSPACE_WORKSPACE_ROOT: projectRoot,
-            DEVSPACE_SUBAGENTS: "1",
-            DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
           },
         },
       ),
@@ -268,13 +254,7 @@ try {
     });
   }
 
-  assert.equal(loadConfig({
-    DEVSPACE_CONFIG_DIR: configDir,
-    DEVSPACE_ALLOWED_ROOTS: projectRoot,
-    DEVSPACE_STATE_DIR: stateDir,
-    DEVSPACE_SUBAGENTS: "1",
-    DEVSPACE_OAUTH_OWNER_TOKEN: "test-owner-token-that-is-long-enough",
-  }).subagents.enabled, true);
+  assert.equal(loadConfig(cliConfigEnv).subagents.enabled, true);
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

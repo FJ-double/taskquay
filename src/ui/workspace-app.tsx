@@ -6,27 +6,30 @@ import {
 } from "@modelcontextprotocol/ext-apps";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
-  isEditTool,
   isExpandableCard,
   isInitiallyExpandedCard,
-  isPatchTool,
-  isReadTool,
-  isReviewTool,
-  isToolName,
-  isToolResultCard,
-  isWriteTool,
-  payloadText,
+  summaryNumber,
   type HostContext,
-  type ToolName,
   type ToolResultCard,
 } from "./card-types.js";
 import { getProviderLogo, renderIcon, toolIcons, type ToolIcon } from "./icons.js";
 import {
-  getToolDisplay,
-  getToolHeaderSummary,
-  type ToolDisplay,
-} from "./tool-display.js";
+  getFileChangePathDisplay,
+  getPatchDisplayParts,
+} from "./patch-display.js";
+import {
+  decodeToolResult,
+  toolResultFromChatGptGlobals,
+  type ChatGptToolGlobals,
+} from "./tool-result.js";
 import "./workspace-app.css";
+
+interface CardDisplay {
+  icon: ToolIcon;
+  title: string;
+  label?: string;
+  tone: "workspace" | "review";
+}
 
 interface MountedPayload {
   update(options: {
@@ -50,6 +53,8 @@ let currentPayload: MountedPayload | null = null;
 let currentPayloadContainer: HTMLElement | null = null;
 let openWorkspaceInstructionKey: string | null = null;
 let showAvailableWorkspaceInstructions = false;
+let pendingToolResult: CallToolResult | null = null;
+let pendingReviewKey: string | null = null;
 
 const maybeAppRoot = document.querySelector<HTMLElement>("#app");
 
@@ -70,32 +75,11 @@ async function boot(): Promise<void> {
   );
 
   app.ontoolresult = (result) => {
-    const structuredContent = getStructuredContent<Partial<ToolResultCard>>(result);
-    const metaCard = cardFromMeta(result);
-    const structured = metaCard
-      ? { ...structuredContent, ...metaCard }
-      : structuredContent;
-    const tool = toolNameFromMeta(result);
-
-    if (!tool || !isToolResultCard(structured)) {
-      card = null;
-      expanded = false;
-      reviewFilesExpanded = false;
-      openWorkspaceInstructionKey = null;
-      showAvailableWorkspaceInstructions = false;
-      errorMessage = "No result card is available for this tool result.";
-      render();
+    if (!connected) {
+      pendingToolResult = result;
       return;
     }
-
-    const nextCard = { ...structured, tool };
-    card = nextCard;
-    expanded = isInitiallyExpandedCard(nextCard);
-    reviewFilesExpanded = false;
-    openWorkspaceInstructionKey = null;
-    showAvailableWorkspaceInstructions = false;
-    errorMessage = null;
-    render();
+    void applyToolResult(result);
   };
 
   app.onhostcontextchanged = (ctx) => {
@@ -110,6 +94,7 @@ async function boot(): Promise<void> {
   };
 
   app.onteardown = async () => {
+    window.removeEventListener("openai:set_globals", handleChatGptGlobalsChanged);
     unmountPayload();
     return {};
   };
@@ -120,13 +105,112 @@ async function boot(): Promise<void> {
     if (initialContext) hostContext = initialContext;
     applyHostContext();
     connected = true;
+    window.addEventListener("openai:set_globals", handleChatGptGlobalsChanged);
   } catch (connectError) {
     connectionError = connectError instanceof Error
       ? connectError.message
       : String(connectError);
   }
 
+  const initialResult = pendingToolResult ?? chatGptRestoredResult();
+  pendingToolResult = null;
+  if (initialResult) {
+    await applyToolResult(initialResult);
+  } else {
+    render();
+  }
+}
+
+async function applyToolResult(result: CallToolResult): Promise<void> {
+  const decoded = decodeToolResult(result);
+  if (decoded.kind === "card") {
+    setCard(decoded.card);
+    return;
+  }
+  if (decoded.kind === "invalid") {
+    clearCard("No result card is available for this tool result.");
+    return;
+  }
+
+  const reviewKey = `${decoded.workspaceId}:${decoded.reviewRef}`;
+  pendingReviewKey = reviewKey;
+  card = null;
+  errorMessage = null;
+  resetCardInteractions();
   render();
+
+  try {
+    const restored = await reopenReview(decoded.workspaceId, decoded.reviewRef);
+    if (pendingReviewKey !== reviewKey) return;
+
+    const restoredResult = decodeToolResult(restored);
+    if (restoredResult.kind !== "card" || restoredResult.card.tool !== "show_changes") {
+      throw new Error("The host returned an incomplete historical review.");
+    }
+    setCard(restoredResult.card);
+  } catch (reviewError) {
+    if (pendingReviewKey !== reviewKey) return;
+    clearCard(
+      reviewError instanceof Error
+        ? reviewError.message
+        : String(reviewError),
+    );
+  }
+}
+
+function setCard(nextCard: ToolResultCard): void {
+  pendingReviewKey = null;
+  card = nextCard;
+  expanded = isInitiallyExpandedCard(nextCard);
+  reviewFilesExpanded = false;
+  openWorkspaceInstructionKey = null;
+  showAvailableWorkspaceInstructions = false;
+  errorMessage = null;
+  render();
+}
+
+function clearCard(message: string): void {
+  pendingReviewKey = null;
+  card = null;
+  errorMessage = message;
+  resetCardInteractions();
+  render();
+}
+
+function resetCardInteractions(): void {
+  expanded = false;
+  reviewFilesExpanded = false;
+  openWorkspaceInstructionKey = null;
+  showAvailableWorkspaceInstructions = false;
+}
+
+async function reopenReview(
+  workspaceId: string,
+  reviewRef: string,
+): Promise<CallToolResult> {
+  if (!app) throw new Error("The app bridge is not connected.");
+  if (!app.getHostCapabilities()?.serverTools) {
+    throw new Error("This host cannot reload historical review details.");
+  }
+
+  return app.callServerTool({
+    name: "show_changes",
+    arguments: { workspaceId },
+    _meta: { "devspace/reviewRef": reviewRef },
+  });
+}
+
+function chatGptRestoredResult(): CallToolResult | undefined {
+  return toolResultFromChatGptGlobals(window.openai);
+}
+
+function handleChatGptGlobalsChanged(event: Event): void {
+  if (!connected || card) return;
+
+  const customEvent = event as CustomEvent<{ globals?: ChatGptToolGlobals }>;
+  const restored = toolResultFromChatGptGlobals(customEvent.detail?.globals)
+    ?? chatGptRestoredResult();
+  if (restored) void applyToolResult(restored);
 }
 
 function applyHostContext(): void {
@@ -162,8 +246,8 @@ function render(): void {
     return;
   }
 
-  const display = getToolDisplay(card);
-  if (isReviewTool(card.tool)) {
+  const display = cardDisplay(card);
+  if (card.tool === "show_changes") {
     renderReviewCard(card, display);
     return;
   }
@@ -241,72 +325,25 @@ async function renderPayloadIfNeeded(): Promise<void> {
     return;
   }
 
-  if (shouldUseHeavyPayload(card)) {
-    if (currentPayload) {
-      currentPayload.update({ card, hostContext, errorMessage });
-      return;
-    }
+  const visibleFileCount = !reviewFilesExpanded
+    ? Math.max(3, (card.files ?? []).slice(0, 3).length)
+    : undefined;
 
-    setPayloadLoading(target, true);
-
-    try {
-      const { mountHeavyPayload } = await import("./heavy-payload.js");
-      if (target !== currentPayloadContainer || !expanded || !card) return;
-
-      setPayloadLoading(target, false);
-      currentPayload = mountHeavyPayload(target, {
-        card,
-        hostContext,
-        errorMessage,
-      });
-    } catch (loadError) {
-      if (target !== currentPayloadContainer || !expanded) return;
-
-      setPayloadLoading(target, false);
-      renderStatus(
-        target,
-        loadError instanceof Error ? loadError.message : "Unable to load details.",
-        "error",
-      );
-    }
+  if (currentPayload) {
+    currentPayload.update({ card, hostContext, errorMessage, visibleFileCount });
     return;
   }
 
-  if (isReviewTool(card.tool) || isPatchTool(card.tool)) {
-    const visibleFileCount = isReviewTool(card.tool) && !reviewFilesExpanded
-      ? Math.max(3, (card.files ?? []).slice(0, 3).length)
-      : undefined;
+  renderStatus(target, "Loading review...");
+  const { mountReviewPayload } = await import("./review-payload.js");
+  if (target !== currentPayloadContainer || !card) return;
 
-    if (currentPayload) {
-      currentPayload.update({ card, hostContext, errorMessage, visibleFileCount });
-      return;
-    }
-
-    renderStatus(target, isReviewTool(card.tool) ? "Loading review..." : "Loading diff...");
-
-    const { mountReviewPayload } = await import("./review-payload.js");
-    if (target !== currentPayloadContainer || !card) return;
-
-    currentPayload = mountReviewPayload(target, {
-      card,
-      hostContext,
-      errorMessage,
-      visibleFileCount,
-    });
-    return;
-  }
-
-  const text = payloadText(card.payload);
-  if (!text) {
-    renderStatus(target, "No details available.");
-    return;
-  }
-
-  renderPrePayload(target, text, card.tool);
-}
-
-function shouldUseHeavyPayload(card: ToolResultCard): boolean {
-  return isReadTool(card.tool) || isEditTool(card.tool) || isWriteTool(card.tool);
+  currentPayload = mountReviewPayload(target, {
+    card,
+    hostContext,
+    errorMessage,
+    visibleFileCount,
+  });
 }
 
 function unmountPayload(): void {
@@ -329,40 +366,36 @@ function renderStatus(
   container.replaceChildren(element("div", { className: `status ${tone}`, text: message }));
 }
 
-function renderPrePayload(
-  container: HTMLElement,
-  text: string,
-  tool: string,
-): void {
-  unmountCurrentPayload();
-  container.replaceChildren(element("pre", {
-    className: `text-payload pretty-scrollbar ${tool}`,
-    text,
-  }));
-}
-
 function renderHeaderSummary(card: ToolResultCard): HTMLElement {
-  const summary = getToolHeaderSummary(card);
-
-  if (summary.kind === "diff") {
+  if (card.tool === "show_changes") {
     const stats = element("span", { className: "stats" });
     stats.setAttribute("aria-label", "Diff statistics");
     stats.append(
-      element("span", { className: "add", text: `+${String(summary.additions)}` }),
-      element("span", { className: "remove", text: `-${String(summary.removals)}` }),
+      element("span", {
+        className: "add",
+        text: `+${String(summaryNumber(card.summary, "additions") ?? 0)}`,
+      }),
+      element("span", {
+        className: "remove",
+        text: `-${String(summaryNumber(card.summary, "removals") ?? 0)}`,
+      }),
     );
     return stats;
   }
 
+  const parts = [
+    countLabel(summaryNumber(card.summary, "agentsFiles"), "instruction"),
+    countLabel(summaryNumber(card.summary, "skills"), "skill"),
+  ].filter((part): part is string => Boolean(part));
   const meta = element("span", {
-    className: `header-meta ${summary.kind === "empty" ? "empty" : ""}`,
-    text: summary.kind === "text" ? summary.text : "",
+    className: `header-meta ${parts.length === 0 ? "empty" : ""}`,
+    text: parts.join(" · "),
   });
-  if (summary.kind === "empty") meta.setAttribute("aria-hidden", "true");
+  if (parts.length === 0) meta.setAttribute("aria-hidden", "true");
   return meta;
 }
 
-function renderReviewCard(card: ToolResultCard, display: ToolDisplay): void {
+function renderReviewCard(card: ToolResultCard, display: CardDisplay): void {
   unmountPayload();
 
   const files = card.files ?? [];
@@ -445,24 +478,42 @@ function renderChevron(isExpanded: boolean, visible: boolean): HTMLElement {
   return chevron;
 }
 
-function toolCardClassName(display: ToolDisplay): string {
-  return ["tool-card", display.tone, display.state ? `state-${display.state}` : undefined]
-    .filter(Boolean)
-    .join(" ");
+function toolCardClassName(display: CardDisplay): string {
+  return `tool-card ${display.tone}`;
 }
 
-function setPayloadLoading(container: HTMLElement, loading: boolean): void {
-  const header = container.previousElementSibling;
-  const chevron = header?.querySelector<HTMLElement>(".chevron");
-  if (!chevron) return;
+function cardDisplay(card: ToolResultCard): CardDisplay {
+  if (card.tool === "open_workspace") {
+    const title = card.workspaceReused === true
+      ? "Reused workspace"
+      : card.workspaceReused === false
+        ? "Opened workspace"
+        : "Workspace";
+    return {
+      icon: card.mode === "worktree" ? toolIcons.gitBranch : toolIcons.folderOpen,
+      title,
+      label: card.root ?? card.path,
+      tone: "workspace",
+    };
+  }
 
-  chevron.classList.toggle("loading", loading);
-  chevron.replaceChildren(
-    renderIcon(loading ? toolIcons.loading : toolIcons.chevronDown),
-  );
+  const display = getPatchDisplayParts(card, { emptyTitle: "Changes ready" });
+  return {
+    icon: toolIcons.diff,
+    title: card.files?.length || card.payload?.patch ? display.title : "No changes",
+    label: singleFilePath(card),
+    tone: "review",
+  };
+}
 
-  const button = header instanceof HTMLButtonElement ? header : null;
-  if (button) button.setAttribute("aria-busy", String(loading));
+function singleFilePath(card: ToolResultCard): string | undefined {
+  if (card.files?.length !== 1) return undefined;
+  return getFileChangePathDisplay(card.files[0])?.title ?? card.path;
+}
+
+function countLabel(count: number | undefined, noun: string): string | undefined {
+  if (count === undefined) return undefined;
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
 function renderWorkspacePayload(container: HTMLElement, card: ToolResultCard): void {
@@ -507,6 +558,15 @@ function renderWorkspacePayload(container: HTMLElement, card: ToolResultCard): v
       card.sourceRoot,
       toolIcons.sourceCheckout,
       true,
+    );
+  }
+
+  if (card.review?.available === false) {
+    appendWorkspaceTextRow(
+      rows,
+      "Review",
+      card.review.reason,
+      toolIcons.warning,
     );
   }
 
@@ -863,22 +923,6 @@ function renderWorkspaceChips(chips: WorkspaceChip[]): HTMLElement {
     list.append(item);
   }
   return list;
-}
-
-function toolNameFromMeta(result: CallToolResult): ToolName | undefined {
-  const meta = result._meta as Record<string, unknown> | undefined;
-  const tool = meta?.tool;
-  return isToolName(tool) ? tool : undefined;
-}
-
-function cardFromMeta(result: CallToolResult): Partial<ToolResultCard> | undefined {
-  const meta = result._meta as Record<string, unknown> | undefined;
-  const metaCard = meta?.card;
-  return metaCard && typeof metaCard === "object" ? metaCard : undefined;
-}
-
-function getStructuredContent<T>(result: CallToolResult): T | undefined {
-  return result.structuredContent as T | undefined;
 }
 
 function element<K extends keyof HTMLElementTagNameMap>(

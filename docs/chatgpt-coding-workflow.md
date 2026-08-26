@@ -117,8 +117,8 @@ DevSpace discovers standard Agent Skills from:
 It also keeps compatibility with:
 
 - the bundled `subagents` skill when Subagents are enabled, unless `~/.devspace/skills/subagents/SKILL.md` exists
-- `DEVSPACE_AGENT_DIR/skills`, defaulting to `~/.codex/skills`
-- additional paths from `DEVSPACE_SKILL_PATHS`
+- `skills.agentDir/skills`, defaulting to `~/.codex/skills`
+- additional paths from `skills.paths`
 
 When Subagents are enabled, DevSpace discovers agent profiles
 from `~/.devspace/agents/*.md` and project `.devspace/agents/*.md`.
@@ -130,7 +130,7 @@ Example profiles are packaged under `examples/agents/` for users who want
 starter templates. Copy or adapt them into one of the active profile directories
 before use.
 
-Legacy project paths such as `.pi/skills` can be added through `DEVSPACE_SKILL_PATHS` when needed.
+Legacy project paths such as `.pi/skills` can be added to `skills.paths` when needed.
 
 When `open_workspace` returns matching skills, the model should read the
 advertised `SKILL.md` before following that skill.
@@ -140,8 +140,8 @@ Skill paths may be outside the workspace. DevSpace only permits reading:
 - advertised `SKILL.md` files
 - files under a skill directory after that skill's `SKILL.md` has been read
 
-Set `DEVSPACE_SKILLS=0` to hide skills from workspace output. Enable Subagents
-and choose providers through `devspace init` or the persisted provider
+Set `skills.enabled` to `false` to hide skills from workspace output. Enable
+Subagents and choose providers through `devspace init` or the persisted provider
 configuration. The bundled `subagents` skill teaches the minimal
 `devspace agents targets`, `devspace agents ls`, `devspace agents run`,
 `devspace agents continue`, and `devspace agents show` workflow. The catalog
@@ -150,48 +150,57 @@ sessions for that workspace.
 
 ## Tool Names
 
-DevSpace exposes these tool names:
+The Claude surface exposes these tool names:
 
 - `open_workspace`
 - `read`
 - `write`
 - `edit`
 - `bash`
+- `show_changes`
 
-By default, DevSpace also runs in `DEVSPACE_TOOL_MODE=minimal`, so dedicated
-`grep`, `glob`, and `ls` tools are hidden. Use `bash` with command-line tools
-such as `rg`, `find`, and `ls` for search and directory inspection.
-
-Use `DEVSPACE_TOOL_MODE=full` to restore dedicated search and directory tools.
-
-The experimental Codex-style surface is enabled with
-`DEVSPACE_TOOL_MODE=codex`. It exposes:
+DevSpace uses the Codex-style surface by default. It exposes:
 
 - `open_workspace`
 - `read`
 - `apply_patch`
 - `exec_command`
 - `write_stdin`
+- `show_changes`
 
-In this mode, `write`, `edit`, `bash`, `grep`, `glob`, and `ls` are not
-registered. `exec_command` returns a process session ID when a command is still
+In this mode, `write`, `edit`, and `bash` are not registered. `exec_command`
+returns a process session ID when a command is still
 running after its yield window. Use `write_stdin` to poll it, send input, resize
 a PTY, or send Ctrl-C. Set `tty: true` only for commands that need a terminal.
 
+Set `tools.mode` to `claude` in `~/.devspace/config.jsonc` to expose `write`,
+`edit`, and `bash` instead of the Codex mutation and command tools. Dedicated
+MCP tools for `grep`, `glob`, and `ls` are not registered in either mode; use
+the configured shell tool with command-line tools such as `rg`, `find`, and
+`ls`.
+
 ## Show Changes
 
-By default, `DEVSPACE_WIDGETS=full`.
+DevSpace exposes `show_changes` in both tool modes and attaches widget UI only
+to `open_workspace` and `show_changes`. Reads, edits, and commands return normal
+MCP results without creating an iframe for each call. Set `ui.enabled` to
+`false` in `~/.devspace/config.jsonc` to disable UI metadata while keeping the
+aggregate review tool available.
 
-In that mode, DevSpace attaches widget UI to the exposed workspace, file, edit,
-and shell tools. The aggregate `show_changes` tool is not exposed by default.
+Call `show_changes` exactly once after the final file modification in any turn
+that changes files. It shows the combined changes for that turn and advances
+the review point automatically. Reusing a workspace does not change this
+workflow.
 
-Use `DEVSPACE_WIDGETS=off` to disable widget UI, or `DEVSPACE_WIDGETS=changes`
-to expose the aggregate show-changes flow.
+The model-facing result stays compact: DevSpace returns the workspace ID, a
+Git-backed `reviewRef`, and the summary text. MCP Apps hosts receive the full
+file list and patch in result metadata for immediate rendering. If a host later
+restores only the structured result, the review card can reopen that exact
+`reviewRef` from DevSpace's Git review history without advancing the current
+review point.
 
-When `show_changes` is exposed, call it exactly once after the final file
-modification in any turn that changes files. It shows the combined changes for
-that turn and advances the review point automatically. Reusing a workspace does
-not change this workflow.
+For local inspection, run `devspace show-changes <review-ref>`. Add `--json` to
+include the parsed summary, file list, and patch.
 
 ## Shell Use
 
