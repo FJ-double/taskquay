@@ -98,7 +98,9 @@ async function boot(): Promise<void> {
     // Workspace details inherit host variables directly. Rebuilding their DOM on
     // iframe resize would reset an in-progress instruction preview interaction.
     if (card?.tool === "open_workspace") {
-      if (ctx.theme && ctx.theme !== previousTheme) render();
+      if (ctx.theme && ctx.theme !== previousTheme) {
+        syncWorkspaceProviderLogos(ctx.theme === "light" ? "light" : "dark");
+      }
     } else {
       renderPayloadIfNeeded();
     }
@@ -611,6 +613,7 @@ function renderWorkspacePayload(container: HTMLElement, card: ToolResultCard): v
       logo: providerName
         ? getProviderLogo(providerName, providerLogoTheme)
         : undefined,
+      logoProvider: providerName,
       profile: true,
       title: title || undefined,
     };
@@ -626,6 +629,7 @@ function renderWorkspacePayload(container: HTMLElement, card: ToolResultCard): v
     return {
       label: name,
       logo,
+      logoProvider: logo ? name : undefined,
       bareLogo: Boolean(logo),
       ariaLabel: name,
       title: title || name,
@@ -652,6 +656,7 @@ function renderWorkspacePayload(container: HTMLElement, card: ToolResultCard): v
 interface WorkspaceChip {
   label: string;
   logo?: string;
+  logoProvider?: string;
   profile?: boolean;
   bareLogo?: boolean;
   ariaLabel?: string;
@@ -929,6 +934,7 @@ function renderWorkspaceChips(chips: WorkspaceChip[]): HTMLElement {
         ? "workspace-agent-profile-logo"
         : "workspace-chip-logo";
       logo.src = chip.logo;
+      if (chip.logoProvider) logo.dataset.provider = chip.logoProvider;
       logo.alt = "";
       logo.setAttribute("aria-hidden", "true");
       item.append(logo);
@@ -939,6 +945,15 @@ function renderWorkspaceChips(chips: WorkspaceChip[]): HTMLElement {
     list.append(item);
   }
   return list;
+}
+
+function syncWorkspaceProviderLogos(theme: ProviderLogoTheme): void {
+  for (const logo of document.querySelectorAll<HTMLImageElement>("img[data-provider]")) {
+    const providerName = logo.dataset.provider;
+    if (!providerName) continue;
+    const src = getProviderLogo(providerName, theme);
+    if (src && logo.src !== src) logo.src = src;
+  }
 }
 
 function element<K extends keyof HTMLElementTagNameMap>(
