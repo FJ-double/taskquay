@@ -12,7 +12,13 @@ import {
   type HostContext,
   type ToolResultCard,
 } from "./card-types.js";
-import { getProviderLogo, renderIcon, toolIcons, type ToolIcon } from "./icons.js";
+import {
+  getProviderLogo,
+  renderIcon,
+  toolIcons,
+  type ProviderLogoTheme,
+  type ToolIcon,
+} from "./icons.js";
 import {
   getFileChangePathDisplay,
   getPatchDisplayParts,
@@ -83,6 +89,7 @@ async function boot(): Promise<void> {
   };
 
   app.onhostcontextchanged = (ctx) => {
+    const previousTheme = hostContext?.theme;
     hostContext = {
       ...hostContext,
       ...ctx,
@@ -90,7 +97,13 @@ async function boot(): Promise<void> {
     applyHostContext();
     // Workspace details inherit host variables directly. Rebuilding their DOM on
     // iframe resize would reset an in-progress instruction preview interaction.
-    if (card?.tool !== "open_workspace") renderPayloadIfNeeded();
+    if (card?.tool === "open_workspace") {
+      if (ctx.theme && ctx.theme !== previousTheme) {
+        syncWorkspaceProviderLogos(ctx.theme === "light" ? "light" : "dark");
+      }
+    } else {
+      renderPayloadIfNeeded();
+    }
   };
 
   app.onteardown = async () => {
@@ -583,6 +596,9 @@ function renderWorkspacePayload(container: HTMLElement, card: ToolResultCard): v
 
   const providers = card.agentProviders ?? [];
   const agents = card.agents ?? [];
+  const providerLogoTheme: ProviderLogoTheme = hostContext?.theme === "light"
+    ? "light"
+    : "dark";
   const agentChips: WorkspaceChip[] = agents.map((agent) => {
     const name = agent.name ?? "Unnamed agent";
     const providerName = agent.provider?.trim();
@@ -594,14 +610,17 @@ function renderWorkspacePayload(container: HTMLElement, card: ToolResultCard): v
     ].filter((value): value is string => Boolean(value)).join("\n");
     return {
       label: name,
-      logo: providerName ? getProviderLogo(providerName) : undefined,
+      logo: providerName
+        ? getProviderLogo(providerName, providerLogoTheme)
+        : undefined,
+      logoProvider: providerName,
       profile: true,
       title: title || undefined,
     };
   });
   const providerChips: WorkspaceChip[] = providers.map((provider) => {
     const name = provider.id?.trim() || "Unknown provider";
-    const logo = getProviderLogo(name);
+    const logo = getProviderLogo(name, providerLogoTheme);
     const title = [
       provider.model ? `Model: ${provider.model}` : undefined,
       provider.effort ? `Effort: ${provider.effort}` : undefined,
@@ -610,6 +629,7 @@ function renderWorkspacePayload(container: HTMLElement, card: ToolResultCard): v
     return {
       label: name,
       logo,
+      logoProvider: logo ? name : undefined,
       bareLogo: Boolean(logo),
       ariaLabel: name,
       title: title || name,
@@ -636,6 +656,7 @@ function renderWorkspacePayload(container: HTMLElement, card: ToolResultCard): v
 interface WorkspaceChip {
   label: string;
   logo?: string;
+  logoProvider?: string;
   profile?: boolean;
   bareLogo?: boolean;
   ariaLabel?: string;
@@ -913,6 +934,7 @@ function renderWorkspaceChips(chips: WorkspaceChip[]): HTMLElement {
         ? "workspace-agent-profile-logo"
         : "workspace-chip-logo";
       logo.src = chip.logo;
+      if (chip.logoProvider) logo.dataset.provider = chip.logoProvider;
       logo.alt = "";
       logo.setAttribute("aria-hidden", "true");
       item.append(logo);
@@ -923,6 +945,15 @@ function renderWorkspaceChips(chips: WorkspaceChip[]): HTMLElement {
     list.append(item);
   }
   return list;
+}
+
+function syncWorkspaceProviderLogos(theme: ProviderLogoTheme): void {
+  for (const logo of document.querySelectorAll<HTMLImageElement>("img[data-provider]")) {
+    const providerName = logo.dataset.provider;
+    if (!providerName) continue;
+    const src = getProviderLogo(providerName, theme);
+    if (src && logo.src !== src) logo.src = src;
+  }
 }
 
 function element<K extends keyof HTMLElementTagNameMap>(
