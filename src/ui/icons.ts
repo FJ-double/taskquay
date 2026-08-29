@@ -34,17 +34,40 @@ export const toolIcons = {
 export type ToolIcon = IconNode;
 
 const providerLogos = {
-  claude: new URL("./assets/provider-logos/claude.svg", import.meta.url).href,
-  codex: new URL("./assets/provider-logos/openai-dark.svg", import.meta.url).href,
-  copilot: new URL("./assets/provider-logos/copilot-dark.svg", import.meta.url).href,
-  cursor: new URL("./assets/provider-logos/cursor-dark.svg", import.meta.url).href,
-  opencode: new URL("./assets/provider-logos/opencode-dark.svg", import.meta.url).href,
-  pi: new URL("./assets/provider-logos/pi-on-dark.svg", import.meta.url).href,
+  claude: {
+    light: new URL("./assets/provider-logos/claude.svg", import.meta.url).href,
+    dark: new URL("./assets/provider-logos/claude.svg", import.meta.url).href,
+  },
+  codex: {
+    light: new URL("./assets/provider-logos/openai-light.svg", import.meta.url).href,
+    dark: new URL("./assets/provider-logos/openai-dark.svg", import.meta.url).href,
+  },
+  copilot: {
+    light: new URL("./assets/provider-logos/copilot-light.svg", import.meta.url).href,
+    dark: new URL("./assets/provider-logos/copilot-dark.svg", import.meta.url).href,
+  },
+  cursor: {
+    light: new URL("./assets/provider-logos/cursor-light.svg", import.meta.url).href,
+    dark: new URL("./assets/provider-logos/cursor-dark.svg", import.meta.url).href,
+  },
+  opencode: {
+    light: new URL("./assets/provider-logos/opencode-light.svg", import.meta.url).href,
+    dark: new URL("./assets/provider-logos/opencode-dark.svg", import.meta.url).href,
+  },
+  pi: {
+    light: new URL("./assets/provider-logos/pi-on-light.svg", import.meta.url).href,
+    dark: new URL("./assets/provider-logos/pi-on-dark.svg", import.meta.url).href,
+  },
 } as const;
 
-export function getProviderLogo(name: string): string | undefined {
+export type ProviderLogoTheme = "light" | "dark";
+
+export function getProviderLogo(
+  name: string,
+  theme: ProviderLogoTheme = "dark",
+): string | undefined {
   const normalizedName = name.trim().toLowerCase() as keyof typeof providerLogos;
-  return providerLogos[normalizedName];
+  return providerLogos[normalizedName]?.[theme];
 }
 
 export function renderIcon(icon: ToolIcon, className = "icon-svg"): SVGElement {
