@@ -247,10 +247,10 @@ This year, I began my journey to build a one-person, multi-agent company capable
 For working on DevSpace itself:
 
 ```bash
-npm install --include=dev
-npm run dev
-npm run typecheck
-npm test
-npm run build
-npm run start
+pnpm install --frozen-lockfile
+pnpm dev
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm start
 ```

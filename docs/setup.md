@@ -136,8 +136,8 @@ Git, Bash, public URL, allowed hosts, and SQLite native dependency status.
 If you are developing DevSpace itself instead of using the published package:
 
 ```bash
-npm install --include=dev
-npm run dev
+pnpm install --frozen-lockfile
+pnpm dev
 ```
 
 The same setup rules apply.
