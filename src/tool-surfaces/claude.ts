@@ -22,7 +22,7 @@ import {
   textBlock,
 } from "./shared.js";
 
-const CLAUDE_INSTRUCTIONS = `Use ${toolNames.read} for direct file reads, ${toolNames.shell} with command-line tools such as rg, find, ls, and tree for search and directory inspection, ${toolNames.edit} for targeted modifications, and ${toolNames.write} only for new files or complete rewrites. Use ${toolNames.shell} for tests, builds, git inspection, package scripts, and other commands, but do not create or modify files through shell commands. Shell commands run with the local user's authority and are not sandboxed; workspace validation only selects their initial working directory. Follow instructions returned by ${toolNames.openWorkspace}; read applicable instruction and skill files before working in their scope.`;
+const CLAUDE_INSTRUCTIONS = `Use ${toolNames.read} for direct file reads, ${toolNames.edit} for targeted modifications, ${toolNames.write} only for new files or complete rewrites, and ${toolNames.shell} for inspection, tests, builds, and other commands. Shell commands run with the local user's authority and are not sandboxed; workspace validation only selects their initial working directory. Follow instructions returned by ${toolNames.openWorkspace}; read applicable instruction and skill files before working in their scope.`;
 
 export function claudeInstructions({
   agents,
@@ -36,7 +36,7 @@ export function registerClaudeTools(context: ToolRegistrationContext): void {
   registerShellTool(context);
 }
 
-const CLAUDE_SHELL_DESCRIPTION = `Run a shell command in a workspace with the local user's authority. Commands are not sandboxed; workspace validation only selects the initial working directory. Use it for tests, builds, git inspection, package scripts, search, file discovery, and directory inspection. Do not use ${toolNames.shell} to create or modify files. Do not use shell redirection, heredocs, tee, sed -i, perl -i, node/python/ruby scripts, or generated scripts to write project files; use ${toolNames.edit} for targeted changes and ${toolNames.write} for new files or full rewrites. Prefer ${toolNames.read} for direct file reads. This is powerful execution and should only be exposed behind strong authentication.`;
+const CLAUDE_SHELL_DESCRIPTION = `Run a shell command with the local user's authority. Commands are not sandboxed; workspace validation only selects the initial working directory. Use this for file inspection, tests, builds, package scripts, and other commands.`;
 
 function registerClaudeMutationTools(context: ToolRegistrationContext): void {
   const { server, config, workspaces } = context;
@@ -183,9 +183,7 @@ function registerShellTool(context: ToolRegistrationContext): void {
         workspaceId: z.string().describe(workspaceIdDescription),
         command: z
           .string()
-          .describe(
-            `Shell command to run. Must not create or modify project files; use ${toolNames.edit} or ${toolNames.write} for file changes.`,
-          ),
+          .describe("Shell command to execute."),
         workingDirectory: z
           .string()
           .optional()
