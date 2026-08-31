@@ -7,6 +7,7 @@
   "engines": {
     "node": ">=22.19 <27"
   },
+  "packageManager": "pnpm@11.25.0",
   "bin": {
     "devspace": "bin/devspace.js",
     "devspace-agentd": "bin/devspace-agentd.js"
@@ -26,11 +27,11 @@
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "build": "npm run clean && npm run build:app && tsc -p tsconfig.build.json",
+    "build": "pnpm clean && pnpm build:app && tsc -p tsconfig.build.json",
     "build:app": "vite build",
     "dev": "tsx watch --clear-screen=false src/cli.ts serve",
     "postinstall": "node scripts/fix-node-pty-permissions.mjs",
-    "prepack": "npm run build",
+    "prepack": "pnpm build",
     "schema:config": "tsx scripts/generate-config-schema.ts",
     "start": "node dist/cli.js serve",
     "test": "tsx --test --test-concurrency=1 \"src/**/*.test.ts\"",
