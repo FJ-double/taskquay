@@ -793,8 +793,11 @@ body {
   --diffs-dark-bg: var(--tool-payload-bg, var(--color-background-primary, #101114));
   --diffs-font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
   --diffs-header-font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
-  --diffs-font-size: var(--font-text-sm-size, 12px);
+  /* Keep iOS WebKit from inflating dense diff text independently of the card UI. */
+  --diffs-font-size: 12px;
   --diffs-line-height: 20px;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
   display: block;
   overflow: visible;
   border-bottom-right-radius: 8px;
