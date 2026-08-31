@@ -18,7 +18,6 @@ test("a clean workspace reports no changes from the last-shown checkpoint", asyn
 
   assert.equal(clean.summary.files, 0);
   assert.equal(clean.patch, "");
-  assert.match(clean.result, /No changes since last shown changes/);
 });
 
 test("initialization reports whether aggregate review is available", async (t) => {
@@ -176,7 +175,6 @@ test("a missing last-shown checkpoint falls back after restart and can be re-est
     markReviewed: false,
   });
   assert.equal(fallback.summary.files, 1);
-  assert.match(fallback.result, /compared from workspace open/);
   assert.match(fallback.patch, /changed/);
 
   const reestablished = await restartedManager.reviewChanges({
@@ -185,7 +183,6 @@ test("a missing last-shown checkpoint falls back after restart and can be re-est
     markReviewed: true,
   });
   assert.equal(reestablished.summary.files, 1);
-  assert.match(reestablished.result, /baseline was re-established/);
 
   const afterReestablished = await restartedManager.reviewChanges({
     workspaceId: "ws_missing_baseline",

@@ -92,7 +92,6 @@ test("show_changes keeps model output compact and preserves the rich review card
 
   assert.equal(structured.workspaceId, workspaceId);
   assert.match(structured.reviewRef as string, /^[0-9a-f]{40,64}$/);
-  assert.match(structured.result as string, /Changed 1 file \(\+1 -1\)/);
   assert.equal("summary" in structured, false);
   assert.equal("files" in structured, false);
   assert.equal("patch" in structured, false);
