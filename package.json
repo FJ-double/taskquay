@@ -28,7 +28,7 @@
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && npm run build:app && tsc -p tsconfig.build.json",
     "build:app": "vite build",
-    "dev": "node scripts/dev-server.mjs",
+    "dev": "tsx watch --clear-screen=false src/cli.ts serve",
     "postinstall": "node scripts/fix-node-pty-permissions.mjs",
     "prepack": "npm run build",
     "schema:config": "tsx scripts/generate-config-schema.ts",
