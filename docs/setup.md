@@ -77,6 +77,16 @@ reverse proxy first and point it at:
 http://127.0.0.1:7676
 ```
 
+For Tailscale Funnel, proxy the whole DevSpace server from the root path:
+
+```bash
+tailscale funnel --bg 7676
+```
+
+Do not mount Funnel only at `/mcp` with `--set-path=/mcp`. DevSpace also serves
+OAuth discovery and authorization routes outside `/mcp`, and a path mount can
+strip `/mcp` before the request reaches DevSpace.
+
 Enter the public origin without `/mcp`:
 
 ```text

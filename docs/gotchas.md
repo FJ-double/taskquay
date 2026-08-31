@@ -65,6 +65,19 @@ If you saved the wrong value:
 npx @waishnav/devspace config set publicBaseUrl https://your-tunnel-host.example.com
 ```
 
+## Tailscale Funnel `/mcp` Returns 404
+
+Proxy the whole DevSpace server from the Funnel root:
+
+```bash
+tailscale funnel --bg 7676
+```
+
+Do not use `--set-path=/mcp`. Tailscale removes a configured mount path before
+proxying to the local service, so a public `/mcp` request can otherwise arrive
+at DevSpace as `/`. DevSpace also needs OAuth routes outside `/mcp`, so serving
+the whole local origin is the correct setup.
+
 ## Tunnel URL Changed
 
 Temporary tunnels often change URLs between runs.
