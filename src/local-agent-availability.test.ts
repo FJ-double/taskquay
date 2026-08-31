@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import {
   checkLocalAgentProviderAvailability,
-  formatLocalAgentProviderAvailabilitySummary,
   getLocalAgentProviderAvailabilitySnapshot,
 } from "./local-agent-availability.js";
 
@@ -38,11 +37,3 @@ import {
   );
   assert.equal(snapshot.find((provider) => provider.name === "pi")?.available, true);
 }
-
-assert.equal(
-  formatLocalAgentProviderAvailabilitySummary([
-    { name: "codex", available: true, note: "available" },
-    { name: "pi", available: false, reason: "pi executable not found" },
-  ]),
-  "available: codex (available); unavailable: pi (pi executable not found)",
-);

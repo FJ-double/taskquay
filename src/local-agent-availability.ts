@@ -51,21 +51,6 @@ export function assertLocalAgentProviderAvailable(
   );
 }
 
-export function formatLocalAgentProviderAvailabilitySummary(
-  providers: LocalAgentProviderAvailability[],
-): string {
-  const available = providers
-    .filter((provider) => provider.available)
-    .map(formatAvailableProvider);
-  const unavailable = providers
-    .filter((provider) => !provider.available)
-    .map((provider) => `${provider.name} (${provider.reason ?? "unavailable"})`);
-  return [
-    available.length > 0 ? `available: ${available.join(", ")}` : undefined,
-    unavailable.length > 0 ? `unavailable: ${unavailable.join(", ")}` : undefined,
-  ].filter(Boolean).join("; ");
-}
-
 function packageAvailability(
   provider: LocalAgentProvider,
   packageName: string,
@@ -122,10 +107,6 @@ function resolveCommand(command: string, env: NodeJS.ProcessEnv): string | undef
     }
   }
   return undefined;
-}
-
-function formatAvailableProvider(provider: LocalAgentProviderAvailability): string {
-  return provider.note ? `${provider.name} (${provider.note})` : provider.name;
 }
 
 function executableExists(command: string): boolean {
