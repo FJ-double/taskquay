@@ -116,10 +116,6 @@ export class LocalAgentDaemonLock {
   }
 }
 
-export function writeLocalAgentDaemonPid(paths: LocalAgentDaemonPaths): void {
-  writeFileSecure(paths.pidPath, `${process.pid}\n`);
-}
-
 export function ensureLocalAgentDaemonSecret(paths: LocalAgentDaemonPaths): string {
   ensureLocalAgentDaemonStateDir(paths.stateDir);
   try {

@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import {
   isSubagentProviderEnabled,
-  resolveSubagentsConfig,
   subagentProviderConfig,
+  subagentsConfigSchema,
 } from "./local-agent-config.js";
 
-const config = resolveSubagentsConfig({
+const config = subagentsConfigSchema.parse({
   enabled: true,
   providers: [
     { id: "codex", enabled: true, model: " gpt-5.4 ", effort: " high " },
@@ -24,24 +24,22 @@ assert.equal(isSubagentProviderEnabled(config, "claude"), false);
 assert.equal(isSubagentProviderEnabled(config, "pi"), false);
 assert.equal(subagentProviderConfig(config, "codex")?.model, "gpt-5.4");
 
-assert.equal(resolveSubagentsConfig(undefined).providers.length, 0);
-
 assert.throws(
-  () => resolveSubagentsConfig({
+  () => subagentsConfigSchema.parse({
     enabled: true,
     providers: [{ id: "codex", enabled: true }, { id: "codex", enabled: false }],
   }),
   /Duplicate subagent provider: codex/,
 );
 assert.throws(
-  () => resolveSubagentsConfig({
+  () => subagentsConfigSchema.parse({
     enabled: true,
     providers: [{ id: "unknown", enabled: true }],
   }),
   /Invalid option/,
 );
 assert.throws(
-  () => resolveSubagentsConfig({
+  () => subagentsConfigSchema.parse({
     enabled: true,
     providers: [{ id: "codex", enabled: true, effort: "  " }],
   }),

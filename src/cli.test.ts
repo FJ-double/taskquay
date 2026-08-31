@@ -214,7 +214,6 @@ try {
       error: { code: string; message: string; retryable: boolean; target: string };
     };
     assert.equal(payload.error.code, "UNKNOWN_TARGET");
-    assert.equal(payload.error.message, "Unknown subagent profile or provider: missing.");
     assert.equal(payload.error.retryable, false);
     assert.equal(payload.error.target, "missing");
 

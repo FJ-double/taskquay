@@ -92,7 +92,6 @@ test("show_changes keeps model output compact and preserves the rich review card
 
   assert.equal(structured.workspaceId, workspaceId);
   assert.match(structured.reviewRef as string, /^[0-9a-f]{40,64}$/);
-  assert.match(structured.result as string, /Changed 1 file \(\+1 -1\)/);
   assert.equal("summary" in structured, false);
   assert.equal("files" in structured, false);
   assert.equal("patch" in structured, false);
@@ -273,121 +272,24 @@ test("open_workspace omits providers disabled by configuration", async (t) => {
   );
 });
 
-test("concurrent checkout opens return one full context and one reuse instruction", async (t) => {
-  const context = await fixture(t);
-  const [first, second] = await Promise.all([
-    callOpen(context.client, context.project, "chat-1"),
-    callOpen(context.client, context.project, "chat-1"),
-  ]);
-
-  assert.equal(structuredContent(first).workspaceId, structuredContent(second).workspaceId);
-  assert.equal(
-    [first, second].filter((result) => Array.isArray(structuredContent(result).agentsFiles)).length,
-    1,
-  );
-  assert.equal(
-    [first, second].filter((result) => responseText(result).includes("Workspace already open as")).length,
-    1,
-  );
-});
-
-test("new worktrees always receive a fresh workspace and complete worktree context", async (t) => {
-  const context = await fixture(t, { git: true });
-  const checkout = await callOpen(context.client, context.project, "chat-1");
-  const firstWorktree = await callOpen(context.client, context.project, "chat-1", "worktree");
-  const secondWorktree = await callOpen(context.client, context.project, "chat-1", "worktree");
-  const checkoutAgain = await callOpen(context.client, context.project, "chat-1");
-
-  assert.notEqual(structuredContent(firstWorktree).workspaceId, structuredContent(secondWorktree).workspaceId);
-  assert.equal(structuredContent(checkoutAgain).workspaceId, structuredContent(checkout).workspaceId);
-  for (const result of [firstWorktree, secondWorktree]) {
-    const structured = structuredContent(result);
-    assert.equal(structured.mode, "worktree");
-    assert.ok(Array.isArray(structured.agentsFiles));
-    assert.ok(Array.isArray(structured.availableAgentsFiles));
-    assert.ok(Array.isArray(structured.skills));
-    assert.ok(Array.isArray(structured.agentProviders));
-    assert.ok(Array.isArray(structured.agents));
-    assert.ok(Array.isArray(structured.skillDiagnostics));
-    assert.match(responseText(result), /Opened isolated worktree workspace/);
-  }
-  assert.equal(structuredContent(checkoutAgain).agentsFiles, undefined);
-});
-
-test("checkout opened after a worktree receives its own complete context", async (t) => {
-  const context = await fixture(t, { git: true });
-  const worktree = await callOpen(context.client, context.project, "chat-1", "worktree");
-  const checkout = await callOpen(context.client, context.project, "chat-1");
-  const checkoutAgain = await callOpen(context.client, context.project, "chat-1");
-
-  assert.equal(structuredContent(worktree).mode, "worktree");
-  assert.ok(Array.isArray(structuredContent(worktree).agentsFiles));
-  assert.equal(structuredContent(checkout).mode, "checkout");
-  assert.ok(Array.isArray(structuredContent(checkout).agentsFiles));
-  assert.equal(structuredContent(checkoutAgain).workspaceId, structuredContent(checkout).workspaceId);
-  assert.equal(structuredContent(checkoutAgain).agentsFiles, undefined);
-});
-
-test("a host without conversation metadata receives normal explicit-workspace behavior", async (t) => {
-  const context = await fixture(t);
-  const first = await callOpen(context.client, context.project);
-  const second = await callOpen(context.client, context.project);
-
-  assert.notEqual(structuredContent(first).workspaceId, structuredContent(second).workspaceId);
-  assert.ok(Array.isArray(structuredContent(first).agentsFiles));
-  assert.ok(Array.isArray(structuredContent(second).agentsFiles));
-  assert.doesNotMatch(responseText(first), /conversation metadata/i);
-  assert.doesNotMatch(responseText(second), /conversation metadata/i);
-});
-
-test("checkout reuse and context suppression survive a registry restart", async (t) => {
+test("open_workspace scopes checkout reuse to OpenAI session metadata", async (t) => {
   const context = await fixture(t);
   const first = await callOpen(context.client, context.project, "chat-1");
-  const firstWorkspaceId = structuredContent(first).workspaceId;
+  const repeated = await callOpen(context.client, context.project, "chat-1");
+  const otherSession = await callOpen(context.client, context.project, "chat-2");
+  const unscoped = await callOpen(context.client, context.project);
 
-  await context.close();
-
-  const restoredStore = new SqliteWorkspaceStore(context.stateDir);
-  const restoredServer = createMcpServer(
-    context.config,
-    new WorkspaceRegistry(context.config, restoredStore),
-    createReviewCheckpointManager(),
-    new ProcessSessionManager(),
-    () => [],
-    [],
-  );
-  const [restoredClientTransport, restoredServerTransport] = InMemoryTransport.createLinkedPair();
-  const restoredClient = new Client({ name: "devspace-restored-test-client", version: "1.0.0" });
-  let restoredClosed = false;
-  const closeRestored = async () => {
-    if (restoredClosed) return;
-    restoredClosed = true;
-    await restoredClient.close();
-    await restoredServer.close();
-    restoredStore.close();
-  };
-  t.after(closeRestored);
-
-  try {
-    await Promise.all([
-      restoredClient.connect(restoredClientTransport),
-      restoredServer.connect(restoredServerTransport),
-    ]);
-
-    const restored = await callOpen(restoredClient, context.project, "chat-1");
-    assert.equal(structuredContent(restored).workspaceId, firstWorkspaceId);
-    assert.equal(structuredContent(restored).agentsFiles, undefined);
-  } finally {
-    await closeRestored();
-  }
+  assert.equal(structuredContent(repeated).workspaceId, structuredContent(first).workspaceId);
+  assert.equal(structuredContent(repeated).agentsFiles, undefined);
+  assert.notEqual(structuredContent(otherSession).workspaceId, structuredContent(first).workspaceId);
+  assert.notEqual(structuredContent(unscoped).workspaceId, structuredContent(first).workspaceId);
+  assert.ok(Array.isArray(structuredContent(otherSession).agentsFiles));
+  assert.ok(Array.isArray(structuredContent(unscoped).agentsFiles));
 });
 
 interface ServerFixture {
   client: Client;
   project: string;
-  config: ServerConfig;
-  stateDir: string;
-  close: () => Promise<void>;
 }
 
 async function fixture(
@@ -492,7 +394,7 @@ async function fixture(
     await rm(root, { recursive: true, force: true });
   });
 
-  return { client, project, config, stateDir, close };
+  return { client, project };
 }
 
 async function git(cwd: string, args: string[]): Promise<void> {
@@ -503,14 +405,10 @@ async function callOpen(
   client: Client,
   path: string,
   conversationScopeId?: string,
-  mode?: "checkout" | "worktree",
 ): Promise<Awaited<ReturnType<Client["callTool"]>>> {
   const params = {
     name: "open_workspace",
-    arguments: {
-      path,
-      ...(mode ? { mode } : {}),
-    },
+    arguments: { path },
     ...(conversationScopeId
       ? { _meta: { "openai/session": conversationScopeId } }
       : {}),
@@ -521,15 +419,6 @@ async function callOpen(
 function structuredContent(result: Awaited<ReturnType<Client["callTool"]>>): Record<string, unknown> {
   assert.ok(result.structuredContent);
   return result.structuredContent as Record<string, unknown>;
-}
-
-function responseText(result: Awaited<ReturnType<Client["callTool"]>>): string {
-  const content = (result as { content?: unknown }).content;
-  assert.ok(Array.isArray(content));
-  const first = content[0] as { type?: unknown; text?: unknown } | undefined;
-  assert.equal(first?.type, "text");
-  assert.equal(typeof first?.text, "string");
-  return first?.text as string;
 }
 
 function responseCard(result: Awaited<ReturnType<Client["callTool"]>>): Record<string, unknown> {

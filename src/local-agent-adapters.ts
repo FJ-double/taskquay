@@ -1,4 +1,3 @@
-import type { LocalAgentProvider } from "./local-agent-profiles.js";
 import {
   AcpLocalAgentDriver,
   resolveAcpCommand,
@@ -45,22 +44,6 @@ export function createLocalAgentDrivers(
     new AcpLocalAgentDriver("copilot", options.env),
     new AcpLocalAgentDriver("grok", options.env),
   ];
-}
-
-export function createLocalAgentAdapter(
-  provider: LocalAgentProvider,
-  options: LocalAgentDriverOptions = {},
-): LocalAgentDriver {
-  switch (provider) {
-    case "codex": return new CodexLocalAgentDriver(options.env);
-    case "claude": return new ClaudeLocalAgentDriver(options.claudeQueryFactory, options.env);
-    case "opencode": return new OpencodeLocalAgentDriver(options.opencodeFactory);
-    case "pi": return new PiLocalAgentDriver(options.piSessionFactory);
-    case "cursor":
-    case "copilot":
-    case "grok":
-      return new AcpLocalAgentDriver(provider, options.env);
-  }
 }
 
 export function extractLocalAgentResponseText(value: unknown): string {

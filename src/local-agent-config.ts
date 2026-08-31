@@ -37,14 +37,6 @@ export type SubagentProviderConfig = z.infer<typeof providerSchema>;
 export type SubagentsConfig = z.infer<typeof subagentsConfigSchema>;
 export type StoredSubagentsConfig = z.infer<typeof storedSubagentsConfigSchema>;
 
-export function resolveSubagentsConfig(
-  value: unknown,
-): SubagentsConfig {
-  return value === undefined
-    ? { enabled: false, providers: [] }
-    : subagentsConfigSchema.parse(value);
-}
-
 export function subagentProviderConfig(
   config: SubagentsConfig,
   provider: LocalAgentProvider,
