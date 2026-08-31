@@ -246,6 +246,9 @@ This year, I began my journey to build a one-person, multi-agent company capable
 
 For working on DevSpace itself:
 
+Install pnpm 11.25.0, the version pinned in `package.json`, with
+`npm install --global pnpm@11.25.0`, then:
+
 ```bash
 pnpm install --frozen-lockfile
 pnpm dev
