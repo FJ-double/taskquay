@@ -181,6 +181,21 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
               nextAction: "check_provider_limits_before_resuming_original_thread" }),
           });
         }
+        // 0.153.4 can read paginated summaries but cannot resume their history.
+        // Do not silently fork, rewrite history, consume another session slot,
+        // or classify this capability mismatch as a model execution failure.
+        if (input.providerSessionId && this.options.version === "0.153.4") {
+          const summary = asRecord(await this.control("thread/read", { threadId: input.providerSessionId, includeTurns: false }));
+          const existing = asRecord(summary?.thread);
+          if (existing?.id !== input.providerSessionId) throw new AgentProviderProtocolError({
+            code: "PROVIDER_PROTOCOL_ERROR", provider: "codex", operation: "history_preflight", retryable: false,
+            cause: "thread identity not confirmed", message: "Existing thread identity could not be verified; no resume or inference was requested.",
+          });
+          if (existing.historyMode === "paginated") throw new AgentProviderUnavailableError({
+            code: "PROVIDER_UNAVAILABLE", provider: "codex", operation: "history_preflight", retryable: false,
+            message: "PAGINATED_HISTORY_UNSUPPORTED: Codex 0.153.4 cannot resume this stored thread. Preserve its identity and results; use a provider version with verified paginated resume support or an explicitly authorized handoff. No thread, history, quota or session-budget policy was changed.",
+          });
+        }
         let threadConfig: Record<string, unknown> = {};
         const register = async (threadIds: string[]) => {
           const receipt = await this.options.registerProject?.([input.workspaceRoot], threadIds, this.options.env);

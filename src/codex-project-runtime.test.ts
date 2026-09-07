@@ -6,6 +6,28 @@ import { tmpdir } from "node:os";
 import { CodexAppServerRuntime } from "./local-agent-codex.js";
 import type { ProjectReceipt } from "./codex-projects.js";
 
+test("paginated history on the verified older provider blocks before resume without cloning", async (t) => {
+  const root=await mkdtemp(join(tmpdir(),"devspace-history-preflight-"));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const source=join(root,"fake.cjs"),log=join(root,"requests.jsonl");
+  await writeFile(source,`const fs=require('fs');require('readline').createInterface({input:process.stdin}).on('line',line=>{
+    const m=JSON.parse(line);fs.appendFileSync(${JSON.stringify(log)},JSON.stringify(m)+'\\n');
+    if(m.id==null)return; const result=m.method==='thread/read'?{thread:{id:'original-thread',historyMode:'paginated'}}:{};
+    process.stdout.write(JSON.stringify({id:m.id,result})+'\\n');
+  });`);
+  const command=join(root,process.platform==='win32'?'fake.cmd':'fake');
+  await writeFile(command,process.platform==='win32'?`@echo off\r\n"${process.execPath}" "${source}"\r\n`:`#!/bin/sh\nexec '${process.execPath}' '${source}'\n`);await chmod(command,0o700);
+  let registrations=0;
+  const runtime=new CodexAppServerRuntime({command,env:process.env,version:'0.153.4',registerProject:async(roots):Promise<ProjectReceipt>=>{registrations++;return{protocol:'fixture',status:'partial',roots,createdDirectories:[],uiStatus:'unverified'}}});
+  try{
+    await runtime.initialize();const result=await runtime.run({workspaceRoot:root,providerSessionId:'original-thread',prompt:'must not run'});
+    assert(result.isErr());if(result.isErr()){assert.equal(result.error.operation,'history_preflight');assert.equal(result.error.retryable,false)}
+    assert.equal(registrations,0);const requests=(await readFile(log,'utf8')).trim().split('\n').map(x=>JSON.parse(x));
+    assert.equal(requests.find(x=>x.method==='thread/read').params.includeTurns,false);
+    assert(!requests.some(x=>['thread/resume','thread/start','thread/fork','turn/start'].includes(x.method)));
+  }finally{await runtime.close()}
+});
+
 test("explicit exhausted quota stops before project registration, thread creation or inference", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "devspace-quota-runtime-"));
   t.after(() => rm(root, { recursive: true, force: true }));
