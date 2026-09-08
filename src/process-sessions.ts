@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { resolveShellCommand, terminateProcessTree } from "./process-platform.js";
+import { executionContract, type ExecutionContract, resolveShellCommand, terminateProcessTree } from "./process-platform.js";
 import { ExecutionCoordinator, type ExecutionClaim } from "./execution-coordinator.js";
 import { WorkLedger } from "./work-ledger.js";
 import { randomUUID } from "node:crypto";
@@ -41,6 +41,11 @@ export interface WriteStdinInput {
 }
 
 export interface ProcessSnapshot {
+  execution: ExecutionContract;
+  phase: "running" | "root_exited_stdio_open" | "closed";
+  rootExitedElapsedMs?: number;
+  terminalReplay: boolean;
+  outputScope: "since_previous_read";
   operationId?: string;
   workRunId?: string;
   sessionId?: number;
@@ -59,6 +64,10 @@ interface ManagedProcess {
 }
 
 interface ProcessSession {
+  execution: ExecutionContract;
+  rootExitedAt?: number;
+  finishedAt?: number;
+  terminalReceipt?: ProcessSnapshot;
   id: number;
   workspaceId: string;
   process?: ManagedProcess;
@@ -83,6 +92,7 @@ interface ProcessSessionManagerOptions {
   diagnostics?: (event: string, fields: Record<string, unknown>, level: "info" | "warn" | "error") => void;
   maxBufferCharacters?: number;
   completedSessionTtlMs?: number;
+  maxCompletedSessions?: number;
   stateDir?: string;
 }
 
@@ -237,6 +247,7 @@ export class ProcessSessionManager {
   private shuttingDown = false;
 
   constructor(private readonly options: ProcessSessionManagerOptions = {}) {
+    if (options.maxCompletedSessions !== undefined && (!Number.isInteger(options.maxCompletedSessions) || options.maxCompletedSessions < 1)) throw new Error("Terminal receipt cap must be a positive integer.");
     this.workStateDir = options.stateDir;
     this.maxBufferCharacters = options.maxBufferCharacters ?? DEFAULT_BUFFER_CHARACTERS;
     this.completedSessionTtlMs = options.completedSessionTtlMs ?? COMPLETED_SESSION_TTL_MS;
@@ -296,7 +307,6 @@ export class ProcessSessionManager {
     await this.waitForExit(session, yieldTimeMs);
 
     const snapshot = this.consume(session, input.maxOutputTokens);
-    if (!session.running) this.removeSession(session.id);
     return snapshot;
   }
 
@@ -305,6 +315,7 @@ export class ProcessSessionManager {
     const chars = input.chars ?? "";
     const interactionRequested =
       chars.length > 0 || input.columns !== undefined || input.rows !== undefined;
+    if (!session.running && interactionRequested) throw new Error("Process is terminal; only empty polls can replay its receipt.");
 
     if (input.columns !== undefined || input.rows !== undefined) {
       session.columns = terminalSize(input.columns, session.columns);
@@ -330,7 +341,6 @@ export class ProcessSessionManager {
     }
 
     const snapshot = this.consume(session, input.maxOutputTokens);
-    if (!session.running) this.removeSession(session.id);
     return snapshot;
   }
 
@@ -370,6 +380,7 @@ export class ProcessSessionManager {
     });
 
     return {
+      execution: executionContract(input.tty),
       id: this.nextSessionId++,
       workspaceId: input.workspaceId,
       workRunId: input.workRunId,
@@ -402,7 +413,6 @@ export class ProcessSessionManager {
     session.process = {
       write: (data) => child.stdin.write(data),
       kill: (signal = "SIGTERM") => terminateProcessTree(child, signal, detached),
-      resize: input.tty ? () => undefined : undefined,
     };
     child.once("spawn", () => this.record(session, "process_started", { childPid: child.pid }));
     child.stdout.on("data", (data: Buffer) => this.append(session, data.toString("utf8")));
@@ -413,6 +423,7 @@ export class ProcessSessionManager {
       this.append(session, `${error.message}\n`);
     });
     child.on("close", (code, signal) => this.finish(session, code ?? undefined, signal ?? undefined));
+    child.once("exit", () => { session.rootExitedAt = Date.now(); });
   }
 
   private async startPty(session: ProcessSession, input: StartCommandInput): Promise<void> {
@@ -455,6 +466,7 @@ export class ProcessSessionManager {
   private finish(session: ProcessSession, exitCode?: number, signal?: string): void {
     if (!session.running) return;
     session.running = false;
+    session.finishedAt = Date.now();
     session.exitCode = exitCode;
     session.signal = signal;
     const success = exitCode === 0 && !signal && !session.failure;
@@ -467,6 +479,9 @@ export class ProcessSessionManager {
       this.completedSessionTtlMs,
     );
     session.cleanupTimer.unref();
+    const completed = [...this.sessions.values()].filter((item) => !item.running)
+      .sort((a, b) => (a.finishedAt ?? 0) - (b.finishedAt ?? 0));
+    while (completed.length > (this.options.maxCompletedSessions ?? 64)) this.removeSession(completed.shift()!.id);
   }
 
   private endWorkOperation(session: ProcessSession, success: boolean): void {
@@ -503,23 +518,31 @@ export class ProcessSessionManager {
   }
 
   private consume(session: ProcessSession, maxOutputTokens?: number): ProcessSnapshot {
+    if (session.terminalReceipt) return { ...session.terminalReceipt, execution: { ...session.execution }, terminalReplay: true };
     const limit = boundedInteger(maxOutputTokens, DEFAULT_MAX_OUTPUT_TOKENS, 100_000);
     const maxCharacters = Math.max(256, limit * 4);
     const buffered = session.buffer.drain(maxCharacters);
     this.record(session, "process_output_consumed", { running: session.running,
       returnedOutputBytes: Buffer.byteLength(buffered.output), outputTruncated: buffered.truncated });
 
-    return {
+    const snapshot: ProcessSnapshot = {
+      execution: { ...session.execution },
+      phase: !session.running ? "closed" : session.rootExitedAt === undefined ? "running" : "root_exited_stdio_open",
+      rootExitedElapsedMs: session.running && session.rootExitedAt !== undefined ? Date.now() - session.rootExitedAt : undefined,
+      terminalReplay: false,
+      outputScope: "since_previous_read",
       operationId: session.workOperationId,
       workRunId: session.workRunId,
-      sessionId: session.running ? session.id : undefined,
+      sessionId: session.id,
       output: buffered.output,
       outputTruncated: buffered.truncated,
       running: session.running,
       exitCode: session.exitCode,
       signal: session.signal,
-      wallTimeMs: Date.now() - session.startedAt,
+      wallTimeMs: (session.finishedAt ?? Date.now()) - session.startedAt,
     };
+    if (!session.running) session.terminalReceipt = { ...snapshot, execution: { ...snapshot.execution } };
+    return snapshot;
   }
 
   private getOwnedSession(workspaceId: string, sessionId: number): ProcessSession {

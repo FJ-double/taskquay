@@ -6,6 +6,14 @@ export interface ShellCommand {
   args: string[];
 }
 
+/** Describes the shell actually selected by this server, not the host terminal. */
+export function executionContract(tty = false) {
+  return { platform: process.platform, shell: resolveShellCommand("").executable,
+    transport: tty && process.platform !== "win32" ? "pty" as const : "pipe" as const,
+    ptyCapability: process.platform === "win32" ? "pipe_fallback" as const : "optional_node_pty" as const };
+}
+export type ExecutionContract = ReturnType<typeof executionContract>;
+
 export interface KillableProcess {
   pid?: number;
   kill(signal?: NodeJS.Signals): boolean;

@@ -110,6 +110,8 @@ test("MCP advertises explicit directory creation and preserves it through the re
   const missing = await context.client.callTool({ name: "open_workspace", arguments: { path: target },
     _meta: { "openai/session": "new-project-contract" } });
   assert.equal(missing.isError, true);
+  assert.match(JSON.stringify(missing.content), /only if|Only if/);
+  assert.match(JSON.stringify(missing.content), /host exposes createDirectory/);
   await assert.rejects(access(target));
   const request = { name: "open_workspace", arguments: { path: target, createDirectory: true },
     _meta: { "openai/session": "new-project-contract" } };
@@ -117,6 +119,8 @@ test("MCP advertises explicit directory creation and preserves it through the re
   assert(!created.isError);
   await access(target);
   const first = structuredContent(created);
+  assert.equal((first.execution as { platform: string }).platform, process.platform);
+  assert.equal((first.execution as { transport: string }).transport, "pipe");
   assert.equal((first.projectRegistration as { projectId?: string }).projectId, "fixture-project");
   const repeated = structuredContent(await context.client.callTool(request));
   assert.equal(repeated.workspaceId, first.workspaceId);

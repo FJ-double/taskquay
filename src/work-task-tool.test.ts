@@ -120,6 +120,10 @@ test("actual MCP finish returns the same receipt as the dashboard and waits for 
     evidence: [{ label: "Process exit", reference: "test://isolated-wait-process", outcome: "passed" }] };
   assert(process.running); assert((await call(finish)).error, "A returned process handle is not completion");
   while (process.running) process = await processes.write({ workspaceId: "ws", sessionId: process.sessionId!, yieldTimeMs: 1000 });
+  const revision = ledger.requireScope(workRunId, project, "ws").revision;
+  for (let i = 0; i < 2; i++) assert.deepEqual(await processes.write({ workspaceId: "ws", sessionId: process.sessionId! }), { ...process, terminalReplay: true });
+  assert.equal(ledger.requireScope(workRunId, project, "ws").revision, revision, "Terminal replay does not settle the ledger again");
+  assert.equal(processes.executionCoordinator!.inspect(project).length, 0, "Claims released on close, not replay");
   const completed = await call(finish); assert(!completed.error);
   assert.deepEqual(completed.data, ledger.receipt(workRunId));
   assert.equal(completed.data.codexUsage?.totalTokens, 0); assert.equal(completed.data.acceptanceStatus, "passed");

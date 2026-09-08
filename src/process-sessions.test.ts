@@ -46,7 +46,10 @@ const foreground = await manager.start({
 assert.equal(foreground.running, false);
 assert.equal(foreground.exitCode, 0);
 assert.match(foreground.output, /foreground/);
-assert.equal(foreground.sessionId, undefined);
+assert.ok(foreground.sessionId);
+const replay = await manager.write({ workspaceId: "workspace-a", sessionId: foreground.sessionId });
+assert.deepEqual(replay, { ...foreground, terminalReplay: true });
+assert.deepEqual(await manager.write({ workspaceId: "workspace-a", sessionId: foreground.sessionId }), replay);
 
 const environment = await manager.start({
   workspaceId: "workspace-a",

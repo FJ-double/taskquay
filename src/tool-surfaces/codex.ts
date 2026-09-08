@@ -1,4 +1,5 @@
 import * as z from "zod/v4";
+import { executionContractSchema } from "../execution-contract-schema.js";
 import { registerAgentTaskTool } from "./agent-task.js";
 import { applyPatch } from "../apply-patch.js";
 import type { ProcessSnapshot } from "../process-sessions.js";
@@ -22,7 +23,7 @@ type CodexRegistration = (context: ToolRegistrationContext) => void;
 const CODEX_INSTRUCTIONS = `Read project context directly as the host with ${toolNames.read} or workspace_context before deciding to delegate. Those tools do not invoke Codex. Do not start a worker just to browse directories, summarize known logs or wait. Use apply_patch for file modifications, exec_command for commands, and write_stdin for running processes. Use agent_task (not shell wrappers) for subagent control. Provide only relevant host-prepared evidence, continue related sessions, and use a separate context when independent review is needed. Verified readers share bounded source access; mutations and unknown-effect commands remain exclusive. Declare shared build/device resources across worktrees. Never bypass claims using another path or state directory. Shell commands still have local-user authority, not an OS sandbox. Follow workspace instructions and applicable skills.`;
 
 export function codexInstructions(): string {
-  return "Begin a work_task run even for host-only work; propagate workRunId through read/context/mutation/command/agent tools. Finish with acceptance evidence after child operations stop and include the returned Codex usage and completeness in the final answer. If a response is lost or a tool fails, inspect work_task snapshot/history and the existing process/agent before retrying. Never blindly replay commands, writes, deployments or agent starts: they may already have taken effect. Empty-input write_stdin does not restart a command but drains output, so it cannot recover a lost response. A running work run alone does not prove child work is active. " + CODEX_INSTRUCTIONS;
+  return "Begin a work_task run even for host-only work; propagate workRunId through read/context/mutation/command/agent tools. Finish with acceptance evidence after child operations stop and include the returned Codex usage and completeness in the final answer. If a response is lost or a tool fails, use work_task snapshot/history only when exposed by your host schema; otherwise use get and available process/agent observe tools. The server cannot force ChatGPT to refresh its schema. Never blindly replay commands, writes, deployments or agent starts: they may already have taken effect. Empty polls replay bounded terminal receipts for up to five minutes subject to a count cap; earlier running reads drain output and cannot be recovered. A running work run alone does not prove child work is active. Use the returned execution platform/shell, never assume PowerShell or Bash from the host environment. " + CODEX_INSTRUCTIONS;
 }
 
 export function registerCodexTools(context: ToolRegistrationContext): void {
@@ -49,11 +50,16 @@ function processResult(snapshot: ProcessSnapshot): string {
   const output = snapshot.output
     ? `${snapshot.output.replace(/\n$/, "")}\n${status}`
     : status;
-  return output + correlation + recovery;
+  return output + correlation + recovery + `\nSession ${snapshot.sessionId}; phase=${snapshot.phase}; terminalReplay=${snapshot.terminalReplay}; outputScope=${snapshot.outputScope}. Execution: ${JSON.stringify(snapshot.execution)}.`;
 }
 
 function processOutputSchema(): z.ZodRawShape {
   return resultOutputSchema({
+    execution: executionContractSchema,
+    phase: z.enum(["running", "root_exited_stdio_open", "closed"]),
+    rootExitedElapsedMs: z.number().nonnegative().optional(),
+    terminalReplay: z.boolean(),
+    outputScope: z.literal("since_previous_read"),
     operationId: z.string().optional(),
     workRunId: z.string().optional(),
     sessionId: z.number().optional(),
@@ -72,6 +78,11 @@ function processToolResponse(snapshot: ProcessSnapshot) {
     content,
     structuredContent: {
       result,
+      execution: snapshot.execution,
+      phase: snapshot.phase,
+      rootExitedElapsedMs: snapshot.rootExitedElapsedMs,
+      terminalReplay: snapshot.terminalReplay,
+      outputScope: snapshot.outputScope,
       operationId: snapshot.operationId,
       workRunId: snapshot.workRunId,
       sessionId: snapshot.sessionId,
@@ -163,7 +174,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
           .boolean()
           .optional()
           .describe(
-            "Allocate a pseudo-terminal for interactive commands. Defaults to false.",
+            "Request a pseudo-terminal. Windows uses a pipe fallback; other platforms require optional node-pty. See execution in the response. Defaults to false.",
           ),
         columns: z
           .number()
@@ -259,7 +270,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
     {
       title: "Write to process",
       description:
-        "Poll or write characters to a process returned by exec_command. Omit chars or pass an empty string to poll. Pass \\u0003 to send Ctrl-C. Polling drains output; retrying a lost poll does not recover its text. Never resend nonempty chars blindly. For lost terminal results, inspect work_task history for operation exit evidence; do not restart the command merely to recover output.",
+        "Poll or write characters to a process returned by exec_command. Empty polls replay the same bounded terminal receipt within five minutes, subject to a count cap. Running polls drain output; earlier consumed text is not recoverable. Terminal replay ignores new output budgets. Never resend nonempty chars blindly. Pass \\u0003 to send Ctrl-C. Use work_task snapshot/history only if exposed by the host; otherwise get and available observe tools. Do not restart a command to recover output.",
       inputSchema: {
         workspaceId: z
           .string()

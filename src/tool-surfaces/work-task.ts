@@ -31,7 +31,7 @@ const evidenceSchema = z.array(z.object({ label: z.string().max(200), reference:
 export function registerWorkTaskTool({ server, config, workspaces, processSessions }: ToolRegistrationContext): void {
   server.registerTool("work_task", {
     title: "Track work and return Codex token receipt",
-    description: "Begin a top-level work run BEFORE direct host reads, commands or delegation. Prefer snapshot for small, repeatable delivery/status reads; it never reads the checkout or returns historical prose. Use history for revision-bound pages; get explicitly retains full legacy history and usage. Record bounded verification evidence; optional delivery verifies selected public file hashes under the ordinary read claim. Finish only after all child work stops and acceptance is explicit. This tool never starts model inference. Model labels are display labels, not verified model identities.",
+    description: "Begin a top-level work run BEFORE direct host reads, commands or delegation. Use snapshot/history only when exposed by the host schema; otherwise use get and available observe tools. The server cannot force a host schema refresh. Snapshot provides repeatable status; history provides revision-bound pages; get retains full legacy history and usage. Record bounded verification evidence. Finish only after all child work stops and acceptance is explicit. This tool never starts model inference. Model labels are display labels, not verified model identities.",
     inputSchema: {
       workspaceId: z.string(), action: z.enum(["begin", "record", "finish", "get", "list", "snapshot", "history"]),
       workRunId: z.string().optional(), workItemId: key.optional(), runKey: key.optional(),

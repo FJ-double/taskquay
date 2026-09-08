@@ -19,6 +19,8 @@ import {
 import express from "express";
 import type { Request, Response } from "express";
 import * as z from "zod/v4";
+import { executionContract } from "./process-platform.js";
+import { executionContractSchema } from "./execution-contract-schema.js";
 import {
   isArtifactDownloadSupportedPlatform,
   registerArtifactTools,
@@ -417,6 +419,7 @@ function registerMcpSurface(
       },
       outputSchema: {
         workspaceId: z.string(),
+        execution: executionContractSchema,
         projectRegistration: z.unknown().optional(),
         root: z.string(),
         mode: z.enum(["checkout", "worktree"]),
@@ -539,6 +542,7 @@ function registerMcpSurface(
                 : `Opened workspace ${workspace.id}.`,
             `Root: ${workspace.root}`,
             `Mode: ${workspace.mode}`,
+            `Execution: ${JSON.stringify(executionContract())}. Use this shell's syntax; do not assume PowerShell or Bash.`,
             `Project registration: ${JSON.stringify(projectRegistration)}`,
             loadedAgentsFiles.length > 0
               ? `Loaded project instructions: ${loadedAgentsFiles.map((file) => file.path).join(", ")}`
@@ -598,6 +602,7 @@ function registerMcpSurface(
         },
         structuredContent: {
           workspaceId: workspace.id,
+          execution: executionContract(),
           projectRegistration,
           root: workspace.root,
           mode: workspace.mode,
