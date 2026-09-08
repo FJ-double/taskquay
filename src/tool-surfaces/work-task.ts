@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { digest, WorkLedger, type WorkOrigin } from "../work-ledger.js";
 import type { ToolRegistrationContext } from "./types.js";
 import { deliverySchema, publishDelivery, WorkRunViews } from "../work-run-views.js";
+import { diagnosticError } from "../server-diagnostics.js";
 
 /** Registration-only targets deliberately have no transport/server instance.
  * Legacy direct callers may expose a client label; otherwise leave it unknown
@@ -100,7 +101,20 @@ export async function trackedWork<T>(stateDir: string, workRunId: string | undef
       kind, label: kind, status: "running" });
     const result = await action();
     const failed = result !== null && typeof result === "object" && "isError" in result && result.isError === true;
-    ledger.endOperation(operationId, failed ? "failed" : "completed"); return result;
-  } catch (error) { if (operationId) ledger.endOperation(operationId, "failed"); throw error; }
+    ledger.endOperation(operationId, failed ? "failed" : "completed", failed ? [{
+      label: "Tool returned isError; inspect state before retrying",
+      reference: JSON.stringify({ version: 1, boundary: "tool_result", retry: "reconcile_before_replay" }), outcome: "failed",
+    }] : []); return result;
+  } catch (error) {
+    if (operationId) {
+      try { ledger.endOperation(operationId, "failed", [{ label: "Tool threw; inspect state before retrying",
+        reference: JSON.stringify({ version: 1, boundary: "tool_exception", ...diagnosticError(error), retry: "reconcile_before_replay" }), outcome: "failed" }]); }
+      catch (accountingError) {
+        try { console.error(JSON.stringify({ event: "work_operation_accounting_failed", operationId, workRunId,
+          ...diagnosticError(accountingError) })); } catch {}
+      }
+    }
+    throw error;
+  }
   finally { ledger.close(); }
 }

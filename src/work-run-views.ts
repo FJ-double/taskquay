@@ -95,13 +95,15 @@ export class WorkRunViews {
       }
       const operationCount = count("console_operations"), executionCount = count("console_executions");
       const states = (table: string) => this.ledger.db.prepare(`select status,count(*) n from ${table} where run_id=? group by status order by status`).all(runId);
+      const activeCount = (table: string) => (this.ledger.db.prepare(`select count(*) n from ${table} where run_id=? and status in ('starting','queued','running')`).get(runId) as { n: number }).n;
+      const activeOperationCount = activeCount("console_operations"), activeExecutionCount = activeCount("console_executions");
       // Ledger receipt revisions include usage updates; observation revisions must not.
       const revision = digest([run.id, run.status, run.acceptance, operationCount, executionCount,
         states("console_operations"), states("console_executions"), latest, latestVerified, invalidPublications]);
       return { schema: "devspace.work-snapshot", version: 1, workRunId: run.id,
         revision, unchanged: knownRevision === revision,
         executionStatus: run.status, acceptanceStatus: run.acceptance,
-        operationCount, executionCount,
+        operationCount, executionCount, activeOperationCount, activeExecutionCount,
         latestDelivery: latest, latestVerifiedDelivery: latestVerified,
         deliveryCompatibility: invalidPublications ? "invalid_publication" : !latest ? "unknown"
           : expectedSourceHash && latest.receipt.sourceHash !== expectedSourceHash ? "stale_source"
@@ -109,7 +111,7 @@ export class WorkRunViews {
         verificationBasis: "explicit_host_verification_and_file_hashes_at_publication",
         nextAction: invalidPublications || (expectedSourceHash && latest?.receipt.sourceHash !== expectedSourceHash) ? "validate_checkpoint_before_use"
           : latest?.receipt.status === "failed" || run.acceptance === "failed" ? "repair_failed_acceptance_preserve_verified_artifacts"
-          : run.status === "running" ? "observe_active_work" : "review_acceptance",
+          : run.status === "running" ? activeOperationCount + activeExecutionCount > 0 ? "observe_active_work" : "reconcile_and_finish_work" : "review_acceptance",
         history: { action: "history", fullHistory: { action: "get" } },
         usage: { action: "get", basis: "managed_executions_of_this_run_only", included: false },
       };

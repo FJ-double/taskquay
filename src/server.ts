@@ -818,7 +818,9 @@ export function createServer(
   const workspaceStore = createWorkspaceStore(config.stateDir);
   const workspaces = new WorkspaceRegistry(config, workspaceStore);
   const reviewCheckpoints = createReviewCheckpointManager();
-  const processSessions = new ProcessSessionManager({ stateDir: config.stateDir });
+  const processSessions = new ProcessSessionManager({ stateDir: config.stateDir,
+    diagnostics: (event, fields, level) => options.diagnostics
+      ? options.diagnostics.record(event, fields, level) : logEvent(config.logging, level, event, fields) });
   const toolActivities = new ToolActivityTracker();
   const localAgentProviders = buildLocalAgentProviderStatuses(
     config.subagents,

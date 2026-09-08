@@ -22,7 +22,7 @@ type CodexRegistration = (context: ToolRegistrationContext) => void;
 const CODEX_INSTRUCTIONS = `Read project context directly as the host with ${toolNames.read} or workspace_context before deciding to delegate. Those tools do not invoke Codex. Do not start a worker just to browse directories, summarize known logs or wait. Use apply_patch for file modifications, exec_command for commands, and write_stdin for running processes. Use agent_task (not shell wrappers) for subagent control. Provide only relevant host-prepared evidence, continue related sessions, and use a separate context when independent review is needed. Verified readers share bounded source access; mutations and unknown-effect commands remain exclusive. Declare shared build/device resources across worktrees. Never bypass claims using another path or state directory. Shell commands still have local-user authority, not an OS sandbox. Follow workspace instructions and applicable skills.`;
 
 export function codexInstructions(): string {
-  return "Begin a work_task run even for host-only work; propagate workRunId through read/context/mutation/command/agent tools. Finish with acceptance evidence after child operations stop and include the returned Codex usage and completeness in the final answer. " + CODEX_INSTRUCTIONS;
+  return "Begin a work_task run even for host-only work; propagate workRunId through read/context/mutation/command/agent tools. Finish with acceptance evidence after child operations stop and include the returned Codex usage and completeness in the final answer. If a response is lost or a tool fails, inspect work_task snapshot/history and the existing process/agent before retrying. Never blindly replay commands, writes, deployments or agent starts: they may already have taken effect. Empty-input write_stdin does not restart a command but drains output, so it cannot recover a lost response. A running work run alone does not prove child work is active. " + CODEX_INSTRUCTIONS;
 }
 
 export function registerCodexTools(context: ToolRegistrationContext): void {
@@ -43,13 +43,19 @@ function processResult(snapshot: ProcessSnapshot): string {
     : snapshot.signal
       ? `Process exited after signal ${snapshot.signal}.`
       : `Process exited with code ${snapshot.exitCode ?? "unknown"}.`;
-  return snapshot.output
+  const correlation = snapshot.operationId ? `\nWork run ${snapshot.workRunId}; operation ${snapshot.operationId}.` : "";
+  const recovery = !snapshot.running && (snapshot.exitCode !== 0 || snapshot.signal)
+    ? "\nInspect the failure and any side effects before retrying; do not blindly replay this command." : "";
+  const output = snapshot.output
     ? `${snapshot.output.replace(/\n$/, "")}\n${status}`
     : status;
+  return output + correlation + recovery;
 }
 
 function processOutputSchema(): z.ZodRawShape {
   return resultOutputSchema({
+    operationId: z.string().optional(),
+    workRunId: z.string().optional(),
     sessionId: z.number().optional(),
     running: z.boolean(),
     exitCode: z.number().int().optional(),
@@ -66,6 +72,8 @@ function processToolResponse(snapshot: ProcessSnapshot) {
     content,
     structuredContent: {
       result,
+      operationId: snapshot.operationId,
+      workRunId: snapshot.workRunId,
       sessionId: snapshot.sessionId,
       running: snapshot.running,
       exitCode: snapshot.exitCode,
@@ -144,7 +152,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
     {
       title: "Execute command",
       description:
-        "Run a command with the local user's authority. Commands are not sandboxed; workspace validation only selects the initial working directory. Returns the result when it exits during the yield window, otherwise returns a sessionId for write_stdin. Use this for file inspection, tests, builds, package scripts, and long-running processes.",
+        "Run a command with the local user's authority. Commands are not sandboxed; workspace validation only selects the initial working directory. Returns the result when it exits during the yield window, otherwise returns a sessionId for write_stdin. Use this for file inspection, tests, builds, package scripts, and long-running processes. After failure or a missing response, inspect the existing work run before retrying; side effects may already have occurred. Never automatically replay deployments or other mutations.",
       inputSchema: {
         workspaceId: z.string().describe(workspaceIdDescription),
         cmd: z.string().min(1).describe("Shell command to execute."),
@@ -251,7 +259,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
     {
       title: "Write to process",
       description:
-        "Poll or write characters to a process returned by exec_command. Omit chars or pass an empty string to poll. Pass \\u0003 to send Ctrl-C.",
+        "Poll or write characters to a process returned by exec_command. Omit chars or pass an empty string to poll. Pass \\u0003 to send Ctrl-C. Polling drains output; retrying a lost poll does not recover its text. Never resend nonempty chars blindly. For lost terminal results, inspect work_task history for operation exit evidence; do not restart the command merely to recover output.",
       inputSchema: {
         workspaceId: z
           .string()

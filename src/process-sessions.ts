@@ -3,6 +3,7 @@ import { resolveShellCommand, terminateProcessTree } from "./process-platform.js
 import { ExecutionCoordinator, type ExecutionClaim } from "./execution-coordinator.js";
 import { WorkLedger } from "./work-ledger.js";
 import { randomUUID } from "node:crypto";
+import { diagnosticError } from "./server-diagnostics.js";
 
 const DEFAULT_EXEC_YIELD_MS = 10_000;
 const DEFAULT_INTERACTIVE_YIELD_MS = 250;
@@ -40,6 +41,8 @@ export interface WriteStdinInput {
 }
 
 export interface ProcessSnapshot {
+  operationId?: string;
+  workRunId?: string;
   sessionId?: number;
   output: string;
   outputTruncated: boolean;
@@ -71,9 +74,13 @@ interface ProcessSession {
   cleanupTimer?: NodeJS.Timeout;
   executionClaim?: ExecutionClaim;
   workOperationId?: string;
+  workRunId?: string;
+  failure?: Record<string, unknown>;
+  outputBytes: number;
 }
 
 interface ProcessSessionManagerOptions {
+  diagnostics?: (event: string, fields: Record<string, unknown>, level: "info" | "warn" | "error") => void;
   maxBufferCharacters?: number;
   completedSessionTtlMs?: number;
   stateDir?: string;
@@ -229,7 +236,7 @@ export class ProcessSessionManager {
   private readonly claims = new Set<ExecutionClaim>();
   private shuttingDown = false;
 
-  constructor(options: ProcessSessionManagerOptions = {}) {
+  constructor(private readonly options: ProcessSessionManagerOptions = {}) {
     this.workStateDir = options.stateDir;
     this.maxBufferCharacters = options.maxBufferCharacters ?? DEFAULT_BUFFER_CHARACTERS;
     this.completedSessionTtlMs = options.completedSessionTtlMs ?? COMPLETED_SESSION_TTL_MS;
@@ -278,6 +285,8 @@ export class ProcessSessionManager {
       if (input.tty && process.platform !== "win32") await this.startPty(session, input);
       else this.startPipe(session, input);
     } catch (error) {
+      session.failure = diagnosticError(error);
+      this.record(session, "process_start_failed", session.failure, "error");
       this.endWorkOperation(session, false);
       this.sessions.delete(session.id);
       this.releaseClaim(session.executionClaim);
@@ -363,6 +372,8 @@ export class ProcessSessionManager {
     return {
       id: this.nextSessionId++,
       workspaceId: input.workspaceId,
+      workRunId: input.workRunId,
+      outputBytes: 0,
       startedAt: Date.now(),
       columns: terminalSize(input.columns, DEFAULT_COLUMNS),
       rows: terminalSize(input.rows, DEFAULT_ROWS),
@@ -393,9 +404,14 @@ export class ProcessSessionManager {
       kill: (signal = "SIGTERM") => terminateProcessTree(child, signal, detached),
       resize: input.tty ? () => undefined : undefined,
     };
+    child.once("spawn", () => this.record(session, "process_started", { childPid: child.pid }));
     child.stdout.on("data", (data: Buffer) => this.append(session, data.toString("utf8")));
     child.stderr.on("data", (data: Buffer) => this.append(session, data.toString("utf8")));
-    child.on("error", (error) => this.append(session, `${error.message}\n`));
+    child.on("error", (error) => {
+      session.failure = diagnosticError(error);
+      this.record(session, "process_error", session.failure, "error");
+      this.append(session, `${error.message}\n`);
+    });
     child.on("close", (code, signal) => this.finish(session, code ?? undefined, signal ?? undefined));
   }
 
@@ -429,6 +445,7 @@ export class ProcessSessionManager {
       kill: (signal) => pty.kill(signal),
       resize: (columns, rows) => pty.resize(columns, rows),
     };
+    this.record(session, "process_started", { childPid: pty.pid });
     pty.onData((data) => this.append(session, data));
     pty.onExit(({ exitCode, signal }) => {
       this.finish(session, exitCode, signal === 0 ? undefined : String(signal));
@@ -440,7 +457,9 @@ export class ProcessSessionManager {
     session.running = false;
     session.exitCode = exitCode;
     session.signal = signal;
-    this.endWorkOperation(session, exitCode === 0 && !signal);
+    const success = exitCode === 0 && !signal && !session.failure;
+    this.record(session, "process_finished", { exitCode, signal, outputBytes: session.outputBytes, ...session.failure }, success ? "info" : "warn");
+    this.endWorkOperation(session, success);
     this.releaseClaim(session.executionClaim);
     session.resolveExit();
     session.cleanupTimer = setTimeout(
@@ -452,13 +471,34 @@ export class ProcessSessionManager {
 
   private endWorkOperation(session: ProcessSession, success: boolean): void {
     if (!session.workOperationId || !this.workStateDir) return;
-    const ledger = new WorkLedger(this.workStateDir);
-    try { ledger.endOperation(session.workOperationId, success ? "completed" : "failed"); session.workOperationId = undefined; }
-    catch { this.append(session, "Work accounting could not be finalized; reconcile the work run before marking it complete.\n"); }
-    finally { ledger.close(); }
+    let ledger: WorkLedger | undefined;
+    try {
+      ledger = new WorkLedger(this.workStateDir);
+      ledger.endOperation(session.workOperationId, success ? "completed" : "failed", [{
+        label: success ? "Managed process exited successfully (not deployment acceptance)" : "Managed process failed; inspect state before retrying",
+        reference: JSON.stringify({ version: 1, boundary: "process", sessionId: session.id, pid: process.pid,
+          exitCode: session.exitCode ?? null, signal: session.signal ?? null, elapsedMs: Date.now() - session.startedAt,
+          outputBytes: session.outputBytes, ...session.failure, retry: "reconcile_before_replay" }),
+        outcome: success ? "passed" : "failed",
+      }]);
+    } catch (error) {
+      this.record(session, "process_accounting_failed", diagnosticError(error), "error");
+      this.append(session, "Work accounting could not be finalized; reconcile the work run before marking it complete.\n");
+    } finally {
+      try { ledger?.close(); }
+      catch (error) { this.record(session, "process_accounting_failed", diagnosticError(error), "error"); }
+    }
+  }
+
+  private record(session: ProcessSession, event: string, fields: Record<string, unknown> = {}, level: "info" | "warn" | "error" = "info"): void {
+    try {
+      this.options.diagnostics?.(event, { workspaceId: session.workspaceId, workRunId: session.workRunId,
+        operationId: session.workOperationId, sessionId: session.id, elapsedMs: Date.now() - session.startedAt, ...fields }, level);
+    } catch {}
   }
 
   private append(session: ProcessSession, output: string): void {
+    session.outputBytes += Buffer.byteLength(output);
     session.buffer.append(output);
   }
 
@@ -466,8 +506,12 @@ export class ProcessSessionManager {
     const limit = boundedInteger(maxOutputTokens, DEFAULT_MAX_OUTPUT_TOKENS, 100_000);
     const maxCharacters = Math.max(256, limit * 4);
     const buffered = session.buffer.drain(maxCharacters);
+    this.record(session, "process_output_consumed", { running: session.running,
+      returnedOutputBytes: Buffer.byteLength(buffered.output), outputTruncated: buffered.truncated });
 
     return {
+      operationId: session.workOperationId,
+      workRunId: session.workRunId,
       sessionId: session.running ? session.id : undefined,
       output: buffered.output,
       outputTruncated: buffered.truncated,
