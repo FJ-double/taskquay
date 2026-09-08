@@ -9,6 +9,10 @@ const providerSchema = z.object({
   enabled: z.boolean(),
   model: z.string().trim().min(1).optional(),
   effort: z.string().trim().min(1).optional(),
+  reasoningLimits: z.array(z.object({
+    model: z.string().trim().regex(/^[a-z0-9][a-z0-9._-]*$/),
+    maxEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]),
+  }).strict()).max(32).optional(),
   writeMode: z.enum(["read_only", "allowed", "full_access"]).optional(),
   readOnlyDefaults: z.object({
     model: z.string().trim().min(1).optional(),
@@ -28,6 +32,10 @@ export const subagentsConfigSchema = z.object({
 }).strict().superRefine((value, context) => {
   const seen = new Set<LocalAgentProvider>();
   for (const [index, provider] of value.providers.entries()) {
+    if (provider.reasoningLimits?.length && provider.id !== "codex") {
+      context.addIssue({ code: "custom", path: ["providers", index, "reasoningLimits"],
+        message: "Reasoning limits currently support only the Codex provider." });
+    }
     if (seen.has(provider.id)) {
       context.addIssue({
         code: "custom",

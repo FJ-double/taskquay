@@ -39,7 +39,7 @@ export function registerAgentTaskTool(context: ToolRegistrationContext, client?:
       }).strict()).max(24) }).strict().optional().describe("Host-prepared facts and versioned files from workspace_context. References are checked before invocation, and again after shared-read analysis. No automatic full-file copy."),
       resources: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/)).max(16).optional(),
       model: z.string().optional(),
-      effort: z.string().optional(),
+      effort: z.string().optional().describe("Requested reasoning effort. Configured model-family reasoning limits may lower it; returned session/receipt effort is the effective value."),
       waitMs: z.number().int().min(0).max(25_000).optional().describe("Bounded longpoll, default 20000 ms. Reuse revision; usage and elapsed time alone do not wake it."),
       knownRevision: z.string().optional().describe("Task/progress change token, independent of cumulative usage. Observe never accepts or finishes a work run."),
       includeResponse: z.boolean().optional().describe("Explicitly retrieve terminal response and completion receipt, repeatable after disconnect even with the same revision."),

@@ -223,6 +223,37 @@
                 "type": "string",
                 "minLength": 1
               },
+              "reasoningLimits": {
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "model": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+                    },
+                    "maxEffort": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "minimal",
+                        "low",
+                        "medium",
+                        "high",
+                        "xhigh",
+                        "max",
+                        "ultra"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "model",
+                    "maxEffort"
+                  ],
+                  "additionalProperties": false
+                }
+              },
               "writeMode": {
                 "type": "string",
                 "enum": [

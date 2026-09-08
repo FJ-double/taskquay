@@ -4,6 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { contextPrompt, validateContextShape, verifyHostContext, type HostPreparedContext } from "./workspace-context.js";
 import { createHash, randomUUID } from "node:crypto";
 import { WorkLedger } from "./work-ledger.js";
+import { limitedReasoningEffort } from "./agent-reasoning-limit.js";
 import { Result, type Result as BetterResult } from "better-result";
 import {
   AgentConflictError,
@@ -184,8 +185,13 @@ export class LocalAgentManager {
       const provider = manager.subagents.providers.find((entry) => entry.id === target.provider);
       const mode = input.writeMode ?? provider?.writeMode ?? "allowed";
       const readDefaults = mode === "read_only" ? provider?.readOnlyDefaults : undefined;
+      let effectiveEffort: string | undefined;
+      try { effectiveEffort = limitedReasoningEffort(provider, input.model ?? readDefaults?.model ?? target.model,
+        input.effort ?? readDefaults?.effort ?? target.effort); }
+      catch (error) { return Result.err(new AgentTargetError({ code: "TARGET_RESOLUTION_FAILED", target: input.target,
+        retryable: false, message: error instanceof Error ? error.message : "Reasoning policy rejected the request." })); }
       const signature = createHash("sha256").update(JSON.stringify([target.provider,
-        input.model ?? readDefaults?.model ?? target.model, input.effort ?? readDefaults?.effort ?? target.effort,
+        input.model ?? readDefaults?.model ?? target.model, effectiveEffort,
         mode, target.kind === "profile" ? target.profile.body : "", "host-first-v1"])).digest("hex");
       const created = yield* manager.store.createTaskResult({
         workspaceId: input.workspaceId,
@@ -332,7 +338,7 @@ export class LocalAgentManager {
     overrides: RunOverrides,
     workspaceId?: string,
     defaults?: { model?: string; effort?: string },
-  ): BetterResult<LocalAgentRecord, AgentConflictError | AgentStoreError> {
+  ): BetterResult<LocalAgentRecord, AgentConflictError | AgentStoreError | AgentTargetError> {
     if (this.activeTurns.has(record.id)) {
       return Result.err(new AgentConflictError({
         code: "AGENT_CONFLICT",
@@ -343,6 +349,21 @@ export class LocalAgentManager {
       }));
     }
 
+    const providerConfig = this.subagents.providers.find((provider) => provider.id === record.provider);
+    const effectiveMode = overrides.writeMode ?? providerConfig?.writeMode ?? "allowed";
+    const readOnlyDefaults = effectiveMode === "read_only" ? providerConfig?.readOnlyDefaults : undefined;
+    const resolvedModel = overrides.model ?? readOnlyDefaults?.model ?? defaults?.model;
+    const model = resolvedModel ?? record.model;
+    const resolvedEffort = overrides.effort ?? readOnlyDefaults?.effort ?? defaults?.effort;
+    const requestedEffort = resolvedEffort ?? record.effort;
+    let effort: string | undefined;
+    try { effort = limitedReasoningEffort(providerConfig, model, requestedEffort); }
+    catch (error) { return Result.err(new AgentTargetError({ code: "TARGET_RESOLUTION_FAILED", target: record.profileName,
+      retryable: false, message: error instanceof Error ? error.message : "Reasoning policy rejected the request." })); }
+    this.log("info", "agent_reasoning_resolved", { agentId: record.id, provider: record.provider, model,
+      requestedEffort, effectiveEffort: effort, capped: effort !== requestedEffort,
+      source: overrides.effort !== undefined ? "caller" : readOnlyDefaults?.effort !== undefined ? "read_only_default" : "target_or_session_default" });
+    overrides = { ...overrides, model: resolvedModel, effort: effort === requestedEffort ? resolvedEffort : effort };
     let executionId: string;
     try {
       this.ledger.assertAgentUsable(record.id);
@@ -361,8 +382,6 @@ export class LocalAgentManager {
       "Unable to establish work ownership; inspect the task/thread state before provider invocation.")); }
 
     // Resolve effective capability BEFORE choosing the source lock, not after it.
-    const providerConfig = this.subagents.providers.find((provider) => provider.id === record.provider);
-    const effectiveMode = overrides.writeMode ?? providerConfig?.writeMode ?? "allowed";
     const analysisOnly = effectiveMode === "read_only" && this.drivers.get(record.provider as LocalAgentProvider)?.readOnlyConcurrency === true;
     overrides = { ...overrides, writeMode: effectiveMode };
     const requirement = { workspaceRoot: record.workspaceRoot, kind: "agent" as const, agentId: record.id,
@@ -389,8 +408,6 @@ export class LocalAgentManager {
         "Unable to establish an execution claim; provider was not invoked."));
     }
 
-    const readOnlyDefaults = (overrides.writeMode ?? providerConfig?.writeMode) === "read_only"
-      ? providerConfig?.readOnlyDefaults : undefined;
     // Resolve defaults for this turn, rather than inheriting a previous read-only turn.
     overrides = {
       ...overrides,

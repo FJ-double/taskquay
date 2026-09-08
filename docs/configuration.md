@@ -1,5 +1,50 @@
 # Configuration Reference
 
+## Codex reasoning ceilings
+
+Provider `effort` and `readOnlyDefaults.effort` are defaults, not limits. Explicit
+caller values take precedence. Add this to the Codex provider configuration to
+cap the GPT-6 family after resolving caller/profile/default/session values:
+
+```json
+{
+  "id": "codex",
+  "enabled": true,
+  "model": "gpt-6-astra",
+  "effort": "medium",
+  "readOnlyDefaults": { "effort": "low" },
+  "reasoningLimits": [{ "model": "gpt-6", "maxEffort": "medium" }]
+}
+```
+
+Rules match the exact model or its hyphen-delimited family (`gpt-6` matches
+`gpt-6-astra`, not `gpt-60`). Requested models match case-insensitively; configured
+rule names are lowercase. Overlapping rules use the strictest ceiling. Higher
+effort is clamped without retrying; lower effort stays unchanged. Ordered labels
+are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`; this ordering
+does not claim every model supports every label. Unknown effort on a capped model
+or an unresolved model with configured limits fails before provider work. Missing
+effort for a matched model is explicitly set to the ceiling to bound unknown
+provider defaults. Unmatched models and unconfigured providers retain existing
+behavior. Limits on non-Codex providers are currently rejected.
+
+Both native MCP and CLI starts/continuations use this manager policy before
+admission/runtime creation; context affinity uses the capped effort. Stored
+sessions and receipts contain effective effort. `agent_reasoning_resolved` logs
+requested/effective effort and its source without task text. Historical receipts
+are not rewritten. This constrains DevSpace dispatch, not independent Codex clients
+or provider-internal compute. Deploy and reload server/daemon configuration before
+relying on new limits; already-running turns are unaffected.
+
+Validation on 2026-09-08: 57 tests across 12 files passed serially, followed by
+whole-project type checking and an isolated backend/UI build. After rollout,
+the deployed manager with the operator's configured ceiling and an isolated fake
+provider returned `medium`, `medium`, `low`, `medium` for high start, xhigh
+continuation, default read-only continuation, and default write continuation;
+persisted execution receipts matched. The local health/Console endpoints and
+daemon handshake succeeded. No real model inference or remote host delivery was
+used as rollout validation.
+
 ## WSL project paths from a Windows server
 
 Add individual UNC project directories to `workspaces.allowedRoots`, for example
