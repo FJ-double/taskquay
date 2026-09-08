@@ -8,6 +8,49 @@ import { LocalAgentStore } from "./local-agent-store.js";
 import { decodeAgentRecord } from "./local-agent-daemon-protocol.js";
 import { agentControlState } from "./local-agent-presentation.js";
 
+const commandFixtures = [
+  ["adb install artifacts/test-checkin-0802.apk", "command"],
+  ["adb pull /sdcard/build/output artifacts/test-checkin", "command"],
+  ["echo test build pytest tsc", "command"],
+  ["cat artifacts/build/result.txt", "command"],
+  ["git diff -- test/build", "command"],
+  ["node scripts/test.js", "command"],
+  ["bash -lc 'npm test'", "command"],
+  ["echo ok && npm test", "command"],
+  ["npm --prefix test build", "command"],
+  ["go run ./test/build", "command"],
+  ["gradle -Pname=assemble tasks", "command"],
+  ["unknown test build", "command"],
+  ["go test ./...", "test"],
+  ["npm test -- --runInBand", "test"],
+  ["pnpm run test", "test"],
+  ["pytest -q test/unit", "test"],
+  ["python3 -m pytest -q", "test"],
+  ["./node_modules/.bin/vitest run", "test"],
+  ['"C:\\Program Files\\tools\\pytest.exe" -q', "test"],
+  ["gradle assemble", "build"],
+  ["./gradlew assembleRelease", "build"],
+  ["gradlew.bat :app:assembleDebug", "build"],
+  ["tsc --noEmit", "build"],
+  ["pnpm build", "build"],
+  ["npm run build", "build"],
+  ["go build ./...", "build"],
+] as const;
+for (const [command, category] of commandFixtures) test(`command fixture: ${command}`, () => {
+  const result = codexActivity("item/started", { item: { type: "commandExecution", command, args: "private-args" } });
+  assert.deepEqual(result, { phase: "tool", toolCategory: category });
+  assert(!JSON.stringify(result).includes("private-args"));
+});
+
+test("trace fixture comparison with the previous whole-command heuristic", () => {
+  const legacy = (command: string) => /\b(?:test|vitest|pytest)\b/i.test(command) ? "test"
+    : /\b(?:build|assemble\w*|tsc)\b/i.test(command) ? "build" : "command";
+  assert.equal(commandFixtures.filter(([command, expected]) => legacy(command) !== expected).length, 12);
+  assert.equal(commandFixtures.filter(([command, expected]) => codexActivity("item/started", {
+    item: { type: "commandExecution", command },
+  })?.toolCategory !== expected).length, 0);
+});
+
 test("provider progress drops secrets, ignores usage and bounds persisted/daemon-decoded state", (t) => {
   const root = mkdtempSync(join(tmpdir(), "devspace-progress-"));
   let store = new LocalAgentStore(root);

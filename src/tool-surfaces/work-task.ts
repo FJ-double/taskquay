@@ -1,6 +1,6 @@
 import * as z from "zod/v4";
 import { randomUUID } from "node:crypto";
-import { digest, WorkLedger, type WorkOrigin } from "../work-ledger.js";
+import { digest, WorkLedger, WorkFinishBlockedError, type WorkOrigin } from "../work-ledger.js";
 import type { ToolRegistrationContext } from "./types.js";
 import { deliverySchema, publishDelivery, WorkRunViews } from "../work-run-views.js";
 import { diagnosticError } from "../server-diagnostics.js";
@@ -79,12 +79,12 @@ export function registerWorkTaskTool({ server, config, workspaces, processSessio
       }
       if (input.action === "finish") {
         if (!input.status || !input.acceptance || input.summary === undefined) throw new Error("finish requires status, acceptance and summary.");
-        if (processSessions.executionCoordinator?.inspect(workspace.root).length) throw new Error("Managed claims/waiters remain; inspect and reconcile them before closing work.");
         return reply(ledger.finish(run.id, { status: input.status, acceptance: input.acceptance,
           summary: input.summary, evidence: input.evidence ?? [] }));
       }
       return reply(ledger.detail(run.project_id, run.id));
-    } catch (error) { return reply({ code: "WORK_STATE", message: error instanceof Error ? error.message : "Work operation failed." }, true); }
+    } catch (error) { return reply({ code: "WORK_STATE", message: error instanceof Error ? error.message : "Work operation failed.",
+      ...(error instanceof WorkFinishBlockedError ? { blocking: error.blocking, nextAction: error.nextAction } : {}) }, true); }
     finally { ledger.close(); }
   });
 }

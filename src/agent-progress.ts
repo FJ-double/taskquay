@@ -10,6 +10,30 @@ export interface AgentProgress {
   toolCategory?: ToolCategory;
 }
 
+/** Inspect only the executable and its immediate, known subcommand. Shell wrappers,
+ * compound syntax and unfamiliar options deliberately fall back to command. */
+function commandCategory(command: string): ToolCategory {
+  const prefix = command.slice(0, 4096);
+  if (/[;&|`$<>\r\n]/.test(prefix)) return "command";
+  const match = /^\s*(?:"([^"\r\n]+)"|'([^'\r\n]+)'|([^\s"']+))(?:\s+|$)(.*)$/.exec(prefix);
+  if (!match) return "command";
+  const executable = (match[1] ?? match[2] ?? match[3]!).split(/[\\/]/).pop()!.toLowerCase().replace(/\.(?:exe|cmd|bat)$/, "");
+  const args = match[4]!.trim().split(/\s+/);
+  if (["pytest", "py.test", "vitest", "jest"].includes(executable)) return "test";
+  if (executable === "tsc") return "build";
+  if (executable === "go") return args[0] === "test" ? "test" : args[0] === "build" ? "build" : "command";
+  if (["npm", "pnpm", "yarn"].includes(executable)) {
+    const task = args[0] === "run" ? args[1] : args[0];
+    return task === "test" ? "test" : task === "build" ? "build" : "command";
+  }
+  if (["gradle", "gradlew"].includes(executable)) {
+    return /^(?::[\w.-]+:|:)?test(?:[A-Z]\w*)?$/.test(args[0] ?? "") ? "test"
+      : /^(?::[\w.-]+:|:)?(?:assemble\w*|build)$/.test(args[0] ?? "") ? "build" : "command";
+  }
+  if (["python", "python3", "py"].includes(executable) && args[0] === "-m" && args[1] === "pytest") return "test";
+  return "command";
+}
+
 export function decodeAgentProgress(value: unknown): AgentProgress | undefined {
   if (!value || typeof value !== "object") return undefined;
   const p = value as Record<string, unknown>;
@@ -29,8 +53,7 @@ export function codexActivity(method: string, value: unknown): AgentActivity | u
   switch (item.type) {
     case "commandExecution": {
       const command = typeof item.command === "string" ? item.command.slice(0, 4096) : "";
-      const toolCategory = /\b(?:test|vitest|pytest)\b/i.test(command) ? "test"
-        : /\b(?:build|assemble\w*|tsc)\b/i.test(command) ? "build" : "command";
+      const toolCategory = commandCategory(command);
       return { phase: "tool", toolCategory };
     }
     case "fileChange": return { phase: "tool", toolCategory: "edit" };

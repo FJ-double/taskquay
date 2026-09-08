@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import { openDatabase, type DatabaseHandle } from "./db/client.js";
-import { canonicalExecutionRoot } from "./execution-coordinator.js";
+import { canonicalExecutionRoot, overlaps } from "./execution-coordinator.js";
 import type { AgentUsageObservation, TokenCounts } from "./agent-usage.js";
 import { managedSessionTitle } from "./managed-session-title.js";
 
@@ -46,6 +46,13 @@ const id = (prefix: string) => `${prefix}_${randomUUID().replaceAll("-", "")}`;
 const countKeys = ["inputTokens", "cachedInputTokens", "cacheWriteInputTokens", "outputTokens", "reasoningOutputTokens", "totalTokens"] as const;
 const zero = (): TokenCounts => ({ inputTokens: 0, outputTokens: 0, totalTokens: 0 });
 const active = (status: string) => ["starting", "queued", "running"].includes(status);
+
+export class WorkFinishBlockedError extends Error {
+  readonly nextAction = "Observe this run's children until terminal, then retry finish. For unresolved claims/waiters, ask their owner to reconcile and release them; never steal a lock.";
+  constructor(readonly blocking: "active_execution" | "active_operation" | "same_run_claim" | "unproven_claim", message: string) {
+    super(message);
+  }
+}
 
 /** Absence of a callback is not proof that no request was sent. Old pooled
  * executions can have a successful result with all lifecycle fields missing. */
@@ -351,10 +358,25 @@ export class WorkLedger {
         if (run.status !== input.status || run.acceptance !== input.acceptance || run.summary !== input.summary || run.evidence !== JSON.stringify(evidence)) throw new Error("Closed work receipt cannot be silently rewritten.");
         return this.receipt(runId);
       }
-      if (this.executions(runId).some((execution) => active(execution.status))) throw new Error("Managed agent executions are not terminal.");
-      if (this.db.prepare("select id from console_operations where run_id=? and status in ('starting','queued','running')").get(runId)) throw new Error("Managed operations are still active.");
+      if (this.executions(runId).some((execution) => active(execution.status))) throw new WorkFinishBlockedError("active_execution", "Managed agent executions are not terminal.");
+      if (this.db.prepare("select id from console_operations where run_id=? and status in ('starting','queued','running')").get(runId)) throw new WorkFinishBlockedError("active_operation", "Managed operations are still active.");
       const project = this.getProject(run.project_id);
-      if (this.db.prepare("select id from execution_claims where checkout_root=? limit 1").get(project.root)) throw new Error("Source or process claims remain; reconcile them before finishing.");
+      // Keep admission evidence and the terminal write in this immediate transaction.
+      // Only a currently active execution can prove foreign ownership. In particular,
+      // endExecution precedes release: a completed latest record is not such proof.
+      const claims = this.db.prepare(`select kind, agent_id, checkout_root, acquired_at from execution_claims
+        union all select kind, agent_id, checkout_root, null as acquired_at from execution_waiters where expires_at_ms > ?`)
+        .all(Date.now()) as { kind: string; agent_id: string | null; checkout_root: string; acquired_at: string | null }[];
+      for (const claim of claims) {
+        if (!overlaps(project.root, claim.checkout_root)) continue;
+        const execution = claim.kind === "agent" && claim.agent_id ? this.latestExecution(claim.agent_id) : undefined;
+        const owner = execution ? this.run(execution.run_id) : undefined;
+        if (execution && owner && owner.id !== runId && owner.status === "running" && active(execution.status)
+          && this.getProject(owner.project_id).root === claim.checkout_root
+          && (claim.acquired_at === null || Date.parse(execution.created_at) <= Date.parse(claim.acquired_at))) continue;
+        throw new WorkFinishBlockedError(owner?.id === runId ? "same_run_claim" : "unproven_claim",
+          "Source or process claims/waiters remain without proven active foreign ownership; reconcile them before finishing.");
+      }
       this.db.prepare("update console_work_runs set status=?,acceptance=?,summary=?,evidence=?,finished_at=?,revision=revision+1 where id=?")
         .run(input.status, input.acceptance, input.summary.slice(0, 4000), JSON.stringify(evidence), now(), runId);
       return this.receipt(runId);

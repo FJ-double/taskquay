@@ -60,7 +60,7 @@ function contains(parent: string, child: string): boolean {
   const rest = relative(parent, child);
   return rest === "" || (!isAbsolute(rest) && rest !== ".." && !rest.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`));
 }
-function overlaps(a: string, b: string): boolean { return contains(a, b) || contains(b, a); }
+export function overlaps(a: string, b: string): boolean { return contains(a, b) || contains(b, a); }
 function resourceOverlap(a: ClaimRow, b: ClaimRow): boolean {
   const resources = JSON.parse(a.resources) as string[];
   return (JSON.parse(b.resources) as string[]).some((key) => resources.includes(key));
