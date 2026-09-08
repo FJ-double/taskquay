@@ -18,6 +18,7 @@ export interface OAuthConfig {
   accessTokenTtlSeconds: number;
   refreshTokenTtlSeconds: number;
   scopes: string[];
+  allowedResourceUrls: string[];
   allowedRedirectHosts: string[];
 }
 
@@ -114,13 +115,13 @@ function requestedScopesAllowed(requested: string[], supported: string[]): boole
 
 export class SingleUserOAuthProvider implements OAuthServerProvider {
   acceptsResource(resource: URL): boolean {
-    return checkResourceAllowed({ requestedResource: resource, configuredResource: this.resourceServerUrl })
-      || (this.config.resourceAliases ?? []).some((alias) => new URL(alias).href === resource.href);
+    return this.isResourceAllowed(resource);
   }
   readonly clientsStore: OAuthRegisteredClientsStore;
   private readonly codes = new Map<string, AuthorizationCodeRecord>();
   private readonly oauthStore: SqliteOAuthStore;
   private readonly resourceServerUrl: URL;
+  private readonly allowedResourceUrls: Set<string>;
 
   constructor(
     private readonly config: OAuthConfig,
@@ -128,6 +129,9 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     stateDir: string,
   ) {
     this.resourceServerUrl = resourceUrlFromServerUrl(resourceServerUrl);
+    this.allowedResourceUrls = new Set(
+      config.allowedResourceUrls.map((url) => resourceUrlFromServerUrl(url).href),
+    );
     this.oauthStore = new SqliteOAuthStore(stateDir);
     this.clientsStore = new SqliteOAuthClientsStore(this.oauthStore, config.allowedRedirectHosts);
   }
@@ -137,7 +141,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response,
   ): Promise<void> {
-    if (!params.resource || !this.acceptsResource(params.resource)) {
+    if (!params.resource || !this.isResourceAllowed(params.resource)) {
       throw new InvalidRequestError("Invalid or missing OAuth resource");
     }
     if (!requestedScopesAllowed(params.scopes ?? [], this.config.scopes)) {
@@ -204,7 +208,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     if (redirectUri && redirectUri !== record.params.redirectUri) {
       throw new InvalidGrantError("redirect_uri does not match the authorization request");
     }
-    if (resource && !this.acceptsResource(resource)) {
+    if (resource && (!record.params.resource || !sameResource(resource, record.params.resource))) {
       throw new InvalidGrantError("Invalid resource");
     }
 
@@ -223,7 +227,11 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     if (!record || record.clientId !== client.client_id || record.expiresAt < Math.floor(Date.now() / 1000)) {
       throw new InvalidGrantError("Invalid refresh token");
     }
-    if (resource && !this.acceptsResource(resource)) {
+    const recordedResource = record.resource ? new URL(record.resource) : undefined;
+    if (!recordedResource || !this.isResourceAllowed(recordedResource)) {
+      throw new InvalidGrantError("Invalid resource");
+    }
+    if (resource && !sameResource(resource, recordedResource)) {
       throw new InvalidGrantError("Invalid resource");
     }
 
@@ -235,7 +243,7 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
     return this.issueTokens(
       client.client_id,
       requestedScopes,
-      resource ?? (record.resource ? new URL(record.resource) : undefined),
+      resource ?? recordedResource,
       refreshTokenHash,
     );
   }
@@ -263,6 +271,14 @@ export class SingleUserOAuthProvider implements OAuthServerProvider {
 
   close(): void {
     this.oauthStore.close();
+  }
+
+  isResourceAllowed(resource: URL): boolean {
+    return checkResourceAllowed({
+      requestedResource: resource,
+      configuredResource: this.resourceServerUrl,
+    }) || this.allowedResourceUrls.has(resourceUrlFromServerUrl(resource).href)
+      || (this.config.resourceAliases ?? []).some((alias) => new URL(alias).href === resource.href);
   }
 
   private validCodeRecord(
@@ -339,4 +355,8 @@ function authorizationFormFields(
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("base64url");
+}
+
+function sameResource(left: URL, right: URL): boolean {
+  return resourceUrlFromServerUrl(left).href === resourceUrlFromServerUrl(right).href;
 }

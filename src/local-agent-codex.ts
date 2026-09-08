@@ -17,6 +17,7 @@ import { quotaPreflight } from "./codex-quota-preflight.js";
 import { codexActivity, type AgentActivity } from "./agent-progress.js";
 import { ensureDesktopProject, type ProjectReceipt } from "./codex-projects.js";
 import { terminateProcessTree } from "./process-platform.js";
+import { DEVSPACE_VERSION } from "./version.js";
 import type {
   LocalAgentDriver,
   LocalAgentRunCallbacks,
@@ -132,7 +133,7 @@ export class CodexAppServerRuntime implements LocalAgentRuntime {
 
   async initialize(): Promise<void> {
     await this.rpc.request("initialize", {
-      clientInfo: { name: "devspace", title: "DevSpace", version: "1.0.7" },
+      clientInfo: { name: "devspace", title: "DevSpace", version: DEVSPACE_VERSION },
       capabilities: {},
     });
     this.rpc.notify("initialized");
@@ -714,9 +715,9 @@ export function sandboxFor(writeMode: LocalAgentWriteMode | undefined): string {
   }
 }
 
-function sandboxPolicyFor(writeMode: LocalAgentWriteMode | undefined): Record<string, string> {
+function sandboxPolicyFor(writeMode: LocalAgentWriteMode | undefined): Record<string, string | boolean> {
   switch (writeMode) {
-    case "allowed": return { type: "workspaceWrite" };
+    case "allowed": return { type: "workspaceWrite", networkAccess: true };
     case "full_access": return { type: "dangerFullAccess" };
     case "read_only":
     case undefined: return { type: "readOnly" };

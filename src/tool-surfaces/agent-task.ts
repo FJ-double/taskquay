@@ -46,7 +46,7 @@ export function registerAgentTaskTool(context: ToolRegistrationContext, client?:
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   }, async (input, extra) => {
-    const workspace = workspaces.getWorkspace(input.workspaceId);
+    const workspace = await workspaces.getWorkspace(input.workspaceId);
     const scope = { workspaceId: workspace.id, workspaceRoot: workspace.root };
     const reply = (value: unknown, isError = false) => ({
       content: [{ type: "text" as const, text: JSON.stringify(value) }], isError,

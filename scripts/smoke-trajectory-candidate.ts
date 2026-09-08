@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolve, join } from "node:path";
+import { resolve, join, dirname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import express from "express";
@@ -104,6 +104,6 @@ try {
 const receipt = { status: "passed", transport: "SDK StreamableHTTP loopback", candidate, checks, providerExecutions: 0,
   excluded: ["active server", "ChatGPT UI/schema refresh", "production OAuth", "Desktop registration"], processesStopped: true,
   candidateServerSha256: createHash("sha256").update(readFileSync(join(candidate, "server.js"))).digest("hex") };
-const body = JSON.stringify(receipt, null, 2), path = resolve("releases/trajectory-two-day-20260908/smoke.json");
+const body = JSON.stringify(receipt, null, 2), path = join(dirname(candidate), "smoke.json");
 writeFileSync(path, body);
 console.log(JSON.stringify({ path, sha256: createHash("sha256").update(body).digest("hex"), ...receipt }));

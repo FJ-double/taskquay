@@ -1,8 +1,11 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { resolve, join, relative } from "node:path";
-const root = process.cwd(), directory = resolve("releases/trajectory-two-day-20260908");
+const root = process.cwd(), directory = resolve(process.argv[2] ?? "releases/trajectory-two-day-20260908");
+mkdirSync(directory, { recursive: true });
+// Compiled version.ts resolves the package manifest relative to the candidate.
+writeFileSync(join(directory, "package.json"), readFileSync(resolve("package.json")));
 const digest = (data: string | Buffer) => createHash("sha256").update(data).digest("hex");
 const tsc = resolve("node_modules/typescript/bin/tsc");
 const steps = [

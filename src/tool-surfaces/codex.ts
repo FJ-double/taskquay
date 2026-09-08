@@ -133,7 +133,7 @@ function registerApplyPatchTool(context: ToolRegistrationContext): void {
         { tool: "apply_patch", workspaceId },
         startedAt,
         async () => {
-          const workspace = workspaces.getWorkspace(workspaceId);
+          const workspace = await workspaces.getWorkspace(workspaceId);
           return trackedWork(config.stateDir, workRunId, { root: workspace.root, workspaceId }, "apply_patch",
             () => processSessions.mutate(workspace.root, () => applyPatch(workspace.root, patch)));
         },
@@ -240,7 +240,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
         },
         startedAt,
         async () => {
-          const workspace = workspaces.getWorkspace(workspaceId);
+          const workspace = await workspaces.getWorkspace(workspaceId);
           const cwd = workspaces.resolveWorkingDirectory(
             workspace,
             workingDirectory,
@@ -333,7 +333,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
         { tool: "write_stdin", workspaceId },
         startedAt,
         async () => {
-          workspaces.getWorkspace(workspaceId);
+          await workspaces.getWorkspace(workspaceId);
           return processSessions.write({
             workspaceId,
             sessionId,

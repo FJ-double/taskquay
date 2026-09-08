@@ -47,7 +47,7 @@ export function registerWorkTaskTool({ server, config, workspaces, processSessio
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async (input, extra) => {
-    const workspace = workspaces.getWorkspace(input.workspaceId);
+    const workspace = await workspaces.getWorkspace(input.workspaceId);
     const ledger = new WorkLedger(config.stateDir);
     const reply = (data: unknown, isError = false) => ({ content: [{ type: "text" as const, text: JSON.stringify(data) }], isError });
     try {

@@ -25,7 +25,7 @@ export function registerWorkspaceContextTool({ server, config, workspaces, proce
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async (input) => {
-    const workspace = workspaces.getWorkspace(input.workspaceId);
+    const workspace = await workspaces.getWorkspace(input.workspaceId);
     const capture = () => processSessions.readWorkspace(workspace.root, async () => {
       if (input.action === "list") {
         const base = await realpath(workspace.root);

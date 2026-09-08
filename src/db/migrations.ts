@@ -166,6 +166,7 @@ migrations.push({ version: 11, name: "project-console-work-ledger", up: migrateP
 migrations.push({ version: 12, name: "bounded-agent-progress", up(sqlite) {
   addColumnIfMissing(sqlite, "local_agent_sessions", "progress", "text");
 } });
+migrations.push({ version: 13, name: "workspace-recovery-state", up: migrateWorkspaceRecoveryState });
 
 function migrateWorkspaceState(sqlite: Database.Database): void {
   sqlite.exec(`
@@ -330,6 +331,15 @@ function migrateLocalAgentEffortRename(sqlite: Database.Database): void {
     return;
   }
   sqlite.exec("alter table local_agent_sessions rename column thinking to effort");
+}
+
+function migrateWorkspaceRecoveryState(sqlite: Database.Database): void {
+  const workspaceStateExists = sqlite
+    .prepare("select 1 from sqlite_master where type = 'table' and name = 'workspace_sessions'")
+    .get();
+  if (!workspaceStateExists) return;
+
+  addColumnIfMissing(sqlite, "workspace_sessions", "recovery_kind", "text");
 }
 
 function addColumnIfMissing(

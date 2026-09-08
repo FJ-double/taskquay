@@ -53,6 +53,7 @@ import { shutdownHttpServer } from "./server-shutdown.js";
 import { ServerDiagnostics, diagnosticError } from "./server-diagnostics.js";
 import { traceMcpRequest } from "./mcp-request-diagnostics.js";
 import { formatPathForPrompt } from "./skills.js";
+import { DEVSPACE_VERSION } from "./version.js";
 import { createWorkspaceStore } from "./workspace-store.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
 import {
@@ -87,7 +88,7 @@ function mcpServerInfo() {
   return {
     name: "devspace",
     title: "DevSpace",
-    version: "0.1.0",
+    version: DEVSPACE_VERSION,
     description:
       "Coding tools for project workspaces. Open each project or worktree once, then reuse its workspaceId.",
   };
@@ -669,7 +670,7 @@ function registerMcpSurface(
     },
     async ({ workspaceId, workRunId, ...input }) => {
       const startedAt = performance.now();
-      const workspace = workspaces.getWorkspace(workspaceId);
+      const workspace = await workspaces.getWorkspace(workspaceId);
       const readPath = workspaces.resolveReadPath(workspace, input.path);
       const response = await trackedWork(config.stateDir, workRunId, { root: workspace.root, workspaceId }, "read", () => processSessions.readWorkspace(workspace.root, () => readFileTool(
         { ...input, path: readPath.absolutePath },
@@ -735,7 +736,7 @@ function registerMcpSurface(
     },
     async ({ workspaceId }, { _meta }) => {
       const startedAt = performance.now();
-      const workspace = workspaces.getWorkspace(workspaceId);
+      const workspace = await workspaces.getWorkspace(workspaceId);
       const reviewRef = typeof _meta?.["devspace/reviewRef"] === "string"
         ? _meta["devspace/reviewRef"]
         : undefined;
@@ -959,7 +960,7 @@ export function createServer(
     });
     if (res.headersSent) return;
 
-    if (!req.auth?.resource || !oauthProvider.acceptsResource(req.auth.resource)) {
+    if (!req.auth?.resource || !oauthProvider.isResourceAllowed(req.auth.resource)) {
       logEvent(config.logging, "warn", "auth_denied", {
         requestId,
         method: req.method,
