@@ -77,7 +77,7 @@ rl.createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(li
   store.update(agent.id, { status: "idle", providerSessionId: "thread" });
   manager = new LocalAgentManager({ store: new LocalAgentStore(state), drivers: [driver], pool,
     loadProfiles: async () => [], allowedRoots: [root],
-    subagents: { enabled: true, providers: [{ id: "codex", enabled: true }] } });
+    subagents: { enabled: true, instructions: "on-demand", providers: [{ id: "codex", enabled: true }] } });
   const next = await manager.continue(agent.id, "manager round trip",
     { requestKey: "manager-round-trip", workRunId: run.id }, { workspaceRoot: project });
   assert(next.isOk());

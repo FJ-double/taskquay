@@ -33,7 +33,7 @@ test("console redirect preserves queries and does not redirect its own destinati
   const config = loadConfig(writeTestDevspaceConfig(join(root, "config"), {
     storage: { stateDir: join(root, "state") },
     workspaces: { allowedRoots: [root], worktreeRoot: join(root, "worktrees") },
-    subagents: { enabled: false, providers: [] },
+    subagents: { enabled: false, instructions: "on-demand", providers: [] },
   }));
   const server = createServer({ ...config, console: { enabled: false, allowRemote: false, sessionTtlSeconds: 300 } }, { registerProject });
   const http = server.app.listen(0, "127.0.0.1");
@@ -321,6 +321,7 @@ test("open_workspace omits providers disabled by configuration", async (t) => {
     ],
     subagents: {
       enabled: true,
+      instructions: "on-demand",
       providers: [
         { id: "codex", enabled: true },
         { id: "claude", enabled: false },
@@ -333,6 +334,33 @@ test("open_workspace omits providers disabled by configuration", async (t) => {
     (opened.agentProviders as Array<Record<string, unknown>>).map((provider) => provider.id),
     ["codex"],
   );
+});
+
+test("open_workspace advertises subagent instructions on demand by default", async (t) => {
+  const context = await fixture(t, {
+    localAgentProviders: [{ name: "codex", available: true }],
+  });
+
+  const opened = structuredContent(await callOpen(context.client, context.project, "chat-1"));
+  const skills = opened.skills as Array<Record<string, unknown>>;
+  assert.equal(skills.some((skill) => skill.name === "subagents"), true);
+  assert.doesNotMatch(String(opened.instruction), /# DevSpace subagents/);
+});
+
+test("open_workspace preloads subagent instructions when configured", async (t) => {
+  const context = await fixture(t, {
+    localAgentProviders: [{ name: "codex", available: true }],
+    subagents: {
+      enabled: true,
+      instructions: "preload",
+      providers: [{ id: "codex", enabled: true }],
+    },
+  });
+
+  const opened = structuredContent(await callOpen(context.client, context.project, "chat-1"));
+  const skills = opened.skills as Array<Record<string, unknown>>;
+  assert.equal(skills.some((skill) => skill.name === "subagents"), false);
+  assert.match(String(opened.instruction), /# DevSpace subagents/);
 });
 
 test("open_workspace scopes checkout reuse to OpenAI session metadata", async (t) => {
@@ -640,7 +668,11 @@ async function fixture(
     server: { port: 1 },
     workspaces: { allowedRoots: [root], worktreeRoot: join(root, ".worktrees") },
     skills: { agentDir },
-    subagents: { enabled: options.localAgentProviders !== undefined, providers: [] },
+    subagents: {
+      enabled: options.localAgentProviders !== undefined,
+      instructions: "on-demand",
+      providers: [],
+    },
   }));
   const modeConfig: ServerConfig = {
     ...loadedConfig,
@@ -652,6 +684,7 @@ async function fixture(
         ...modeConfig,
         subagents: options.subagents ?? {
           enabled: true,
+          instructions: "on-demand",
           providers: initialProviderAvailability.map((provider) => ({
             id: provider.name,
             enabled: true,

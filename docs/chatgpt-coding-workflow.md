@@ -116,9 +116,13 @@ DevSpace discovers standard Agent Skills from:
 
 It also keeps compatibility with:
 
-- the bundled `subagents` skill when Subagents are enabled, unless `~/.devspace/skills/subagents/SKILL.md` exists
 - `skills.agentDir/skills`, defaulting to `~/.codex/skills`
 - additional paths from `skills.paths`
+
+When Subagents are enabled, DevSpace synchronizes its bundled workflow to the
+managed path `~/.devspace/skills/subagents/SKILL.md`. That copy is refreshed
+from the installed DevSpace package and wins over other skills named
+`subagents`.
 
 When Subagents are enabled, DevSpace discovers agent profiles
 from `~/.devspace/agents/*.md` and project `.devspace/agents/*.md`.
@@ -141,7 +145,11 @@ Skill paths may be outside the workspace. DevSpace only permits reading:
 
 Set `skills.enabled` to `false` to hide skills from workspace output. Enable
 Subagents and choose providers through `devspace init` or the persisted provider
-configuration. The bundled `subagents` skill prefers the native `agent_task`
+configuration. `subagents.instructions` defaults to `on-demand`, exposing the
+managed `subagents` skill for a separate read when delegation would help. Set it
+to `preload` to include those instructions in the initial `open_workspace`
+result. The managed skill is synchronized from this installation's bundled
+source. The bundled `subagents` skill prefers the native `agent_task`
 control plane when available. Start with a stable task key, continue the same
 agent for related work, and observe using bounded waits and known revisions.
 Managed shell commands now hold checkout claims, so do not wrap agent lifecycle

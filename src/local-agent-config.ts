@@ -18,6 +18,7 @@ const providerSchema = z.object({
 
 export const subagentsConfigSchema = z.object({
   enabled: z.boolean(),
+  instructions: z.enum(["on-demand", "preload"]).default("on-demand"),
   providers: z.array(providerSchema),
   maxConcurrentAgents: z.number().int().min(1).max(16).optional(),
   maxConcurrentReaders: z.number().int().min(1).max(8).optional(),

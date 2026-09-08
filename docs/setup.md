@@ -76,6 +76,11 @@ merely to follow an inherited example. The Skills CLI asks which installed Codin
 The skill uses `devspace agents targets`, `run`, `continue`, `show`, and `ls`.
 These commands do not require `devspace serve`.
 
+This Coding Agent installation is separate from ChatGPT MCP usage. For MCP
+workspaces with Subagents enabled, DevSpace manages its own copy at
+`~/.devspace/skills/subagents/SKILL.md`; users do not install that copy
+manually.
+
 ### Connect ChatGPT
 
 The initializer's public-URL question applies when you selected ChatGPT. For the Server URL path, start your tunnel or
@@ -162,7 +167,10 @@ pinned in `package.json`. Install it with `npm install --global pnpm@11.25.0`.
 
 ```bash
 pnpm install --frozen-lockfile
+pnpm dev:seed
 pnpm dev
 ```
 
-The same setup rules apply.
+The source server uses an ignored checkout-local fork of your normal DevSpace
+configuration and SQLite state. See [Development and Manual QA](development.md)
+for worktree switching, ChatGPT testing, and database migration workflows.

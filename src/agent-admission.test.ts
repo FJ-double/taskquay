@@ -34,7 +34,7 @@ function fixture(t: test.TestContext, maximum = 1) {
   const driver: LocalAgentDriver = { provider: "codex", runtimeKey: () => "fixture", createRuntime: async () => Result.ok(runtime) };
   const manager = new LocalAgentManager({ store: new LocalAgentStore(stateDir), drivers: [driver],
     pool: new LocalAgentRuntimePool(), loadProfiles: async () => [], allowedRoots: [root],
-    subagents: { enabled: true, maxConcurrentAgents: maximum, queueWaitMs: 0, providers: [{ id: "codex", enabled: true }] } });
+    subagents: { enabled: true, instructions: "on-demand", maxConcurrentAgents: maximum, queueWaitMs: 0, providers: [{ id: "codex", enabled: true }] } });
   const processes = new ProcessSessionManager({ stateDir });
   t.after(async () => { await manager.close(); processes.shutdown(); await delay(20); rmSync(root, { recursive: true, force: true }); });
   const release = async () => {

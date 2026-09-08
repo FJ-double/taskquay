@@ -48,7 +48,7 @@ function fixture(t: test.TestContext, options: { readSafe?: boolean; queueWaitMs
     }),
   };
   const manager = new LocalAgentManager({ store, drivers: [driver], pool: new LocalAgentRuntimePool(),
-    allowedRoots: [root], loadProfiles: async () => [], subagents: { enabled: true,
+    allowedRoots: [root], loadProfiles: async () => [], subagents: { enabled: true, instructions: "on-demand",
       maxNewSessionsPerWorkItem: options.budget, queueWaitMs: options.queueWaitMs ?? 5000,
       providers: [{ id: "codex", enabled: true }] } });
   const host = new ProcessSessionManager({ stateDir });

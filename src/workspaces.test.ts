@@ -188,7 +188,7 @@ test("workspace cache evicts old contexts without losing advertised skill reads"
         worktreeRoot: join(context.root, ".devspace", "bounded-worktrees"),
       },
       skills: { agentDir },
-      subagents: { enabled: true, providers: [] },
+      subagents: { enabled: true, instructions: "on-demand", providers: [] },
     },
   ));
 
@@ -305,7 +305,7 @@ async function fixture(t: TestContext): Promise<WorkspaceFixture> {
       worktreeRoot: join(root, ".devspace", "worktrees"),
     },
     skills: { agentDir },
-    subagents: { enabled: true, providers: [] },
+    subagents: { enabled: true, instructions: "on-demand", providers: [] },
   }));
 
   t.after(async () => {

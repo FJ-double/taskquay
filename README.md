@@ -186,6 +186,11 @@ node bin/devspace.js serve
 
 ## 开发、文档与许可
 
+开发与手动 QA 可使用 `pnpm dev:seed` 初始化隔离状态，再运行 `pnpm dev`。
+它会将正常安装的配置和 SQLite 状态复制到被 Git 忽略的 `.devspace-dev/`，
+其中可能包含敏感信息，请勿分享或提交。`pnpm dev:reset` 会丢弃该 QA 状态并重新复制。
+详见 [开发与手动 QA](docs/development.md)。不要在正常服务占用相同端口时启动开发服务。
+
 ```sh
 pnpm typecheck
 pnpm test

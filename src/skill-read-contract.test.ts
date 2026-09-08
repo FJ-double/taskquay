@@ -25,7 +25,7 @@ test("advertised skill tilde/absolute read and capture agree; unadvertised and s
   symlinkSync(outside, join(skill, "escape"), process.platform === "win32" ? "junction" : "dir");
   const config = loadConfig(writeTestDevspaceConfig(join(root, "config"), {
     workspaces: { allowedRoots: [project] }, storage: { stateDir: join(root, "state") },
-    skills: { agentDir: join(root, ".codex") }, subagents: { enabled: false, providers: [] },
+    skills: { agentDir: join(root, ".codex") }, subagents: { enabled: false, instructions: "on-demand", providers: [] },
   }));
   const workspaces = new WorkspaceRegistry(config); const opened = await workspaces.openWorkspace(project);
   const processSessions = new ProcessSessionManager({ stateDir: config.stateDir });
