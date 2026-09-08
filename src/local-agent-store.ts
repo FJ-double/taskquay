@@ -214,15 +214,18 @@ export class LocalAgentStore {
         if (reuseContext && input.contextKey && input.workItemId && input.contextSignature) {
           const found = this.database.sqlite.prepare(`select * from local_agent_sessions where workspace_root = ?
             and coalesce(workspace_id, '') = ? and profile_name = ? and work_item_id = ? and context_key = ?
-            and context_signature = ? and status in ('starting', 'queued', 'running', 'idle')
+            and context_signature = ? and status in ('starting', 'queued', 'running', 'idle', 'error', 'stopped')
             order by updated_at desc limit 1`)
             .get(resolve(input.workspaceRoot), input.workspaceId ?? "", input.profileName, input.workItemId,
               input.contextKey, input.contextSignature) as LocalAgentRow | undefined;
           if (found) {
-            if (found.status !== "idle") throw new AgentConflictError({ code: "AGENT_CONFLICT", agentId: found.id,
+            if (!["idle", "error", "stopped"].includes(found.status)) throw new AgentConflictError({ code: "AGENT_CONFLICT", agentId: found.id,
               operation: "context_affinity", retryable: true,
               message: "The related session is occupied. Observe it, then continue; do not create another copy of its context." });
             if (found.provider_session_id) {
+              // An explicit new task may resume a terminal context even after a
+              // provider failure. Keep its identity; never silently fork around
+              // quota, history, or reconciliation checks in the normal run path.
               record = this.update(found.id, { status: "starting" });
               resumedContext = true;
             }

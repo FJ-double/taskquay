@@ -56,4 +56,7 @@ test("session labels contain one case-insensitive brand and do not destroy proje
   assert.equal(other, "[DevSpace][yaxian][123abc] 独立审查");
   assert.equal(managedSessionTitle("yaxian", "123abc", "核对 DevSpace 行为"), "[DevSpace][yaxian][123abc] 核对 DevSpace 行为");
   assert.equal(managedSessionTitle("devspace", "7a6ace", "x".repeat(400)).length, 160);
+  const sessionTitle = managedSessionTitle("project", "12345678", "Shared task");
+  assert.equal(managedSessionTitle("project", "12345678", sessionTitle), sessionTitle);
+  assert.equal(managedSessionTitle("project", "87654321", sessionTitle), "[DevSpace][project][87654321] Shared task");
 });

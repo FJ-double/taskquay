@@ -518,7 +518,7 @@ export class LocalAgentManager {
       }
       input.value.analysisOnly = analysisOnly;
       if (executionId) this.ledger.requestedConfiguration(executionId, input.value.model, input.value.effort);
-      if (executionId) input.value.sessionLabel = this.ledger.sessionTitle(this.ledger.execution(executionId).run_id);
+      if (executionId) input.value.sessionLabel = this.ledger.sessionTitle(this.ledger.execution(executionId).run_id, record.id);
       const context: LocalAgentRuntimeContext = {
         agentId: record.id,
         provider: driver.value.provider,

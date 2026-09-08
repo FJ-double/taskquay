@@ -31,7 +31,7 @@ export function registerAgentTaskTool(context: ToolRegistrationContext, client?:
       workItemId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/).optional(),
       workRunId: z.string().optional().describe("Top-level run returned by work_task begin. Required on continue; bind all related Codex turns to this run for accurate completion receipts."),
       contextKey: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/).optional()
-        .describe("Explicit problem-domain/role affinity, not the source SHA. Requires workItemId; an idle matching thread is resumed instead of creating a new context."),
+        .describe("Stable problem-domain/role identity across related tasks, not a phase name or source SHA. Requires workItemId; a matching terminal thread (including error/stopped) is resumed with normal provider checks. Different contexts remain separate."),
       freshContext: z.boolean().optional().describe("Use a separate context for unrelated work or independent acceptance review; do not prewarm idle workers."),
       requestKey: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/).optional().describe("Idempotency identity for one continuation, distinct from the session/domain identity."),
       context: z.object({ summary: z.string().max(12_000), files: z.array(z.object({

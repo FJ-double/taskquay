@@ -11,7 +11,7 @@ export function managedSessionTitle(projectName: string, shortId: string, title:
     body = body.replace(/^(?:\[devspace\]\s*)+/i, "");
     const firstTag = /^\[([^\]]+)\]\s*/.exec(body);
     if (firstTag?.[1]?.toLocaleLowerCase() === project.toLocaleLowerCase()) body = body.slice(firstTag[0].length);
-    const runTag = /^\[([0-9a-f]{6})\]\s*/i.exec(body);
+    const runTag = /^\[([0-9a-f]{6}|[0-9a-f]{8})\]\s*/i.exec(body);
     if (runTag) body = body.slice(runTag[0].length);
   }
   const projectTag = project.toLocaleLowerCase() === "devspace" ? "" : `[${project}]`;

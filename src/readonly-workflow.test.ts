@@ -172,6 +172,39 @@ test("context affinity resumes a relevant thread, while fresh review gets an ind
   assert.notEqual(independent.id, first.id); await f.finish(independent.id);
 });
 
+for (const status of ["error", "stopped"] as const) test(`context affinity retains the provider thread after ${status}`, async (t) => {
+  const f = fixture(t, { budget: 1 });
+  const common = { workItemId: "work", contextKey: "implementation" };
+  const first = await f.start("first", true, { ...common, taskKey: "first" }); await f.finish(first.id);
+  f.store.update(first.id, { status, errorCode: "PROVIDER_UNAVAILABLE" });
+  const resumed = await f.start("explicit follow-up", true, { ...common, taskKey: "next" });
+  assert.equal(resumed.id, first.id);
+  await until(() => f.calls.length === 2);
+  assert.equal(f.calls[1]!.input.providerSessionId, `thread-${first.id}`);
+  await f.finish(resumed.id);
+  await f.start("explicit follow-up", true, { ...common, taskKey: "next" });
+  assert.equal(f.calls.length, 2, "A repeated start remains an idempotent receipt read");
+});
+
+test("independent contexts in one work run receive distinct session labels and related work keeps its identity", async (t) => {
+  const f = fixture(t);
+  const run = (() => {
+    const ledger = new WorkLedger(f.stateDir);
+    try { return ledger.begin({ root: f.project, workspaceId: f.scope.workspaceId, workItemId: "work", runKey: "run",
+      title: "Shared task title", origin: { entryPoint: "other_mcp", evidence: "server_entry" } }); }
+    finally { ledger.close(); }
+  })();
+  const common = { workRunId: run.id, workItemId: "work" };
+  const a = await f.start("implementation", true, { ...common, taskKey: "a", contextKey: "implementation" }); await f.finish(a.id);
+  const b = await f.start("review", true, { ...common, taskKey: "b", contextKey: "review" }); await f.finish(b.id);
+  assert.notEqual(f.calls[0]!.input.sessionLabel, f.calls[1]!.input.sessionLabel);
+  assert.match(f.calls[0]!.input.sessionLabel!, /Shared task title/);
+  const continued = await f.start("next implementation step", true, { ...common, taskKey: "c", contextKey: "implementation" });
+  assert.equal(continued.id, a.id); await until(() => f.calls.length === 3);
+  assert.equal(f.calls[2]!.input.sessionLabel, f.calls[0]!.input.sessionLabel);
+  assert.equal(f.calls[2]!.input.providerSessionId, `thread-${a.id}`); await f.finish(a.id);
+});
+
 test("continuation idempotency is distinct from the reusable session and rejects changed payloads", async (t) => {
   const f = fixture(t); const first = await f.start("first"); await f.finish(first.id);
   const options = { writeMode: "read_only" as const, requestKey: "next-phase" };

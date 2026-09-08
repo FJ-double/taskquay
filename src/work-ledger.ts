@@ -217,7 +217,7 @@ export class WorkLedger {
         identity_verified,origin,title,protected,created_at,updated_at) values(?,?,?,?,?,?,?,?,?,?,?,?)`)
         .run(threadKey, run.project_id, execution.agent_id, observation.instanceId, observation.threadId,
           observation.createdHere ? 1 : 0, observation.identityVerified ? 1 : 0, run.origin,
-          observation.title ?? this.sessionTitle(run.id), observation.createdHere ? 0 : 1, now(), now());
+          observation.title ?? this.sessionTitle(run.id, execution.agent_id), observation.createdHere ? 0 : 1, now(), now());
       const prior = this.db.prepare("select * from console_executions where managed_thread_id=? and id!=? order by rowid desc")
         .all(threadKey, executionId) as ExecutionRow[];
       const knownIds = new Set(prior.flatMap((row) => row.provider_turn_id ? [row.provider_turn_id] : []));
@@ -237,9 +237,11 @@ export class WorkLedger {
       this.touch(run.id); return threadKey;
     }).immediate();
   }
-  sessionTitle(runId: string): string {
+  sessionTitle(runId: string, agentId: string): string {
     const run = this.run(runId); const project = this.getProject(run.project_id);
-    return managedSessionTitle(project.name, run.id.slice(-6), run.title ?? "Task");
+    // A run may have several independent contexts. Its ID cannot distinguish
+    // their sidebar titles; the persisted agent identity survives continuations.
+    return managedSessionTitle(project.name, agentId.replace(/^agt_/, ""), run.title ?? "Task");
   }
   nameResult(executionId: string, success: boolean): void {
     const execution = this.execution(executionId);
