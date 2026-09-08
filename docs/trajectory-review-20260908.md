@@ -52,3 +52,21 @@ pnpm exec tsc -p tsconfig.build.json --outDir <独立临时目录>
 最终 **67 tests：67 passed、0 failed、0 skipped**（进度 29、coordinator 8、ledger 9、work_task 16、snapshot/history 5）。其中真实内存 MCP transport 验证 finish 响应、作用域拒绝与回执；已有持久化脱敏、跨进程排他和 snapshot/history 回归通过。首次新增 fixture 漏建 agent 记录导致 9 个外键错误，补齐 fixture 后通过，未放宽生产约束。
 
 typecheck 和隔离 TypeScript 编译通过，产物位于 `D:\CodexTemp\devspace-trajectory-20260908-6afdcd880f1d4454831b7762c79212aa`。只验证本地源码/fixture 和该编译产物的生成，未重新构建 UI、打包发布或在真实远端 MCP host 热启用。没有运行 `pnpm build`、清理 live dist、升级 npx，或修改/重启 server、agentd、tunnel 进程。当前运行服务仍不保证包含本次修复；由主控决定安全启用时机。
+
+## 主控复核与已启用状态
+
+上段是 worker 交回时的阶段事实。主控随后直接检查 `1d1ec2ac183359bd49e09fca79f5dbad500b0835` 的变更，并重新运行同一五文件定向测试：**67/67，0失败、0跳过，10,330.7671ms**。源码 typecheck 通过。从该提交 Git archive 导出的独立目录 `releases/trajectory-1d1ec2a-runtime/` 完成 TypeScript 与 Vite 构建，编译后内存 MCP smoke 通过，providerInvocations=0；没有把未提交源码混入产物或清理正在服务的 dist。
+
+第一次维护在“daemon 未被确认空闲”处保守退出，未替换监听服务。随后实际 `daemon status` 返回 `DAEMON_UNAVAILABLE`，核对上一 PID23560已不存在，PID文件和ownership lock均不存在，且无活跃 agent/waiter/claim，才允许下一次维护继续。没有把“不可达”直接当作“已停止”，也没有清锁或杀其他进程。
+
+**2026-09-08 10:28:41（UTC+8）新运行产物已启用**：精确核对原监听 PID5584的可执行文件、启动时间和 `D:\project\devspace\dist\cli.js serve` 入口后，仅替换空闲监听；新 PID为21492，端口仍为127.0.0.1:7676。原dist和一致SQLite备份保存在 `releases/activation-trajectory-20260908-022818/`，全部安装文件与独立候选哈希一致，healthz通过，没有回滚。没有更改隧道、根目录权限、OAuth配置或业务数据。回执为该目录的 `receipt.json`。
+
+启用后主控通过本对话原生 MCP 成功读取维护回执、取回同一已完成agent的终态结果；使用实际安装的dist再次运行编译后MCP smoke通过，未发起新模型执行。修改的四个运行模块与已测试staging逐文件哈希一致。具体foreign-claim与命令分类行为以同生产handler/ledger的67项fixture为证，不把普通health请求冒称所有真实并发场景已跑过。
+
+## 仍需区别对待的宿主契约问题
+
+本轮另有一次可复现的宿主schema不一致：源码和实际服务器已有 `work_task snapshot/history`，但本对话工具目录仍只允许 `begin/record/finish/get/list`；一次 `snapshot` 在到达服务器前就被参数校验拒绝。主控没有反复discover、换标识绕过或重复实现服务端功能，改用已支持的 `get/finish`。该边界不能通过修改本地返回文字保证宿主刷新，本次不宣称已修复其缓存；原生终态回执及合法动作仍可用。证据记录为 `op_5bb95810983c4392be402b3b57f13e23`。
+
+原02:08元数据快照的七个running/pending包含历史未结案轮次。主控随后以明确失败证据结清旧主任务 `run_6d83dbd1ca304104b5904ac8b41d432e` 和旧云任务 `run_a7b060c91d044ed6b2dd59f31a392e1c`，保留“当时部署被磁盘门禁拦住”的历史失败，未用今日成功改写旧结果。今日主交付run与云run均已有独立passed回执；这属于主控收尾改进，不是自动接受功能。
+
+本阶段DevSpace受管模型总量为 **965,974 tokens，complete**，缓存输入是输入的子项，不再次相加。fixture/编译/维护和原生回验没有额外模型推理。整个跨轮轨迹的85,590,157只代表上述采集时刻的已知受管delta，仍为partial，不能当成完整账号消耗或账单。
