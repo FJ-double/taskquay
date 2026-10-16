@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   isSubagentProviderEnabled,
   localAgentProviderConfigRevision,
@@ -103,6 +104,24 @@ assert.notEqual(
       : provider),
   })),
 );
+{
+  // Authority-bearing provider fields must replace a running daemon.
+  const base = subagentsConfigSchema.parse({ enabled: true, providers: [{ id: "codex", enabled: true, model: "gpt-5.4" }] });
+  const revision = localAgentProviderConfigRevision(base);
+  const legacy = createHash("sha256").update(JSON.stringify({ enabled: true,
+    providers: [{ id: "codex", enabled: true, model: "gpt-5.4" }] })).digest("hex");
+  assert.equal(revision, legacy, "configs without the new fields keep their previous revision");
+  const variant = (patch: Record<string, unknown>) => localAgentProviderConfigRevision(subagentsConfigSchema.parse({
+    enabled: true, providers: [{ id: "codex", enabled: true, model: "gpt-5.4", ...patch }] }));
+  const revisions = new Set([revision,
+    variant({ writeMode: "read_only" }), variant({ writeMode: "allowed" }), variant({ writeMode: "full_access" }),
+    variant({ readOnlyDefaults: { model: "gpt-5.4-mini" } }), variant({ readOnlyDefaults: { effort: "low" } }),
+    variant({ reasoningLimits: [{ model: "gpt-5.4", maxEffort: "medium" }] }),
+    variant({ reasoningLimits: [{ model: "gpt-5.4", maxEffort: "high" }] }),
+    variant({ historyHandoff: "verified-unsupported" })]);
+  assert.equal(revisions.size, 9, "writeMode, readOnlyDefaults, reasoningLimits and historyHandoff change the revision");
+  assert.equal(variant({ readOnlyDefaults: {} }), revision, "an empty readOnlyDefaults object is equivalent to absent");
+}
 assert.throws(
   () => subagentsConfigSchema.parse({
     enabled: true,

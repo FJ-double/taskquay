@@ -5,3 +5,9 @@ allowBuilds:
   koffi: true
   node-pty: true
   protobufjs: false
+# pnpm ignores package.json "overrides" (npm syntax); keep these security pins
+# in sync with that field, which still applies to npm installs of the checkout.
+overrides:
+  protobufjs: 7.6.4
+  ws: 8.21.0
+  undici: 8.5.0

@@ -309,3 +309,35 @@ await assert.rejects(
   ),
   /not valid UTF-8|binary/,
 );
+
+// Two spellings of one file must not let the delete pass remove what the
+// write pass just produced (case-insensitive filesystems: Windows, macOS).
+if (process.platform === "win32" || process.platform === "darwin") {
+  const aliasRoot = await mkdtemp(join(tmpdir(), "devspace-apply-patch-alias-"));
+  await writeFile(join(aliasRoot, "foo.txt"), "keep\n");
+  await assert.rejects(
+    applyPatch(
+      aliasRoot,
+      `*** Begin Patch
+*** Delete File: foo.txt
+*** Add File: Foo.txt
++replacement
+*** End Patch`,
+    ),
+    /same file through two paths/,
+  );
+  assert.equal(await readFile(join(aliasRoot, "foo.txt"), "utf8"), "keep\n");
+
+  // A case-only rename of one file remains a single staged entry.
+  await applyPatch(
+    aliasRoot,
+    `*** Begin Patch
+*** Update File: foo.txt
+*** Move to: FOO.txt
+@@
+-keep
++renamed
+*** End Patch`,
+  );
+  assert.equal(await readFile(join(aliasRoot, "FOO.txt"), "utf8"), "renamed\n");
+}

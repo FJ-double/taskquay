@@ -17,12 +17,18 @@ try {
   assert.equal(defaults.port, 7676);
   assert.equal(defaults.publicBaseUrl, "http://127.0.0.1:7676");
   assert.deepEqual(defaults.allowedRoots, [process.cwd()]);
-  assert.deepEqual(defaults.allowedHosts, ["localhost", "127.0.0.1", "::1"]);
+  assert.deepEqual(defaults.allowedHosts, ["localhost", "127.0.0.1", "[::1]"]);
   assert.equal(defaults.toolMode, "codex");
   assert.equal(defaults.dangerouslySkipCommandReview, false);
   assert.equal(defaults.uiEnabled, true);
   assert.equal(defaults.skillsEnabled, true);
   assert.equal(defaults.artifactsEnabled, false);
+  assert.equal(defaults.windowsMcp?.enabled, false);
+  assert.equal(defaults.windowsMcp?.command, "");
+  assert.equal(defaults.windowsMcp?.allowedTools.includes("Snapshot"), true);
+  assert.equal(defaults.blenderMcp?.enabled, false);
+  assert.equal(defaults.blenderMcp?.command, "");
+  assert.deepEqual(defaults.blenderMcp?.allowedTools, ["*"]);
   assert.deepEqual(defaults.subagents, {
     enabled: false,
     instructions: "on-demand",
@@ -57,6 +63,18 @@ try {
     ui: { enabled: false },
     artifacts: { enabled: true, maxFileBytes: 321 },
     skills: { enabled: false, paths: ["~/skills"], agentDir: "~/agent" },
+    windowsMcp: {
+      enabled: true,
+      command: "C:/tools/windows-mcp-server.exe",
+      args: ["stdio", "--toolsets", "screen,interaction,apps,system"],
+      allowedTools: ["Snapshot", "Click"],
+    },
+    blenderMcp: {
+      enabled: true,
+      command: "C:/tools/uvx.exe",
+      args: ["--python", "3.11", "mcp-for-blender"],
+      allowedTools: ["*"],
+    },
     subagents: {
       enabled: true,
       instructions: "preload",
@@ -89,7 +107,7 @@ try {
   assert.deepEqual(configured.allowedHosts, [
     "localhost",
     "127.0.0.1",
-    "::1",
+    "[::1]",
     "0.0.0.0",
     "devspace.example.com",
     "example.internal",
@@ -104,6 +122,18 @@ try {
   assert.equal(configured.skillsEnabled, false);
   assert.deepEqual(configured.skillPaths, ["~/skills"]);
   assert.equal(configured.agentDir, resolve(homedir(), "agent"));
+  assert.deepEqual(configured.windowsMcp, {
+    enabled: true,
+    command: "C:/tools/windows-mcp-server.exe",
+    args: ["stdio", "--toolsets", "screen,interaction,apps,system"],
+    allowedTools: ["Snapshot", "Click"],
+  });
+  assert.deepEqual(configured.blenderMcp, {
+    enabled: true,
+    command: "C:/tools/uvx.exe",
+    args: ["--python", "3.11", "mcp-for-blender"],
+    allowedTools: ["*"],
+  });
   assert.equal(configured.subagents.enabled, true);
   assert.equal(configured.subagents.instructions, "preload");
   assert.equal(configured.oauth.ownerToken, "persisted-owner-token-long-enough");

@@ -29,6 +29,11 @@ releases/
 /playwright-report/
 /test-results/
 /publication-private/
+# Machine-specific rollout tooling and receipts live in /publication-private/;
+# never re-add them (or receipts a moved script writes back) to public paths.
+/scripts/hp-*
+/docs/hp-*
+/docs/web-command-crash-recovery-checkpoint-*
 
 # Isolated verification output; never replace the running dist during tests.
 /.local/voice-memory-trace-candidate/

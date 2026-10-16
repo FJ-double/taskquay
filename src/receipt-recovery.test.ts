@@ -41,7 +41,26 @@ test("SDK HTTP recovery: bounded Unicode capture, exact reconstruction, command/
   ledger.providerDispatchStarted(failed); ledger.providerNotRequested(failed); ledger.endExecution(failed, "failed");
   agents.update(record.id, { status: "error", errorCode: "PROVIDER_UNAVAILABLE", error: "PAGINATED_HISTORY_UNSUPPORTED", providerSessionId: "original-thread" });
   let server!: McpServer, client!: Client, http!: ReturnType<ReturnType<typeof express>["listen"]>;
+  let httpStage = "not_started";
+  // A lost SDK HTTP response may follow a successfully executed command.
+  // Never retry fetch here: expose the underlying socket error and the stage
+  // instead of silently replaying any mutating MCP tool call.
+  const diagnosticFetch: typeof fetch = async (input, init) => {
+    try {
+      return await fetch(input, init);
+    } catch (error) {
+      const failure = error as Error & { cause?: { code?: unknown; errno?: unknown; syscall?: unknown } };
+      const cause = failure.cause;
+      const networkCode = typeof cause?.code === "string" && /^[A-Z0-9_]+$/.test(cause.code)
+        ? cause.code : "unavailable";
+      const syscall = typeof cause?.syscall === "string" && /^[a-z]+$/.test(cause.syscall)
+        ? cause.syscall : "unknown";
+      throw new Error(`SDK_HTTP_FETCH_FAILED stage=${httpStage} code=${networkCode} syscall=${syscall} listening=${Boolean(http?.listening)}`,
+        { cause: error });
+    }
+  };
   async function connect() {
+    httpStage = "server_connect";
     server = new McpServer({ name: "recovery-fixture", version: "1" });
     const workspace = { id: "ws_abcdef", root: project };
     const context = { server, config: { stateDir, logging: { toolCalls: false }, subagents: { enabled: false, providers: [] } }, processSessions: processes,
@@ -64,12 +83,25 @@ test("SDK HTTP recovery: bounded Unicode capture, exact reconstruction, command/
     http = app.listen(0, "127.0.0.1"); await once(http, "listening");
     const address = http.address(); assert(address && typeof address === "object");
     client = new Client({ name: "fixture", version: "1" });
-    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`)));
+    httpStage = "client_connect";
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`),
+      { fetch: diagnosticFetch }));
   }
-  async function disconnect() { await client.close(); await server.close(); await new Promise<void>((r) => http.close(() => r())); }
+  async function disconnect() {
+    httpStage = "disconnect";
+    await client?.close();
+    await server?.close();
+    if (http?.listening) await new Promise<void>((r) => http.close(() => r()));
+  }
+  // Cleanup must be registered *before* the first network attempt; otherwise
+  // a failing connect strands a disposable fixture and server handles.
+  t.after(async () => {
+    try { await disconnect(); }
+    finally { processes.shutdown(); agents.close(); ledger.close(); rmSync(root, { recursive: true, force: true }); }
+  });
   await connect();
-  t.after(async () => { await disconnect(); processes.shutdown(); agents.close(); ledger.close(); rmSync(root, { recursive: true, force: true }); });
   const call = async (name: string, args: Record<string, unknown>) => {
+    httpStage = `tool:${name}`;
     const result = await client.callTool({ name, arguments: { workspace_id: "ws_abcdef", work_run_id: run.id, ...args }, _meta: { "openai/session": "private-conversation-secret" } });
     assert(!result.isError, JSON.stringify(result));
     assert(Buffer.byteLength(JSON.stringify(result)) <= REPLY_BYTES + 512);

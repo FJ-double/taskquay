@@ -144,6 +144,12 @@ export function providerCommandVariable(provider: LocalAgentProvider): string | 
   }
 }
 
+/**
+ * Daemon identity for provider authority. Every per-provider field that changes
+ * what a running daemon grants (write ceiling, read-only defaults, reasoning
+ * caps, history handoff) must be hashed; absent optional fields are omitted so
+ * configs without them keep their previous revision.
+ */
 export function localAgentProviderConfigRevision(config: SubagentsConfig): string {
   const providers = [...config.providers]
     .sort((left, right) => left.id.localeCompare(right.id))
@@ -153,6 +159,17 @@ export function localAgentProviderConfigRevision(config: SubagentsConfig): strin
       ...(provider.model ? { model: provider.model } : {}),
       ...(provider.effort ? { effort: provider.effort } : {}),
       ...("command" in provider && provider.command ? { command: provider.command } : {}),
+      ...(provider.writeMode ? { writeMode: provider.writeMode } : {}),
+      ...(provider.readOnlyDefaults && (provider.readOnlyDefaults.model || provider.readOnlyDefaults.effort)
+        ? { readOnlyDefaults: {
+            ...(provider.readOnlyDefaults.model ? { model: provider.readOnlyDefaults.model } : {}),
+            ...(provider.readOnlyDefaults.effort ? { effort: provider.readOnlyDefaults.effort } : {}),
+          } }
+        : {}),
+      ...(provider.reasoningLimits?.length
+        ? { reasoningLimits: provider.reasoningLimits.map((limit) => [limit.model, limit.maxEffort]) }
+        : {}),
+      ...(provider.historyHandoff ? { historyHandoff: provider.historyHandoff } : {}),
       ...(provider.env && Object.keys(provider.env).length > 0
         ? {
             env: Object.fromEntries(

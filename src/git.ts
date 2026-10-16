@@ -20,12 +20,15 @@ export interface GitEligibility {
 export async function git(
   cwd: string,
   args: string[],
-  options: { env?: NodeJS.ProcessEnv; maxBuffer?: number } = {},
+  options: { env?: NodeJS.ProcessEnv; maxBuffer?: number; timeoutMs?: number } = {},
 ): Promise<GitCommandResult> {
   const { stdout, stderr } = await execFileAsync("git", args, {
     cwd,
     env: options.env ? { ...process.env, ...options.env } : process.env,
     maxBuffer: options.maxBuffer ?? 10 * 1024 * 1024,
+    // Bounds hangs on index locks, credential helpers or fsmonitor.
+    timeout: options.timeoutMs ?? 5 * 60_000,
+    windowsHide: true,
   });
 
   return { stdout, stderr };

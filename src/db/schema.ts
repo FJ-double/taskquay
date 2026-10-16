@@ -147,6 +147,7 @@ export const executionClaims = sqliteTable("execution_claims", {
   threadKey: text("thread_key"),
   resources: text("resources").notNull(),
   acquiredAt: text("acquired_at").notNull(),
+  executionId: text("execution_id"),
 });
 
 export const executionWaiters = sqliteTable("execution_waiters", {
@@ -154,8 +155,108 @@ export const executionWaiters = sqliteTable("execution_waiters", {
   id: text("id").notNull().unique(), ownerId: text("owner_id").notNull(), ownerPid: integer("owner_pid").notNull(),
   kind: text("kind").notNull(), checkoutRoot: text("checkout_root").notNull(), agentId: text("agent_id"),
   threadKey: text("thread_key"), accessMode: text("access_mode").notNull(), resources: text("resources").notNull(),
-  expiresAtMs: integer("expires_at_ms").notNull(),
+  expiresAtMs: integer("expires_at_ms"),
+  executionId: text("execution_id"),
+  ownerGeneration: text("owner_generation"),
 }, (table) => [index("execution_waiters_order").on(table.sequence)]);
+
+export const managedQueueRecoveryAudit = sqliteTable("managed_queue_recovery_audit", {
+  sequence: integer("sequence").primaryKey({ autoIncrement: true }),
+  ticketId: text("ticket_id").notNull().unique(),
+  ownerId: text("owner_id").notNull(),
+  ownerGeneration: text("owner_generation").notNull(),
+  agentId: text("agent_id").notNull(),
+  disposition: text("disposition").notNull(),
+  evidence: text("evidence").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
+export const managedServiceReservations = sqliteTable("managed_service_reservations", {
+  serviceId: text("service_id").primaryKey(),
+  serviceKey: text("service_key").notNull(),
+  ownerId: text("owner_id").notNull(),
+  ownerGeneration: text("owner_generation").notNull(),
+  executionId: text("execution_id").notNull(),
+  checkoutRoot: text("checkout_root").notNull(),
+  stateRoot: text("state_root").notNull(),
+  bindHost: text("bind_host").notNull(),
+  port: integer("port").notNull(),
+  state: text("state").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const managedServiceHealthJournal = sqliteTable("managed_service_health_journal", {
+  sequence: integer("sequence").primaryKey({ autoIncrement: true }),
+  serviceId: text("service_id").notNull(),
+  ownerId: text("owner_id").notNull(),
+  ownerGeneration: text("owner_generation").notNull(),
+  outcome: text("outcome").notNull(),
+  note: text("note").notNull(),
+  sampledAt: text("sampled_at").notNull(),
+});
+
+export const executionOwners = sqliteTable("execution_owners", {
+  id: text("id").primaryKey(),
+  kind: text("kind").notNull(),
+  pid: integer("pid").notNull(),
+  processCreatedAt: text("process_created_at").notNull(),
+  bootId: text("boot_id").notNull(),
+  generation: text("generation").notNull(),
+  heartbeatAtMs: integer("heartbeat_at_ms").notNull(),
+  status: text("status").notNull(),
+  registeredAt: text("registered_at").notNull(),
+});
+
+export const managedExecutions = sqliteTable("managed_executions", {
+  id: text("id").primaryKey(),
+  kind: text("kind").notNull(),
+  workspaceId: text("workspace_id").notNull(),
+  checkoutRoot: text("checkout_root").notNull(),
+  workRunId: text("work_run_id"),
+  agentExecutionId: text("agent_execution_id"),
+  commandOperationId: text("command_operation_id"),
+  ownerId: text("owner_id").notNull().references(() => executionOwners.id),
+  ownerGeneration: text("owner_generation").notNull(),
+  runnerPid: integer("runner_pid"),
+  runnerCreatedAt: text("runner_created_at"),
+  runnerBootId: text("runner_boot_id"),
+  jobIdentity: text("job_identity"),
+  armedEvidence: text("armed_evidence"),
+  armedAt: text("armed_at"),
+  generation: integer("generation").notNull(),
+  accessMode: text("access_mode").notNull(),
+  resources: text("resources").notNull(),
+  phase: text("phase").notNull(),
+  outcome: text("outcome").notNull(),
+  resourceState: text("resource_state").notNull(),
+  stopReason: text("stop_reason"),
+  idempotencyScope: text("idempotency_scope").notNull(),
+  requestKey: text("request_key"),
+  requestHash: text("request_hash").notNull(),
+  cancellationRequestedAt: text("cancellation_requested_at"),
+  exitEvidence: text("exit_evidence"),
+  recoveryReason: text("recovery_reason"),
+  stateVersion: integer("state_version").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("managed_execution_request").on(table.idempotencyScope, table.requestKey),
+  index("managed_executions_owner").on(table.ownerId, table.phase),
+  index("managed_executions_resources").on(table.resourceState, table.phase),
+  index("managed_executions_checkout").on(table.checkoutRoot, table.phase),
+]);
+
+export const executionAudit = sqliteTable("execution_audit", {
+  sequence: integer("sequence").primaryKey({ autoIncrement: true }),
+  executionId: text("execution_id").notNull().references(() => managedExecutions.id),
+  generation: integer("generation").notNull(),
+  action: text("action").notNull(),
+  previousState: text("previous_state"),
+  nextState: text("next_state"),
+  evidence: text("evidence"),
+  createdAt: text("created_at").notNull(),
+}, (table) => [index("execution_audit_execution").on(table.executionId, table.sequence)]);
 
 export const agentContinueKeys = sqliteTable("agent_continue_keys", {
   agentId: text("agent_id").notNull().references(() => localAgentSessions.id, { onDelete: "cascade" }),

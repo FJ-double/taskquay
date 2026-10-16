@@ -59,3 +59,33 @@ terminateProcessTree(
   },
 );
 assert.deepEqual(fallbackCalls, ["child:SIGTERM"]);
+
+// A Windows root that already exited must not be taskkill'ed by PID: the PID
+// may have been reused by an unrelated process tree.
+const exitedCalls: string[] = [];
+for (const exited of [{ exitCode: 0, signalCode: null }, { exitCode: null, signalCode: "SIGTERM" }]) {
+  terminateProcessTree(
+    { pid: 45, ...exited, kill: (signal) => (exitedCalls.push(`child:${signal}`), true) },
+    "SIGTERM",
+    false,
+    {
+      platform: "win32",
+      killGroup: () => undefined,
+      killWindowsTree: (pid) => (exitedCalls.push(`tree:${pid}`), true),
+    },
+  );
+}
+assert.deepEqual(exitedCalls, []);
+
+const liveCalls: string[] = [];
+terminateProcessTree(
+  { pid: 46, exitCode: null, signalCode: null, kill: (signal) => (liveCalls.push(`child:${signal}`), true) },
+  "SIGTERM",
+  false,
+  {
+    platform: "win32",
+    killGroup: () => undefined,
+    killWindowsTree: (pid) => (liveCalls.push(`tree:${pid}`), true),
+  },
+);
+assert.deepEqual(liveCalls, ["tree:46"]);

@@ -8,6 +8,20 @@ import type { SubagentsConfig } from "./local-agent-config.js";
 
 export type { ToolMode } from "./config-schema.js";
 
+export interface WindowsMcpConfig {
+  enabled: boolean;
+  command: string;
+  args: string[];
+  allowedTools: string[];
+}
+
+export interface BlenderMcpConfig {
+  enabled: boolean;
+  command: string;
+  args: string[];
+  allowedTools: string[];
+}
+
 export interface ServerConfig {
   configDir: string;
   host: string;
@@ -29,6 +43,8 @@ export interface ServerConfig {
   devspaceAgentsDir: string;
   subagents: SubagentsConfig;
   agentDir: string;
+  windowsMcp?: WindowsMcpConfig;
+  blenderMcp?: BlenderMcpConfig;
   logging: LoggingConfig;
   console?: { enabled: boolean; allowRemote: boolean; sessionTtlSeconds: number };
 }
@@ -82,6 +98,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     devspaceAgentsDir: devspaceAgentsDir(env),
     subagents: stored.subagents,
     agentDir: normalizePath(stored.skills.agentDir),
+    windowsMcp: {
+      enabled: stored.windowsMcp.enabled,
+      command: stored.windowsMcp.command,
+      args: stored.windowsMcp.args,
+      allowedTools: stored.windowsMcp.allowedTools,
+    },
+    blenderMcp: {
+      enabled: stored.blenderMcp.enabled,
+      command: stored.blenderMcp.command,
+      args: stored.blenderMcp.args,
+      allowedTools: stored.blenderMcp.allowedTools,
+    },
     logging: {
       ...stored.logging,
       trustProxy: stored.server.trustProxy,
@@ -99,7 +127,10 @@ function normalizePath(path: string): string {
 
 function normalizeAllowedHosts(hosts: string[]): string[] {
   if (hosts.includes("*")) return ["*"];
-  return Array.from(new Set(hosts.map((host) => host.trim()).filter(Boolean)));
+  // Host-header validation compares URL hostnames, which bracket IPv6
+  // literals ("[::1]"); a bare "::1" would never match.
+  return Array.from(new Set(hosts.map((host) => host.trim()).filter(Boolean)
+    .map((host) => host.includes(":") && !host.startsWith("[") ? `[${host}]` : host)));
 }
 
 function parseRequiredSecret(value: string | undefined): string {

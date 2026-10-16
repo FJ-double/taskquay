@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { realpathSync } from "node:fs";
 import { ExecutionCoordinator, ExecutionConflictError, canonicalExecutionRoot, type ExecutionClaim, type ExecutionTicket } from "./execution-coordinator.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { contextPrompt, validateContextShape, verifyHostContext, type HostPreparedContext } from "./workspace-context.js";
@@ -38,11 +39,15 @@ import {
   type LocalAgentWriteMode,
 } from "./local-agent-runtime.js";
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
-import { assertAllowedPath } from "./roots.js";
+import { ManagedProviderDispatcher, type AtomicProviderAdmission, type ProviderManagedCompletion, type ProviderTurnStarter } from "./provider-managed-dispatch.js";
+import { AgentProviderExecutionError } from "./local-agent-errors.js";
+import { assertAllowedPath, expandHomePath } from "./roots.js";
 import {
   isSubagentProviderEnabled,
   type SubagentsConfig,
 } from "./local-agent-config.js";
+
+const WRITE_MODE_RANK: Readonly<Record<LocalAgentWriteMode, number>> = { read_only: 0, allowed: 1, full_access: 2 };
 
 export interface StartLocalAgentInput {
   target: string;
@@ -84,6 +89,8 @@ export interface LocalAgentManagerOptions {
   allowedRoots?: readonly string[];
   logger?: LocalAgentManagerLogger;
   subagents: SubagentsConfig;
+  /** Experimental only; disabled in regular production and test instances. */
+  isolatedProviderTurns?: { enabled: boolean; starter?: ProviderTurnStarter };
 }
 
 export type AgentStartError = AgentTargetError | AgentScopeError | AgentConflictError | AgentStoreError;
@@ -140,15 +147,28 @@ export class LocalAgentManager {
   private readonly subagents: SubagentsConfig;
   private readonly activeTurns = new Map<string, ActiveLocalAgentTurn>();
   private readonly queuedTurns = new Map<string, AbortController>();
+  /** Managed tickets are distinct from already-promoted Turns. Never
+   * cancel a promoted Job merely because an old AbortController remains. */
+  private readonly managedQueuedTickets = new Map<string, string>();
   private readonly execution: ExecutionCoordinator;
   private readonly ledger: WorkLedger;
+  private readonly isolatedProvider?: ManagedProviderDispatcher;
+  private readonly guardedClaims = new Set<string>();
+  private readonly finalizedManagedExecutions = new Set<string>();
   private accepting = true;
   private closePromise?: Promise<void>;
 
   constructor(options: LocalAgentManagerOptions) {
     this.store = options.store;
     this.execution = new ExecutionCoordinator(options.store.stateDir);
-    this.ledger = new WorkLedger(options.store.stateDir);
+    if (options.isolatedProviderTurns?.enabled) {
+      // Share ONE SQLite connection for AgentStore, WorkLedger, claims and
+      // managed executions. The coordinator exclusively owns its lifetime.
+      options.store.useSharedDatabase(this.execution.sharedDatabaseHandle);
+      this.ledger = new WorkLedger(options.store.stateDir, this.execution.sharedDatabaseHandle);
+    } else {
+      this.ledger = new WorkLedger(options.store.stateDir);
+    }
     for (const driver of options.drivers) this.drivers.set(driver.provider, driver);
     this.pool = options.pool;
     this.loadProfiles = options.loadProfiles;
@@ -156,6 +176,11 @@ export class LocalAgentManager {
     this.allowedRoots = options.allowedRoots;
     this.logger = options.logger;
     this.subagents = options.subagents;
+    if (options.isolatedProviderTurns?.enabled) {
+      this.isolatedProvider = new ManagedProviderDispatcher(
+        this.execution, options.store.stateDir, options.isolatedProviderTurns.starter,
+      );
+    }
   }
 
   reconcileActiveRuns(message?: string): BetterResult<number, AgentStoreError> {
@@ -170,7 +195,6 @@ export class LocalAgentManager {
       yield* manager.acceptingResult("start");
       const workspaceRoot = yield* manager.authorizeWorkspace(
         input.workspaceRoot,
-        input.workspaceId,
         "start",
       );
       const profiles = yield* Result.await(manager.loadProfilesResult(workspaceRoot, input.target));
@@ -218,7 +242,7 @@ export class LocalAgentManager {
         hash: createHash("sha256").update(JSON.stringify([input.prompt, input.target, input.writeMode, input.model, input.effort,
           input.context, input.contextKey, input.workItemId, input.freshContext, input.resources, input.workRunId])).digest("hex") } : undefined;
       const provider = manager.subagents.providers.find((entry) => entry.id === target.provider);
-      const mode = input.writeMode ?? provider?.writeMode ?? "allowed";
+      const mode = yield* manager.writeModeResult(target.provider, target.name, input.writeMode, "start");
       const readDefaults = mode === "read_only" ? provider?.readOnlyDefaults : undefined;
       let effectiveEffort: string | undefined;
       try { effectiveEffort = limitedReasoningEffort(provider, input.model ?? readDefaults?.model ?? target.model,
@@ -282,6 +306,8 @@ export class LocalAgentManager {
       yield* manager.profileForRecordResult(record, profiles);
       yield* manager.providerEnabledResult(record.provider, record.profileName, "continue");
       yield* manager.driverResult(record.provider, "continue", agentId);
+      // Reject an over-ceiling write mode before reserving the request key.
+      yield* manager.writeModeResult(record.provider, record.profileName, overrides.writeMode, "continue");
       const target = resolveLocalAgentTarget(
         record.profileName, profiles, undefined, undefined, manager.subagents.providers,
       );
@@ -320,7 +346,7 @@ export class LocalAgentManager {
   }
 
   list(scope: LocalAgentWorkspaceScope): BetterResult<LocalAgentRecord[], AgentListError> {
-    return this.authorizeWorkspace(scope.workspaceRoot, scope.workspaceId, "list").andThen((workspaceRoot) => (
+    return this.authorizeWorkspace(scope.workspaceRoot, "list").andThen((workspaceRoot) => (
       this.store.listResult({
         workspaceId: scope.workspaceId,
         workspaceRoot,
@@ -345,12 +371,13 @@ export class LocalAgentManager {
 
     const pending: Promise<void>[] = [];
     for (const capture of captures) {
-      if (capture.turn?.status !== "running") continue;
+      const queued = capture.agent.status === "queued";
+      if (!queued && capture.turn?.status !== "running") continue;
       const active = this.activeTurns.get(capture.agent.id);
-      if (active?.turnId !== capture.turn.id) {
+      if (!active || (!queued && active.turnId !== capture.turn?.id)) {
         return Result.err(new AgentStoreError(
           "wait",
-          new Error(`Turn ${capture.turn.id} is not active.`),
+          new Error(`Turn ${capture.turn?.id ?? "queued"} is not active.`),
           `Running turn state is unavailable for subagent ${capture.agent.id}.`,
         ));
       }
@@ -362,6 +389,18 @@ export class LocalAgentManager {
       : false;
     const results: LocalAgentWaitResult[] = [];
     for (const capture of captures) {
+      if (capture.agent.status === "queued") {
+        if (timedOut) {
+          results.push({ id: capture.agent.id, status: "running", wait: "timeout" });
+          continue;
+        }
+        const currentAgent = this.store.getById(capture.agent.id);
+        const promotedTurn = this.store.getLatestTurn(capture.agent.id);
+        results.push(promotedTurn
+          ? waitResultFromTurn(promotedTurn, false)
+          : waitResultFromAgent(currentAgent ?? capture.agent, false));
+        continue;
+      }
       if (!capture.turn) {
         results.push(waitResultFromAgent(capture.agent, timedOut));
         continue;
@@ -383,6 +422,7 @@ export class LocalAgentManager {
     this.closePromise = (async () => {
       // Closing pooled runtimes is what interrupts provider turns. Waiting for
       // those turns first can strand a provider process indefinitely.
+      await this.isolatedProvider?.stopAll();
       await this.pool.close();
       const turnResults = await Promise.allSettled(turns);
       for (const result of turnResults) {
@@ -418,6 +458,46 @@ export class LocalAgentManager {
     const active = this.activeTurns.get(agentId);
     if (!active) return Result.err(new AgentConflictError({ code: "AGENT_CONFLICT", agentId,
       operation: "cancel_queued", retryable: true, message: "Queued turn ownership is unavailable." }));
+    const managedTicketId = this.managedQueuedTickets.get(agentId);
+    if (this.isolatedProvider && managedTicketId) {
+      try {
+        // Exact waiting ticket deletion and Agent status change are atomic.
+        // If promotion committed first, the ticket is gone and cancellation
+        // MUST NOT write to the already-created Provider Turn.
+        const stopped = this.execution.withManagedState((sqlite) => {
+          const ticket = sqlite.prepare(`select id from execution_waiters
+            where id=? and agent_id=? and owner_id=? and owner_generation is not null`)
+            .get(managedTicketId, agentId, this.execution.managedOwnerId);
+          const current = this.store.getById(agentId);
+          if (!ticket || current?.status !== "queued" || active.turnId !== 0) {
+            throw new Error("MANAGED_TICKET_ALREADY_PROMOTED_OR_CHANGED");
+          }
+          const removed = sqlite.prepare(`delete from execution_waiters
+            where id=? and agent_id=? and owner_id=?`)
+            .run(managedTicketId, agentId, this.execution.managedOwnerId);
+          if (removed.changes !== 1) throw new Error("MANAGED_TICKET_CANCEL_RACE");
+          const result = this.store.updateResult(agentId, {
+            status: "stopped",
+            error: "Queued task cancelled before provider invocation.",
+            errorCode: "PROVIDER_CANCELLED", errorRetryable: false,
+          });
+          if (result.isErr()) throw result.error;
+          return result.value;
+        });
+        controller.abort();
+        this.managedQueuedTickets.delete(agentId);
+        return Result.ok(stopped);
+      } catch {
+        return Result.err(new AgentConflictError({ code: "AGENT_CONFLICT",
+          agentId, operation: "cancel_queued", retryable: true,
+          message: "Managed queue ticket changed or was already promoted; use the active Turn controls instead." }));
+      }
+    }
+    if (this.isolatedProvider && active.turnId === 0) {
+      return Result.err(new AgentConflictError({ code: "AGENT_CONFLICT",
+        agentId, operation: "cancel_queued", retryable: true,
+        message: "Managed waiting ticket ownership cannot be verified." }));
+    }
     controller.abort();
     return this.store.finishTurnResult(agentId, active.turnId, { status: "stopped",
       error: "Queued task cancelled before provider invocation.", errorCode: "PROVIDER_CANCELLED", errorRetryable: false });
@@ -522,7 +602,9 @@ export class LocalAgentManager {
     }
 
     const providerConfig = this.subagents.providers.find((provider) => provider.id === record.provider);
-    const effectiveMode = overrides.writeMode ?? providerConfig?.writeMode ?? "allowed";
+    const writeMode = this.writeModeResult(record.provider, record.profileName, overrides.writeMode, "run");
+    if (writeMode.isErr()) return writeMode;
+    const effectiveMode = writeMode.value;
     const readOnlyDefaults = effectiveMode === "read_only" ? providerConfig?.readOnlyDefaults : undefined;
     const resolvedModel = overrides.model ?? readOnlyDefaults?.model ?? defaults?.model;
     const model = resolvedModel ?? record.model;
@@ -536,46 +618,87 @@ export class LocalAgentManager {
       requestedEffort, effectiveEffort: effort, capped: effort !== requestedEffort,
       source: overrides.effort !== undefined ? "caller" : readOnlyDefaults?.effort !== undefined ? "read_only_default" : "target_or_session_default" });
     overrides = { ...overrides, model: resolvedModel, effort: effort === requestedEffort ? resolvedEffort : effort };
-    let executionId: string;
-    try {
-      this.ledger.assertAgentUsable(record.id);
-      const prior = this.ledger.latestExecution(record.id);
-      const priorRun = prior ? this.ledger.run(prior.run_id) : undefined;
-      const reusable = !overrides.workRunId && priorRun?.status === "running" && JSON.parse(priorRun.origin).entryPoint === "devspace_cli"
-        ? priorRun.id : undefined;
-      const work = overrides.workRunId || reusable
-        ? this.ledger.requireScope(overrides.workRunId ?? reusable!, record.workspaceRoot, workspaceId)
-        : this.ledger.begin({ root: record.workspaceRoot, workspaceId, workItemId: record.workItemId ?? `agent-${record.id}`,
-          runKey: `cli-${randomUUID()}`, title: `DevSpace · ${record.workItemId ?? record.id}`.slice(0, 160),
-          origin: { entryPoint: "devspace_cli", evidence: "server_entry" } });
-      executionId = this.ledger.beginExecution({ runId: work.id, agentId: record.id, provider: record.provider,
-        model: overrides.model ?? defaults?.model, effort: overrides.effort ?? defaults?.effort });
-    } catch (error) { return Result.err(new AgentStoreError("work_accounting", error,
-      "Unable to establish work ownership; inspect the task/thread state before provider invocation.")); }
-
-    // Resolve effective capability BEFORE choosing the source lock, not after it.
+    // The managed path resolves resources BEFORE touching WorkLedger. Its
+    // claim, work execution and managed execution commit together.
     const analysisOnly = effectiveMode === "read_only" && this.drivers.get(record.provider as LocalAgentProvider)?.readOnlyConcurrency === true;
     overrides = { ...overrides, writeMode: effectiveMode };
     const requirement = { workspaceRoot: record.workspaceRoot, kind: "agent" as const, agentId: record.id,
       threadKey: record.providerSessionId ? `${record.provider}:${record.providerSessionId}` : undefined,
       access: analysisOnly ? "read" as const : "write" as const,
       resources: [...new Set([...(analysisOnly ? [] : this.subagents.sharedResources ?? []), ...overrides.resources ?? []])],
-      maxConcurrentAgents: this.subagents.maxConcurrentAgents ?? 2,
+      // Opt-in managed Agent mode targets four independent Jobs by default.
+      // A user's explicit lower limit still wins; legacy mode stays at two.
+      maxConcurrentAgents: this.subagents.maxConcurrentAgents ?? (this.isolatedProvider ? 4 : 2),
       maxConcurrentReaders: this.subagents.maxConcurrentReaders ?? 2 };
     let claim: ExecutionClaim | undefined;
     let ticket: ExecutionTicket | undefined;
+    let executionId: string | undefined;
+    let managedAdmission: AtomicProviderAdmission | undefined;
+    let managedTicket: ReturnType<ManagedProviderDispatcher["enqueue"]> | undefined;
+    let begun: ReturnType<LocalAgentStore["beginTurnResult"]> | undefined;
     const waitMs = this.subagents.queueWaitMs ?? 300_000;
     try {
-      try { claim = this.execution.acquire(requirement); }
-      catch (error) {
-        if (!(error instanceof ExecutionConflictError) || waitMs === 0) throw error;
-        ticket = this.execution.enqueue(requirement, waitMs);
+      if (this.isolatedProvider) {
+        const managedInput = {
+          requirement, agentId: record.id, provider: record.provider,
+          workspaceId: workspaceId ?? record.workspaceId ?? "agent-workspace",
+          workRunId: overrides.workRunId, workItemId: record.workItemId,
+          requestKey: overrides.requestKey,
+          model: overrides.model ?? defaults?.model, effort: overrides.effort ?? defaults?.effort,
+          prompt, providerSessionId: record.providerSessionId,
+        };
+        try {
+          managedAdmission = this.isolatedProvider.admit(managedInput, () => {
+            begun = this.store.beginTurnResult(record.id, {
+              prompt, model: overrides.model ?? record.model,
+              effort: overrides.effort ?? record.effort,
+            });
+            if (begun.isErr()) throw begun.error;
+          });
+        } catch (error) {
+          if (!(error instanceof ExecutionConflictError) || waitMs === 0) throw error;
+          // Both the ticket and local Agent.status=queued MUST commit on
+          // the borrowed connection. A crash between these writes must
+          // never create an unowned queue intent or an untracked Agent.
+          managedTicket = this.isolatedProvider.withTurnTransaction(() => {
+            const created = this.isolatedProvider!.enqueue(managedInput, waitMs);
+            const updated = this.store.updateResult(record.id, { status: "queued" });
+            if (updated.isErr()) throw updated.error;
+            return created;
+          });
+        }
+        if (managedAdmission) {
+          claim = managedAdmission.claim;
+          executionId = managedAdmission.agentExecutionId;
+          this.guardedClaims.add(claim.id);
+        }
+      } else {
+        this.ledger.assertAgentUsable(record.id);
+        const prior = this.ledger.latestExecution(record.id);
+        const priorRun = prior ? this.ledger.run(prior.run_id) : undefined;
+        const reusable = !overrides.workRunId && priorRun?.status === "running" &&
+          JSON.parse(priorRun.origin).entryPoint === "devspace_cli" ? priorRun.id : undefined;
+        const work = overrides.workRunId || reusable
+          ? this.ledger.requireScope(overrides.workRunId ?? reusable!, record.workspaceRoot, workspaceId)
+          : this.ledger.begin({ root: record.workspaceRoot, workspaceId,
+            workItemId: record.workItemId ?? `agent-${record.id}`,
+            runKey: `cli-${randomUUID()}`, title: `DevSpace · ${record.workItemId ?? record.id}`.slice(0, 160),
+            origin: { entryPoint: "devspace_cli", evidence: "server_entry" } });
+        executionId = this.ledger.beginExecution({ runId: work.id, agentId: record.id, provider: record.provider,
+          model: overrides.model ?? defaults?.model, effort: overrides.effort ?? defaults?.effort });
+        try { claim = this.execution.acquire(requirement); }
+        catch (error) {
+          if (!(error instanceof ExecutionConflictError) || waitMs === 0) throw error;
+          ticket = this.execution.enqueue(requirement, waitMs);
+        }
       }
     } catch (error) {
       this.store.updateResult(record.id, { status: "error", errorCode: "AGENT_CONFLICT", errorRetryable: true,
         error: "Local admission failed before provider invocation; previous successful results remain recoverable." });
-      this.ledger.providerNotRequested(executionId);
-      this.ledger.endExecution(executionId, "failed");
+      if (executionId) {
+        this.ledger.providerNotRequested(executionId);
+        this.ledger.endExecution(executionId, "failed");
+      }
       if (error instanceof ExecutionConflictError) return Result.err(new AgentConflictError({
         code: "AGENT_CONFLICT", agentId: error.agentId, operation: "admission", retryable: true, message: error.message,
       }));
@@ -589,62 +712,147 @@ export class LocalAgentManager {
       model: overrides.model ?? readOnlyDefaults?.model ?? defaults?.model,
       effort: overrides.effort ?? readOnlyDefaults?.effort ?? defaults?.effort,
     };
-    const begun = this.store.beginTurnResult(record.id, {
-      prompt,
-      model: overrides.model ?? record.model,
+    if (!managedTicket) begun ??= this.store.beginTurnResult(record.id, {
+      prompt, model: overrides.model ?? record.model,
       effort: overrides.effort ?? record.effort,
     });
-    if (begun.isErr()) { claim?.release(); ticket?.cancel(); this.ledger.endExecution(executionId, "failed"); return begun; }
-    const updated = ticket
+    if (begun?.isErr()) {
+      if (managedAdmission && this.isolatedProvider) {
+        this.isolatedProvider.abandonUndispatched(managedAdmission, "agent_store_begin_turn_failed");
+        this.guardedClaims.delete(managedAdmission.claim.id);
+      } else {
+        claim?.release(); ticket?.cancel(); this.ledger.endExecution(executionId!, "failed");
+      }
+      return begun;
+    }
+    const admittedTurn = begun?.isOk() ? begun.value : undefined;
+    const updated = managedTicket
+      ? this.store.getByIdResult(record.id).map((value) => {
+        if (!value || value.status !== "queued") throw new Error("MANAGED_FIFO_ATOMIC_QUEUE_STATE_LOST");
+        return value;
+      })
+      : ticket
       ? this.store.updateResult(record.id, { status: "queued" })
-      : Result.ok(begun.value.agent);
+      : Result.ok(admittedTurn!.agent);
     if (updated.isErr()) {
-      this.store.finishTurnResult(record.id, begun.value.turn.id, { status: "failed",
+      if (admittedTurn) this.store.finishTurnResult(record.id, admittedTurn.turn.id, { status: "failed",
         error: updated.error.message, errorCode: updated.error.code, errorRetryable: updated.error.retryable });
-      claim?.release(); ticket?.cancel(); this.ledger.endExecution(executionId, "failed"); return updated;
+      managedTicket?.cancel();
+      if (managedAdmission && this.isolatedProvider) {
+        this.isolatedProvider.abandonUndispatched(managedAdmission, "agent_store_update_failed");
+        this.guardedClaims.delete(managedAdmission.claim.id);
+      } else if (!managedTicket) {
+        claim?.release(); ticket?.cancel(); this.ledger.endExecution(executionId!, "failed");
+      }
+      return updated;
     }
     const controller = new AbortController();
-    if (ticket) this.queuedTurns.set(record.id, controller);
+    let providerTurnEntered = false;
+    const acceptedTurnId = () => {
+      if (!begun || begun.isErr()) throw new Error("MANAGED_TICKET_TURN_NOT_COMMITTED");
+      return begun.value.turn.id;
+    };
+    if (ticket || managedTicket) this.queuedTurns.set(record.id, controller);
+    if (managedTicket) this.managedQueuedTickets.set(record.id, managedTicket.id);
     // Defer invocation until after the tracking entry is visible. This keeps
     // cleanup correct even if runTurn later gains a synchronous completion path.
     const turn = Promise.resolve().then(async () => {
       try {
-        while (!claim && ticket) {
+        while (!claim && (ticket || managedTicket)) {
           if (controller.signal.aborted || !this.accepting) throw new Error("Queue cancelled before provider invocation.");
-          claim = ticket.tryAcquire();
+          if (managedTicket && this.isolatedProvider) {
+            managedAdmission = managedTicket.tryAdmit(() => {
+              begun = this.store.beginTurnResult(record.id, {
+                prompt, model: overrides.model ?? record.model,
+                effort: overrides.effort ?? record.effort,
+              });
+              if (begun.isErr()) throw begun.error;
+            });
+            if (managedAdmission) {
+              this.managedQueuedTickets.delete(record.id);
+              claim = managedAdmission.claim;
+              executionId = managedAdmission.agentExecutionId;
+              this.guardedClaims.add(claim.id);
+              const active = this.activeTurns.get(record.id);
+              if (active) {
+                active.turnId = acceptedTurnId();
+                active.workRunId = managedAdmission.workRunId;
+              }
+            }
+          } else if (ticket) claim = ticket.tryAcquire();
           if (!claim) await delay(100, undefined, { signal: controller.signal });
         }
         this.queuedTurns.delete(record.id);
+        this.managedQueuedTickets.delete(record.id);
         if (controller.signal.aborted || !this.accepting) throw new Error("Queue cancelled before provider invocation.");
         const running = this.store.updateResult(record.id, { status: "running" });
         if (running.isErr()) throw running.error;
-        await this.runTurn(running.value, begun.value.turn.id, prompt, overrides, workspaceId, claim, analysisOnly, executionId);
+        providerTurnEntered = true;
+        await this.runTurn(running.value, acceptedTurnId(), prompt, overrides, workspaceId,
+          claim, analysisOnly, executionId, managedAdmission?.executionId);
       } catch (error) {
         const existing = this.store.getById(record.id);
+        if (managedTicket && !managedAdmission && existing?.status === "queued") {
+          this.store.updateResult(record.id, {
+            status: controller.signal.aborted || !this.accepting ? "stopped" : "error",
+            error: controller.signal.aborted || !this.accepting
+              ? "Queued task cancelled before Provider dispatch."
+              : error instanceof Error ? error.message : "Managed FIFO admission failed.",
+            errorCode: controller.signal.aborted || !this.accepting ? "PROVIDER_CANCELLED" : "AGENT_CONFLICT",
+            errorRetryable: false,
+          });
+        }
+        if (!providerTurnEntered && managedTicket && managedAdmission && claim?.id &&
+            this.guardedClaims.has(claim.id)) {
+          // After ticket promotion, a failure before runTurn means no Worker
+          // was invoked. Release only via durable never-dispatched evidence.
+          const state = this.execution.sharedDatabaseHandle.sqlite.prepare(
+            "select phase,runner_pid,armed_evidence from managed_executions where id=?",
+          ).get(managedAdmission.executionId) as
+            { phase: string; runner_pid: number | null; armed_evidence: string | null } | undefined;
+          if (state?.phase === "starting" && state.runner_pid === null && !state.armed_evidence) {
+            this.isolatedProvider!.abandonUndispatched(managedAdmission,
+              "managed_ticket_promoted_but_worker_not_dispatched");
+            this.guardedClaims.delete(claim.id);
+            this.finalizedManagedExecutions.add(executionId!);
+          }
+        }
         // runTurn already persisted its own error; don't relabel it a queue failure.
-        const activeTurn = this.store.getTurnById(begun.value.turn.id);
-        if (existing && activeTurn?.status === "running") this.store.finishTurnResult(record.id, begun.value.turn.id, {
+        const activeTurn = begun?.isOk() ? this.store.getTurnById(begun.value.turn.id) : undefined;
+        if (existing && activeTurn?.status === "running") this.store.finishTurnResult(record.id, activeTurn.id, {
           status: controller.signal.aborted ? "stopped" : "failed",
           error: controller.signal.aborted ? "Queued turn cancelled before provider invocation." : "Execution could not leave the local queue; inspect its claim.",
           errorCode: controller.signal.aborted ? "PROVIDER_CANCELLED" : "AGENT_CONFLICT", errorRetryable: true,
         });
-        if (!ticket) throw error;
+        if (!ticket && !managedTicket) throw error;
       }
     }).finally(() => {
       try {
         const terminal = this.store.getById(record.id)?.status;
-        this.ledger.endExecution(executionId, terminal === "idle" ? "completed" : terminal === "stopped" ? "cancelled" : "failed");
+        if (executionId && claim?.id && this.guardedClaims.has(claim.id)) {
+          // No verified Job/ledger commit: quarantine legacy claim. The
+          // upcoming recovery stage must inspect it; never steal by TTL.
+          this.ledger.endExecution(executionId!, "reconciliation_required");
+        } else if (executionId && !this.finalizedManagedExecutions.has(executionId)) {
+          this.ledger.endExecution(executionId!,
+            terminal === "idle" ? "completed" : terminal === "stopped" ? "cancelled" : "failed");
+        }
       } finally {
         this.queuedTurns.delete(record.id);
+        this.managedQueuedTickets.delete(record.id);
         const current = this.store.getById(record.id);
         if (current && ["devspace_active", "interrupting", "desktop_pending"].includes(current.controlState)) {
           this.store.setControlState(record.id, "terminal", null, "turn_finished");
         }
-        ticket?.cancel(); claim?.release(); this.activeTurns.delete(record.id);
+        ticket?.cancel();
+        managedTicket?.cancel();
+        if (!claim?.id || !this.guardedClaims.has(claim.id)) claim?.release();
+        this.finalizedManagedExecutions.delete(executionId!);
+        this.activeTurns.delete(record.id);
       }
     });
-    const ownedWorkRunId = this.ledger.execution(executionId).run_id;
-    this.activeTurns.set(record.id, { turnId: begun.value.turn.id, completion: turn, workRunId: ownedWorkRunId });
+    const ownedWorkRunId = executionId ? this.ledger.execution(executionId).run_id : "";
+    this.activeTurns.set(record.id, { turnId: admittedTurn?.turn.id ?? 0, completion: turn, workRunId: ownedWorkRunId });
     void turn.catch(() => undefined);
     return Result.ok(updated.value);
   }
@@ -658,6 +866,7 @@ export class LocalAgentManager {
     claim?: ExecutionClaim,
     analysisOnly = false,
     executionId?: string,
+    managedExecutionId?: string,
   ): Promise<void> {
     const startedAt = Date.now();
     this.log("info", "agent_run_started", {
@@ -666,7 +875,7 @@ export class LocalAgentManager {
       providerSessionIdPrefix: record.providerSessionId?.slice(0, 8),
     });
     try {
-      const authorized = this.authorizeWorkspace(record.workspaceRoot, workspaceId, "run");
+      const authorized = this.authorizeWorkspace(record.workspaceRoot, "run");
       if (authorized.isErr()) {
         this.persistRunError(record, turnId, authorized.error, startedAt);
         return;
@@ -760,9 +969,53 @@ export class LocalAgentManager {
       // An older/uninstrumented Codex adapter must never turn unknown paid work into zero.
       if (executionId && record.provider === "codex") this.ledger.providerDispatchStarted(executionId);
       if (executionId && record.provider === "codex" && !driver.value.reportsWorkLifecycle) this.ledger.requestStarted(executionId);
-      const result = await this.pool.run(driver.value, context, input.value, callbacks);
+      if (this.isolatedProvider && (!executionId || !claim || !managedExecutionId)) {
+        // An enabled isolation gate must NEVER silently fall back to a
+        // pooled, unmanaged Provider when admission identity is missing.
+        throw new Error("ISOLATED_PROVIDER_ADMISSION_IDENTITY_REQUIRED");
+      }
+      let managed: ProviderManagedCompletion | undefined;
+      const result = this.isolatedProvider && executionId && claim
+        ? await (async () => {
+          const isolated = await this.isolatedProvider!.run({
+            claim,
+            managedExecutionId: managedExecutionId!,
+            agentExecutionId: executionId,
+            workRunId: this.ledger.execution(executionId).run_id,
+            workspaceId: workspaceId ?? record.workspaceId ?? "agent-workspace",
+            context, input: input.value, callbacks,
+            resources: [...new Set([
+              ...(analysisOnly ? [] : this.subagents.sharedResources ?? []),
+              ...(overrides.resources ?? []),
+            ])],
+            subagents: this.subagents,
+          });
+          managed = isolated;
+          if (!isolated.completion.ok || !isolated.completion.result) {
+            return Result.err(new AgentProviderExecutionError({
+              code: "PROVIDER_EXECUTION_ERROR", provider: driver.value.provider,
+              agentId: record.id, operation: "isolated_turn",
+              retryable: false,
+              message: isolated.completion.error?.message ?? "Isolated Provider failed after Job cleanup.",
+            }));
+          }
+          return Result.ok(isolated.completion.result);
+        })()
+        : await this.pool.run(driver.value, context, input.value, callbacks);
       if (result.isErr()) {
-        this.persistRunError(record, turnId, result.error, startedAt);
+        if (managed && this.isolatedProvider && claim) {
+          this.isolatedProvider.finalize(managed, "failed", () => {
+            const persisted = this.store.finishTurnResult(record.id, turnId, {
+              status: "failed", error: result.error.message,
+              errorCode: result.error.code, errorRetryable: result.error.retryable,
+            });
+            if (persisted.isErr()) throw persisted.error;
+          });
+          this.guardedClaims.delete(claim.id);
+          this.finalizedManagedExecutions.add(executionId!);
+        } else {
+          this.persistRunError(record, turnId, result.error, startedAt);
+        }
         return;
       }
       const runResult = result.value;
@@ -777,22 +1030,47 @@ export class LocalAgentManager {
       const current = this.store.getByIdResult(record.id);
       if (current.isErr()) throw current.error;
       if (!current.value) return;
-      if (executionId) this.ledger.saveResponse(executionId, runResult.finalResponse);
-      const updated = this.store.finishTurnResult(record.id, turnId, {
-        providerSessionId: runResult.providerSessionId ?? current.value.providerSessionId,
-        contextSignature: createHash("sha256").update(JSON.stringify([record.provider, input.value.model, input.value.effort,
-          input.value.writeMode, profile.value?.body ?? "", "host-first-v1"])).digest("hex"),
-        status: "completed",
-        response: runResult.finalResponse,
-      });
-      if (updated.isErr()) throw updated.error;
+      let updatedRecord!: LocalAgentRecord;
+      const persistSuccess = () => {
+        if (executionId) this.ledger.saveResponse(executionId, runResult.finalResponse);
+        const saved = this.store.finishTurnResult(record.id, turnId, {
+          providerSessionId: runResult.providerSessionId ?? current.value!.providerSessionId,
+          contextSignature: createHash("sha256").update(JSON.stringify([record.provider, input.value.model, input.value.effort,
+            input.value.writeMode, profile.value?.body ?? "", "host-first-v1"])).digest("hex"),
+          status: "completed",
+          response: runResult.finalResponse,
+        });
+        if (saved.isErr()) throw saved.error;
+        updatedRecord = saved.value;
+      };
+      if (managed && this.isolatedProvider && claim) {
+        this.isolatedProvider.finalize(managed, "completed", persistSuccess);
+        this.guardedClaims.delete(claim.id);
+        this.finalizedManagedExecutions.add(executionId!);
+      } else {
+        persistSuccess();
+      }
       this.log("info", "agent_run_completed", {
-        provider: updated.value.provider,
-        agentId: updated.value.id,
-        providerSessionIdPrefix: updated.value.providerSessionId?.slice(0, 8),
+        provider: updatedRecord.provider,
+        agentId: updatedRecord.id,
+        providerSessionIdPrefix: updatedRecord.providerSessionId?.slice(0, 8),
         durationMs: Math.max(0, Date.now() - startedAt),
       });
     } catch (error) {
+      if (this.isolatedProvider && managedExecutionId && claim?.id &&
+          this.guardedClaims.has(claim.id)) {
+        // A Job may already have run; after any uncertain finalization, mark
+        // the owning session fenced. A separate recovery process must verify
+        // the exact execution before a subsequent write is admitted.
+        try {
+          this.store.setControlState(record.id, "reconcile_required", null,
+            "managed_turn_finalization_unverified");
+        } catch (stateError) {
+          this.log("error", "managed_turn_fencing_failed", {
+            agentId: record.id, errorType: stateError instanceof Error ? stateError.name : typeof stateError,
+          });
+        }
+      }
       if (isLocalAgentError(error)) {
         this.persistRunError(record, turnId, error, startedAt);
         return;
@@ -856,6 +1134,8 @@ export class LocalAgentManager {
         message: `Subagent profile not found: ${record.profileName}.`,
       }));
     }
+    const writeMode = this.writeModeResult(record.provider, record.profileName, overrides.writeMode, "run");
+    if (writeMode.isErr()) return writeMode;
     const body = profile?.body.trim();
     const stableSlot = this.drivers.get(record.provider as LocalAgentProvider)?.persistentProfileInstructions === true;
     const taskPrompt = contextPrompt(prompt, overrides.context);
@@ -865,9 +1145,7 @@ export class LocalAgentManager {
       profileInstructions: stableSlot ? body : undefined,
       workspaceRoot: record.workspaceRoot,
       providerSessionId: record.providerSessionId,
-      writeMode: overrides.writeMode
-        ?? this.subagents.providers.find((provider) => provider.id === record.provider)?.writeMode
-        ?? "allowed",
+      writeMode: writeMode.value,
       model: record.model ?? profile?.model,
       effort: record.effort ?? profile?.effort,
       modelOverrideRequested: overrides.model !== undefined,
@@ -949,6 +1227,32 @@ export class LocalAgentManager {
     }));
   }
 
+  /**
+   * The configured provider writeMode (default "allowed") is a ceiling: a
+   * caller may narrow it, never widen it. Every path that hands a writeMode to
+   * a provider resolves it here so start, continue and run cannot diverge.
+   */
+  private writeModeResult(
+    provider: string,
+    target: string,
+    requested: LocalAgentWriteMode | undefined,
+    operation: string,
+  ): BetterResult<LocalAgentWriteMode, AgentTargetError> {
+    const ceiling = this.subagents.providers.find((entry) => entry.id === provider)?.writeMode ?? "allowed";
+    if (requested === undefined) return Result.ok(ceiling);
+    if (Object.hasOwn(WRITE_MODE_RANK, requested) && WRITE_MODE_RANK[requested] <= WRITE_MODE_RANK[ceiling]) {
+      return Result.ok(requested);
+    }
+    return Result.err(new AgentTargetError({
+      code: "TARGET_RESOLUTION_FAILED",
+      target,
+      provider: isLocalAgentProvider(provider) ? provider : undefined,
+      operation,
+      retryable: false,
+      message: `Requested writeMode ${String(requested)} exceeds the configured ${provider} provider writeMode ${ceiling}.`,
+    }));
+  }
+
   private acceptingResult(
     operation: string,
     agentId?: string,
@@ -965,14 +1269,20 @@ export class LocalAgentManager {
 
   private authorizeWorkspace(
     workspaceRoot: string,
-    workspaceId: string | undefined,
     operation: string,
   ): BetterResult<string, AgentScopeError> {
     const normalized = resolve(workspaceRoot);
-    if (!workspaceId || !this.allowedRoots) return Result.ok(normalized);
+    // Allowed roots bound every caller, including CLI scopes without a workspaceId.
+    if (!this.allowedRoots) return Result.ok(normalized);
     try {
       return Result.ok(assertAllowedPath(normalized, [...this.allowedRoots]));
     } catch (cause) {
+      // CLI scopes arrive realpath-canonicalized; accept the canonical form of
+      // an allowed root (e.g. macOS /tmp -> /private/tmp) without widening it.
+      const canonicalRoots = this.allowedRoots.flatMap((root) => {
+        try { return [realpathSync.native(resolve(expandHomePath(root)))]; } catch { return []; }
+      });
+      try { return Result.ok(assertAllowedPath(normalized, canonicalRoots)); } catch { /* report the original denial */ }
       return Result.err(new AgentScopeError({
         code: "WORKSPACE_NOT_ALLOWED",
         operation,
@@ -988,7 +1298,7 @@ export class LocalAgentManager {
     scope: LocalAgentWorkspaceScope,
     operation: string,
   ): BetterResult<void, AgentScopeError> {
-    const workspaceRoot = this.authorizeWorkspace(scope.workspaceRoot, scope.workspaceId, operation);
+    const workspaceRoot = this.authorizeWorkspace(scope.workspaceRoot, operation);
     if (workspaceRoot.isErr()) return workspaceRoot;
     const idMismatch = scope.workspaceId !== undefined && record.workspaceId !== scope.workspaceId;
     if (workspaceRoot.value !== record.workspaceRoot || idMismatch) {

@@ -59,6 +59,8 @@ import { formatPathForPrompt } from "./skills.js";
 import { DEVSPACE_VERSION } from "./version.js";
 import { createWorkspaceStore } from "./workspace-store.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
+import { WindowsMcpBridge } from "./windows-mcp-bridge.js";
+import { BlenderMcpBridge } from "./blender-mcp-bridge.js";
 import {
   getLocalAgentProviderAvailabilitySnapshot,
 } from "./local-agent-availability.js";
@@ -326,6 +328,8 @@ export function createMcpServer(
   incomingArtifactAdapters: readonly IncomingArtifactAdapter[],
   trackToolActivity?: TrackToolActivity,
   registerProject: typeof ensureDesktopProject = ensureDesktopProject,
+  windowsMcpBridge?: WindowsMcpBridge,
+  blenderMcpBridge?: BlenderMcpBridge,
 ): McpServer {
   const toolSurface = getToolSurface(config.toolMode);
   const server = new McpServer(
@@ -345,6 +349,8 @@ export function createMcpServer(
     incomingArtifactAdapters,
     trackToolActivity,
     registerProject,
+    windowsMcpBridge,
+    blenderMcpBridge,
   );
   return server;
 }
@@ -359,11 +365,107 @@ function registerMcpSurface(
   incomingArtifactAdapters: readonly IncomingArtifactAdapter[],
   trackToolActivity?: TrackToolActivity,
   registerProject: typeof ensureDesktopProject = ensureDesktopProject,
+  windowsMcpBridge?: WindowsMcpBridge,
+  blenderMcpBridge?: BlenderMcpBridge,
 ): void {
   const registrationTarget = trackToolActivity
     ? withTrackedToolHandlers(server, trackToolActivity)
     : server;
   const toolSurface = getToolSurface(config.toolMode);
+
+  if (windowsMcpBridge) {
+    registrationTarget.registerTool(
+      "windows_mcp",
+      {
+        title: "Windows desktop automation",
+        description:
+          "Bridge to local desktop tools. Normal tool names target Windows MCP. When Blender MCP is enabled, use the prefix blender: (for example blender:get_scene_info or blender:get_viewport_screenshot) to call Blender directly without invoking a local model.",
+        inputSchema: {
+          action: z.enum(["list_tools", "call"]),
+          tool: z.string().optional(),
+          arguments: z.record(z.string(), z.unknown()).optional(),
+        },
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: false,
+          openWorldHint: false,
+        },
+      },
+      async ({ action, tool, arguments: toolArguments }) => {
+        if (action === "list_tools") {
+          const tools = await windowsMcpBridge.listTools();
+          const blenderTools = blenderMcpBridge
+            ? (await blenderMcpBridge.listTools()).map((item) => ({
+                ...item,
+                name: `blender:${item.name}`,
+              }))
+            : [];
+          return {
+            content: [textBlock(JSON.stringify([...tools, ...blenderTools].map((item) => ({
+              name: item.name,
+              description: item.description,
+              inputSchema: item.inputSchema,
+            })), null, 2))],
+          };
+        }
+
+        if (!tool) {
+          throw new Error("windows_mcp action=call requires a tool name.");
+        }
+        if (tool.startsWith("blender:")) {
+          if (!blenderMcpBridge) {
+            throw new Error("Blender MCP is not enabled.");
+          }
+          const blenderTool = tool.slice("blender:".length);
+          if (!blenderTool) {
+            throw new Error("Blender MCP tool name is required after blender:.");
+          }
+          return await blenderMcpBridge.callTool(blenderTool, toolArguments ?? {});
+        }
+        return await windowsMcpBridge.callTool(tool, toolArguments ?? {});
+      },
+    );
+  }
+
+  if (blenderMcpBridge) {
+    registrationTarget.registerTool(
+      "blender_mcp",
+      {
+        title: "Blender direct control",
+        description:
+          "Bridge directly to the local Blender MCP server. Use action=list_tools to inspect available Blender tools, then action=call with the exact Blender MCP tool name and arguments. Returned image content is passed through for visual inspection. This does not invoke Codex or another local model.",
+        inputSchema: {
+          action: z.enum(["list_tools", "call"]),
+          tool: z.string().optional(),
+          arguments: z.record(z.string(), z.unknown()).optional(),
+        },
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: false,
+          openWorldHint: false,
+        },
+      },
+      async ({ action, tool, arguments: toolArguments }) => {
+        if (action === "list_tools") {
+          const tools = await blenderMcpBridge.listTools();
+          return {
+            content: [textBlock(JSON.stringify(tools.map((item) => ({
+              name: item.name,
+              description: item.description,
+              inputSchema: item.inputSchema,
+            })), null, 2))],
+          };
+        }
+
+        if (!tool) {
+          throw new Error("blender_mcp action=call requires a tool name.");
+        }
+        return await blenderMcpBridge.callTool(tool, toolArguments ?? {});
+      },
+    );
+  }
 
   registerAppResource(
     registrationTarget,
@@ -858,9 +960,8 @@ export function createServer(
 ): RunningServer {
   const incomingArtifactAdapters = options.incomingArtifactAdapters
     ?? [createOpenAIIncomingArtifactAdapter()];
-  const allowedHosts = config.allowedHosts.includes("*")
-    ? undefined
-    : Array.from(new Set([config.host, ...config.allowedHosts]));
+  // config.allowedHosts already includes the (IPv6-bracketed) bind host.
+  const allowedHosts = config.allowedHosts.includes("*") ? undefined : config.allowedHosts;
   const app = createMcpExpressApp({
     host: config.host,
     ...(allowedHosts ? { allowedHosts } : {}),
@@ -877,9 +978,19 @@ export function createServer(
   const workspaces = new WorkspaceRegistry(config, workspaceStore);
   const reviewCheckpoints = createReviewCheckpointManager();
   const processSessions = new ProcessSessionManager({ stateDir: config.stateDir,
+    // Off by default until the migration, recovery and Provider phases pass
+    // acceptance. Never enable during a normal restart/upgrade.
+    managedWindowsCommands: process.platform === "win32" &&
+      process.env.TASKQUAY_EXPERIMENTAL_MANAGED_WINDOWS_COMMANDS === "1",
     diagnostics: (event, fields, level) => options.diagnostics
       ? options.diagnostics.record(event, fields, level) : logEvent(config.logging, level, event, fields) });
   const toolActivities = new ToolActivityTracker();
+  const windowsMcpBridge = config.windowsMcp?.enabled
+    ? new WindowsMcpBridge(config.windowsMcp)
+    : undefined;
+  const blenderMcpBridge = config.blenderMcp?.enabled
+    ? new BlenderMcpBridge(config.blenderMcp)
+    : undefined;
   const localAgentProviders = buildLocalAgentProviderStatuses(
     config.subagents,
     getLocalAgentProviderAvailabilitySnapshot(process.env, config.subagents),
@@ -900,6 +1011,8 @@ export function createServer(
       incomingArtifactAdapters,
       toolActivities.track,
       options.registerProject,
+      windowsMcpBridge,
+      blenderMcpBridge,
     );
   });
   const logMcpHandlerError = (error: Error) => logEvent(
@@ -1047,6 +1160,8 @@ export function createServer(
           });
         }
         await toolActivities.waitForIdle();
+        await windowsMcpBridge?.close();
+        await blenderMcpBridge?.close();
         processSessions.shutdown();
         projectConsole.close();
         oauthProvider.close();

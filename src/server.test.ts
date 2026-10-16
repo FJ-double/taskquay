@@ -21,6 +21,8 @@ import { SqliteWorkspaceStore } from "./workspace-store.js";
 import { WorkspaceRegistry } from "./workspaces.js";
 import { writeTestDevspaceConfig } from "./test-support/config.test.js";
 import type { ensureDesktopProject } from "./codex-projects.js";
+import type { WindowsMcpBridge } from "./windows-mcp-bridge.js";
+import type { BlenderMcpBridge } from "./blender-mcp-bridge.js";
 
 const registerProject: typeof ensureDesktopProject = async (roots) => ({
   protocol: "fixture", status: "persisted_registration", roots, createdDirectories: [], projectId: "fixture-project", uiStatus: "unverified",
@@ -82,6 +84,122 @@ test("tool modes expose the expected host-facing tool surface", async (t) => {
       );
     });
   }
+});
+
+test("windows_mcp proxies only through an explicitly configured bridge", async (t) => {
+  const withoutBridge = await fixture(t, { uiEnabled: false });
+  assert.equal(
+    (await withoutBridge.client.listTools()).tools.some(({ name }) => name === "windows_mcp"),
+    false,
+  );
+
+  const fakeBridge = {
+    async listTools() {
+      return [{
+        name: "Snapshot",
+        description: "Capture desktop state.",
+        inputSchema: { type: "object" },
+      }];
+    },
+    async callTool(name: string, args: Record<string, unknown>) {
+      return {
+        content: [{ type: "text" as const, text: `${name}:${JSON.stringify(args)}` }],
+      };
+    },
+  } as unknown as WindowsMcpBridge;
+  const withBridge = await fixture(t, { uiEnabled: false, windowsMcpBridge: fakeBridge });
+  assert.equal(
+    (await withBridge.client.listTools()).tools.some(({ name }) => name === "windows_mcp"),
+    true,
+  );
+
+  const listed = await withBridge.client.callTool({
+    name: "windows_mcp",
+    arguments: { action: "list_tools" },
+  });
+  assert.match(toolText(listed), /Snapshot/);
+
+  const called = await withBridge.client.callTool({
+    name: "windows_mcp",
+    arguments: { action: "call", tool: "Snapshot", arguments: { all_windows: false } },
+  });
+  assert.equal(toolText(called), 'Snapshot:{"all_windows":false}');
+});
+
+test("blender_mcp proxies direct Blender tools without a model worker", async (t) => {
+  const withoutBridge = await fixture(t, { uiEnabled: false });
+  assert.equal(
+    (await withoutBridge.client.listTools()).tools.some(({ name }) => name === "blender_mcp"),
+    false,
+  );
+
+  const fakeBridge = {
+    async listTools() {
+      return [{
+        name: "viewport_screenshot",
+        description: "Capture the Blender viewport.",
+        inputSchema: { type: "object" },
+      }];
+    },
+    async callTool(name: string, args: Record<string, unknown>) {
+      return {
+        content: [{ type: "text" as const, text: `${name}:${JSON.stringify(args)}` }],
+      };
+    },
+  } as unknown as BlenderMcpBridge;
+  const withBridge = await fixture(t, { uiEnabled: false, blenderMcpBridge: fakeBridge });
+  assert.equal(
+    (await withBridge.client.listTools()).tools.some(({ name }) => name === "blender_mcp"),
+    true,
+  );
+
+  const listed = await withBridge.client.callTool({
+    name: "blender_mcp",
+    arguments: { action: "list_tools" },
+  });
+  assert.match(toolText(listed), /viewport_screenshot/);
+
+  const called = await withBridge.client.callTool({
+    name: "blender_mcp",
+    arguments: { action: "call", tool: "viewport_screenshot", arguments: {} },
+  });
+  assert.equal(toolText(called), "viewport_screenshot:{}");
+});
+
+test("windows_mcp can route blender-prefixed calls for hosts with a cached tool manifest", async (t) => {
+  const fakeWindows = {
+    async listTools() {
+      return [{ name: "Snapshot", description: "Capture desktop.", inputSchema: { type: "object" } }];
+    },
+    async callTool(name: string, args: Record<string, unknown>) {
+      return { content: [{ type: "text" as const, text: `windows:${name}:${JSON.stringify(args)}` }] };
+    },
+  } as unknown as WindowsMcpBridge;
+  const fakeBlender = {
+    async listTools() {
+      return [{ name: "get_scene_info", description: "Read scene.", inputSchema: { type: "object" } }];
+    },
+    async callTool(name: string, args: Record<string, unknown>) {
+      return { content: [{ type: "text" as const, text: `blender:${name}:${JSON.stringify(args)}` }] };
+    },
+  } as unknown as BlenderMcpBridge;
+
+  const context = await fixture(t, {
+    uiEnabled: false,
+    windowsMcpBridge: fakeWindows,
+    blenderMcpBridge: fakeBlender,
+  });
+  const listed = await context.client.callTool({
+    name: "windows_mcp",
+    arguments: { action: "list_tools" },
+  });
+  assert.match(toolText(listed), /blender:get_scene_info/);
+
+  const called = await context.client.callTool({
+    name: "windows_mcp",
+    arguments: { action: "call", tool: "blender:get_scene_info", arguments: {} },
+  });
+  assert.equal(toolText(called), "blender:get_scene_info:{}");
 });
 
 test("command review opt-in changes only shell destructive annotations", async (t) => {
@@ -883,6 +1001,8 @@ async function fixture(
     toolMode?: ToolMode;
     dangerouslySkipCommandReview?: boolean;
     uiEnabled?: boolean;
+    windowsMcpBridge?: WindowsMcpBridge;
+    blenderMcpBridge?: BlenderMcpBridge;
   } = {},
 ): Promise<ServerFixture> {
   const root = await mkdtemp(join(tmpdir(), "devspace-server-test-"));
@@ -965,6 +1085,8 @@ async function fixture(
     [],
     undefined,
     registerProject,
+    options.windowsMcpBridge,
+    options.blenderMcpBridge,
   );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "devspace-test-client", version: "1.0.0" });
@@ -1134,6 +1256,20 @@ async function callOpen(
 function structuredContent(result: Awaited<ReturnType<Client["callTool"]>>): Record<string, unknown> {
   assert.ok(result.structuredContent);
   return result.structuredContent as Record<string, unknown>;
+}
+
+function toolText(result: Awaited<ReturnType<Client["callTool"]>>): string {
+  const content = recordValue(result).content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((item): item is { type: "text"; text: string } => (
+      Boolean(item)
+      && typeof item === "object"
+      && (item as { type?: unknown }).type === "text"
+      && typeof (item as { text?: unknown }).text === "string"
+    ))
+    .map((item) => item.text)
+    .join("\n");
 }
 
 function responseCard(result: Awaited<ReturnType<Client["callTool"]>>): Record<string, unknown> {

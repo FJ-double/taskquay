@@ -29,8 +29,24 @@ try {
   await testProviderRestartRotationAndRevocation(join(root, "provider"));
   await testResourceAliases(join(root, "aliases"));
   await testRefreshResourcePolicy(join(root, "refresh-policy"));
+  testRedirectUriPolicy(join(root, "redirect-policy"));
 } finally {
   await rm(root, { recursive: true, force: true });
+}
+
+function testRedirectUriPolicy(stateDir: string): void {
+  const store = new SqliteOAuthStore(stateDir);
+  try {
+    for (const uri of [redirectUri, "http://localhost:4567/callback", "http://127.0.0.1/cb", "http://[::1]:9/cb"]) {
+      assert.doesNotThrow(() => store.registerClient({ redirect_uris: [uri] }, oauthConfig.allowedRedirectHosts), uri);
+    }
+    for (const uri of ["http://chatgpt.com/connector_platform_oauth_redirect", "javascript://chatgpt.com/%0aalert(1)",
+      "ftp://chatgpt.com/cb", "https://evil.example.com/cb", "file://localhost/etc/passwd"]) {
+      assert.throws(() => store.registerClient({ redirect_uris: [uri] }, oauthConfig.allowedRedirectHosts), /not allowed/, uri);
+    }
+  } finally {
+    store.close();
+  }
 }
 
 async function testDatabaseConfiguration(stateDir: string): Promise<void> {
@@ -62,6 +78,10 @@ async function testDatabaseConfiguration(stateDir: string): Promise<void> {
       { version: 15, name: "agent-history-handoff-lineage" },
       { version: 16, name: "local-agent-turns" },
       { version: 17, name: "managed-agent-turn-control" },
+      { version: 18, name: "proof-gated-execution-state" },
+      { version: 19, name: "managed-queue-owner-generation" },
+      { version: 20, name: "managed-service-reservations" },
+      { version: 21, name: "managed-service-health-journal" },
     ]);
   } finally {
     database.close();

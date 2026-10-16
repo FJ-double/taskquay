@@ -1,15 +1,22 @@
 import assert from "node:assert/strict";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer as createHttpServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  createOpencodeServerCredentials,
+  defaultOpencodeFactory,
   opencodeAgentConfig,
+  opencodeAuthorizationHeaders,
   OpencodeLocalAgentDriver,
   OpencodeRuntime,
   opencodeAgentFor,
   opencodePermissionFor,
+  opencodeServerEnvironment,
   type OpencodeClientLike,
   type OpencodeFactory,
+  type OpencodeServerCredentials,
 } from "./local-agent-opencode.js";
 import { LocalAgentRuntimePool } from "./local-agent-runtime-pool.js";
 
@@ -84,6 +91,7 @@ if (process.platform !== "win32") {
   const commandRoot = await mkdtemp(join(tmpdir(), "devspace-opencode-env-"));
   const marker = join(commandRoot, "env.txt");
   const argsMarker = join(commandRoot, "args.txt");
+  const authMarker = join(commandRoot, "auth.txt");
   const collisionMarker = join(commandRoot, "collision.txt");
   const holderReady = join(commandRoot, "holder-ready.txt");
   const holderProcess = join(commandRoot, "hold-port.mjs");
@@ -115,6 +123,7 @@ if (process.platform !== "win32") {
       "#!/bin/sh",
       'printf "%s" "$HARNESS_ENV" > "$MARKER"',
       'printf "%s\\n" "$@" > "$ARGS_MARKER"',
+      'printf "%s:%s" "$OPENCODE_SERVER_USERNAME" "$OPENCODE_SERVER_PASSWORD" > "$AUTH_MARKER"',
       'port=""',
       'for arg in "$@"; do case "$arg" in --port=*) port="${arg#--port=}" ;; esac; done',
       'if [ ! -f "$COLLISION_MARKER" ]; then',
@@ -134,6 +143,7 @@ if (process.platform !== "win32") {
       HARNESS_ENV: "opencode-child",
       MARKER: marker,
       ARGS_MARKER: argsMarker,
+      AUTH_MARKER: authMarker,
       COLLISION_MARKER: collisionMarker,
       HOLDER_READY: holderReady,
       HOLDER_PROCESS: holderProcess,
@@ -148,6 +158,8 @@ if (process.platform !== "win32") {
     assert.equal(created.isOk(), true);
     if (created.isOk()) await created.value.close();
     assert.equal(await readFile(marker, "utf8"), "opencode-child");
+    assert.match(await readFile(authMarker, "utf8"), /^opencode:[A-Za-z0-9_-]{43}$/,
+      "OpenCode server receives a per-server password");
     assert.equal(await readFile(collisionMarker, "utf8"), "collision", "OpenCode retries a claimed allocated port");
     const args = (await readFile(argsMarker, "utf8")).trim().split("\n");
     const portArgument = args.find((argument) => argument.startsWith("--port="));
@@ -156,6 +168,42 @@ if (process.platform !== "win32") {
   } finally {
     await rm(commandRoot, { recursive: true, force: true });
   }
+}
+{
+  // The SDK client authenticates every request with the password handed to the server.
+  const seenAuthorization: Array<string | undefined> = [];
+  const http = createHttpServer((request, response) => {
+    seenAuthorization.push(request.headers.authorization);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ healthy: true, version: "test" }));
+  });
+  await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
+  const address = http.address() as AddressInfo;
+  let started: { env: NodeJS.ProcessEnv; credentials: OpencodeServerCredentials } | undefined;
+  try {
+    const { client: authClient, server: authServer } = await defaultOpencodeFactory(undefined, { HARNESS_ENV: "auth" },
+      async (env, config, credentials) => {
+        started = { env: opencodeServerEnvironment(env, config, credentials), credentials };
+        return { url: `http://127.0.0.1:${address.port}`, close: () => undefined };
+      });
+    await authClient.global.health({ throwOnError: true });
+    authServer.close();
+  } finally {
+    await new Promise<void>((resolve) => http.close(() => resolve()));
+  }
+  assert.ok(started);
+  assert.equal(started.credentials.username, "opencode");
+  assert.match(started.credentials.password, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(started.env.OPENCODE_SERVER_USERNAME, "opencode");
+  assert.equal(started.env.OPENCODE_SERVER_PASSWORD, started.credentials.password);
+  assert.equal(started.env.HARNESS_ENV, "auth");
+  assert.match(String(started.env.OPENCODE_CONFIG_CONTENT), /devspace_full_access/);
+  assert.deepEqual(seenAuthorization, [
+    `Basic ${Buffer.from(`opencode:${started.credentials.password}`).toString("base64")}`,
+  ]);
+  assert.deepEqual(opencodeAuthorizationHeaders(started.credentials), { Authorization: seenAuthorization[0] });
+  assert.notEqual(createOpencodeServerCredentials().password, createOpencodeServerCredentials().password,
+    "each OpenCode server gets its own password");
 }
 if (first.isErr()) throw first.error;
 if (second.isErr()) throw second.error;

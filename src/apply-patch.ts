@@ -396,6 +396,8 @@ export async function applyPatch(root: string, patch: string): Promise<ApplyPatc
     }
   }
 
+  await assertNoStagedAliases(root, staged);
+
   for (const [absolute, file] of staged) {
     if (file) await writeTextFile(absolute, file.content, file.mode);
   }
@@ -407,6 +409,38 @@ export async function applyPatch(root: string, patch: string): Promise<ApplyPatc
   const unifiedPatch = patches.filter(Boolean).join("\n");
   const stats = countPatchStats(unifiedPatch);
   return { files: results, patch: unifiedPatch, ...stats };
+}
+
+/**
+ * Staged entries are keyed by literal path, and all writes run before all
+ * deletes. Two keys naming the same file (case-insensitive filesystem, or a
+ * symlinked directory alias) would let a later delete remove a file this
+ * patch just wrote while still reporting success, so reject them up front.
+ */
+async function assertNoStagedAliases(
+  root: string,
+  staged: Map<string, StagedTextFile>,
+  platform: NodeJS.Platform = process.platform,
+): Promise<void> {
+  const caseInsensitive = platform === "win32" || platform === "darwin";
+  const seen = new Map<string, { absolute: string; deleted: boolean }>();
+  for (const [absolute, file] of staged) {
+    const keys = caseInsensitive ? [`name:${absolute.toLowerCase()}`] : [];
+    try {
+      const identity = await stat(absolute);
+      if (identity.ino) keys.push(`inode:${identity.dev}:${identity.ino}`);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+    }
+    for (const key of keys) {
+      const previous = seen.get(key);
+      if (previous && previous.absolute !== absolute && !(previous.deleted && !file)) {
+        throw patchError(`patch touches the same file through two paths: ${relative(root, previous.absolute)} and ${relative(root, absolute)}`);
+      }
+      seen.set(key, { absolute, deleted: !file });
+    }
+  }
 }
 
 async function readOptionalTextFile(absolute: string, displayPath: string): Promise<TextFile | null> {

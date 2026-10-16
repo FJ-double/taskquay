@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { realpathSync, existsSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { openDatabase, type DatabaseHandle } from "./db/client.js";
+import type Database from "better-sqlite3";
+import { ExecutionStateStore, type ExecutionOwnerIdentity } from "./execution-state-store.js";
 import { canonicalPathIdentity } from "./roots.js";
 
 export type SourceAccess = "read" | "write";
@@ -34,6 +36,16 @@ export interface ExecutionClaim {
 export interface ExecutionTicket {
   readonly id: string;
   tryAcquire(): ExecutionClaim | undefined;
+  cancel(): void;
+}
+/** Experimental managed FIFO ticket. Persisting a ticket never starts a
+ * Provider and never writes a WorkLedger execution. At admission, the
+ * callback, claim, managed execution and ticket removal commit together.
+ */
+export interface ManagedAdmissionTicket {
+  readonly id: string;
+  tryAdmit<T>(admitted: (sqlite: Database.Database, handle: DatabaseHandle,
+    claimId: string) => { executionId: string; value: T }): { claim: ExecutionClaim; value: T } | undefined;
   cancel(): void;
 }
 
@@ -78,6 +90,167 @@ export class ExecutionCoordinator {
   private closed = false;
 
   constructor(stateDir: string) { this.database = openDatabase(stateDir); }
+  /** Exact owned handle used by the explicitly opted-in AgentStore/ledger. */
+  get sharedDatabaseHandle(): DatabaseHandle { return this.database; }
+  get managedOwnerId(): string { return this.ownerId; }
+  registerManagedOwner(owner: ExecutionOwnerIdentity): void {
+    if (owner.id !== this.ownerId) throw new Error("Managed owner must match claim owner identity.");
+    new ExecutionStateStore(this.database.sqlite).registerOwner(owner);
+  }
+  withManagedState<T>(update: (sqlite: Database.Database, handle: DatabaseHandle) => T): T {
+    return this.database.sqlite.transaction(() => update(this.database.sqlite, this.database)).immediate();
+  }
+
+  /** Atomic managed admission: claim, execution identity and optional WorkLedger
+   * operation must use THIS connection. The callback must not launch a process.
+   * Legacy acquire/release remains untouched until its callers are migrated.
+   */
+  admitManaged<T>(input: ExecutionClaimInput, admitted: (
+    sqlite: Database.Database, database: DatabaseHandle, claimId: string,
+  ) => { executionId: string; value: T }): { claim: ExecutionClaim; value: T } {
+    const candidate = this.row(input);
+    return this.database.sqlite.transaction(() => {
+      const blocker = this.blocker(candidate, input);
+      if (blocker) throw new ExecutionConflictError(blocker.id, blocker.agent_id ?? undefined,
+        "Source, thread, resource or concurrency limit is occupied");
+      const prior = this.managedCapacityFairnessBlocker(candidate, input);
+      if (prior) throw new ExecutionConflictError(prior.id, prior.agent_id ?? undefined,
+        "Earlier runnable managed Agent is waiting for a global execution slot");
+      const claim = this.insert(candidate);
+      const { executionId, value } = admitted(this.database.sqlite, this.database, claim.id);
+      if (!/^ex_[a-f0-9]{32}$/.test(executionId)) throw new Error("Invalid managed execution identity.");
+      this.database.sqlite.prepare("update execution_claims set execution_id=? where id=?")
+        .run(executionId, claim.id);
+      return { claim, value };
+    }).immediate();
+  }
+
+  /**
+   * Work-conserving FIFO for up to four independently scoped Agent jobs.
+   * Older runnable tickets reserve free global slots before younger tickets.
+   * Older tickets blocked on a busy checkout do not idle an unrelated slot,
+   * but an older conflicting writer always blocks younger readers/writers.
+   *
+    * LocalAgentManager's opted-in managed path consumes these tickets;
+    * legacy queue paths remain separate.
+   */
+  enqueueManaged(input: ExecutionClaimInput, waitMs: number): ManagedAdmissionTicket {
+    if (input.kind !== "agent") throw new Error("MANAGED_FIFO_AGENTS_ONLY");
+    const candidate = this.row({ ...input, maxConcurrentAgents: input.maxConcurrentAgents ?? 4 });
+    if (!Number.isSafeInteger(waitMs) || waitMs < 1 || waitMs > 900_000) {
+      throw new Error("MANAGED_FIFO_TIMEOUT_INVALID");
+    }
+    const normalized = { ...input, maxConcurrentAgents: input.maxConcurrentAgents ?? 4 };
+    const expiry = Date.now() + waitMs;
+    this.database.sqlite.transaction(() => {
+      // Managed tickets are not swept by TTL; their owner/Agent status must
+      // be reconciled in one transaction after exact kernel identity checks.
+      this.database.sqlite.prepare(
+        "delete from execution_waiters where expires_at_ms <= ? and owner_generation is null",
+      ).run(Date.now());
+      const owner = this.database.sqlite.prepare(
+        "select generation,status from execution_owners where id=?",
+      ).get(this.ownerId) as { generation: string; status: string } | undefined;
+      if (!owner || owner.status !== "active") {
+        throw new Error("MANAGED_FIFO_OWNER_NOT_ACTIVE");
+      }
+      const active = (this.database.sqlite.prepare("select count(*) n from execution_waiters")
+        .get() as { n: number }).n;
+      if (active >= 64) throw new ExecutionConflictError("queue", undefined,
+        "Managed FIFO capacity reached; no provider invoked");
+      this.database.sqlite.prepare(`insert into execution_waiters
+        (id,owner_id,owner_pid,kind,checkout_root,agent_id,thread_key,access_mode,resources,expires_at_ms,owner_generation)
+        values (?,?,?,?,?,?,?,?,?,?,?)`).run(
+        candidate.id, this.ownerId, process.pid, "agent", candidate.checkout_root,
+        candidate.agent_id, candidate.thread_key, candidate.access_mode, candidate.resources, expiry, owner.generation);
+    }).immediate();
+    return {
+      id: candidate.id,
+      tryAdmit: <T>(admitted: (sqlite: Database.Database, handle: DatabaseHandle,
+        claimId: string) => { executionId: string; value: T }) =>
+        this.database.sqlite.transaction(() => {
+          if (this.closed) throw new Error("MANAGED_FIFO_COORDINATOR_CLOSED");
+          const ticket = this.database.sqlite.prepare(
+            "select w.* from execution_waiters w join execution_owners o on o.id=w.owner_id and o.generation=w.owner_generation where w.id=? and w.owner_id=? and o.status='active'",
+          ).get(candidate.id, this.ownerId) as WaiterRow | undefined;
+          if (!ticket || ticket.expires_at_ms === null ||
+              ticket.expires_at_ms <= Date.now()) {
+            throw new Error("MANAGED_FIFO_TICKET_EXPIRED_OR_CANCELLED");
+          }
+          if (ticket.kind !== "agent" || ticket.checkout_root !== candidate.checkout_root ||
+              ticket.agent_id !== candidate.agent_id ||
+              ticket.thread_key !== candidate.thread_key ||
+              ticket.access_mode !== candidate.access_mode ||
+              ticket.resources !== candidate.resources) {
+            throw new Error("MANAGED_FIFO_TICKET_IDENTITY_CHANGED");
+          }
+          if (this.blocker(candidate, normalized, ticket.sequence) ||
+              this.managedCapacityFairnessBlocker(candidate, normalized, ticket.sequence)) return undefined;
+          const inserted = this.insert(candidate);
+          const { executionId, value } = admitted(this.database.sqlite, this.database, inserted.id);
+          if (!/^ex_[a-f0-9]{32}$/.test(executionId)) throw new Error("MANAGED_FIFO_EXECUTION_ID_INVALID");
+          const updated = this.database.sqlite.prepare(
+            "update execution_claims set execution_id=? where id=? and owner_id=?",
+          ).run(executionId, inserted.id, this.ownerId);
+          if (updated.changes !== 1) throw new Error("MANAGED_FIFO_CLAIM_LINK_FAILED");
+          const removed = this.database.sqlite.prepare(
+            "delete from execution_waiters where id=? and owner_id=?",
+          ).run(candidate.id, this.ownerId);
+          if (removed.changes !== 1) throw new Error("MANAGED_FIFO_TICKET_LOST");
+          return { claim: inserted, value };
+        }).immediate(),
+      cancel: () => {
+        if (!this.closed) this.database.sqlite.prepare(
+          "delete from execution_waiters where id=? and owner_id=?",
+        ).run(candidate.id, this.ownerId);
+      },
+    };
+  }
+
+  private managedCapacityFairnessBlocker(candidate: ClaimRow, input: ExecutionClaimInput,
+    sequence = Number.MAX_SAFE_INTEGER): ClaimRow | undefined {
+    if (candidate.kind !== "agent") return undefined;
+    const agents = this.database.sqlite.prepare(
+      "select * from execution_claims where kind='agent'",
+    ).all() as ClaimRow[];
+    const slots = (input.maxConcurrentAgents ?? 4) - agents.length;
+    if (slots <= 0) return agents[0];
+    const earlier = this.database.sqlite.prepare(`select * from execution_waiters
+      where kind='agent' and sequence < ? and expires_at_ms > ?
+      order by sequence`).all(sequence, Date.now()) as WaiterRow[];
+    const runnable: ClaimRow[] = [];
+    for (const waiting of earlier) {
+      if (agents.some((active) => exclusiveConflict(waiting, active)) ||
+          runnable.some((reserved) => exclusiveConflict(waiting, reserved))) continue;
+      if (waiting.access_mode === "read") {
+        const readers = [...agents, ...runnable].filter((active) =>
+          active.access_mode === "read" && overlaps(active.checkout_root, waiting.checkout_root));
+        if (readers.length >= (input.maxConcurrentReaders ?? 2)) continue;
+      }
+      runnable.push(waiting);
+      if (runnable.length >= slots) return waiting;
+    }
+    return undefined;
+  }
+
+  /** Proof-gated claim release. Nothing is released if finalization fails;
+   * both state and deletion commit together on the admission connection.
+   */
+  completeManaged<T>(executionId: string, complete: (
+    sqlite: Database.Database, database: DatabaseHandle,
+  ) => T): T {
+    return this.database.sqlite.transaction(() => {
+      const value = complete(this.database.sqlite, this.database);
+      const row = this.database.sqlite.prepare(
+        "select resource_state from managed_executions where id=?",
+      ).get(executionId) as { resource_state: string } | undefined;
+      if (!row || row.resource_state !== "released") {
+        throw new Error("MANAGED_RELEASE_UNVERIFIED: Job evidence is not committed.");
+      }
+      this.database.sqlite.prepare("delete from execution_claims where execution_id=?").run(executionId);
+      return value;
+    }).immediate();
+  }
 
   private row(input: ExecutionClaimInput): ClaimRow {
     if (this.closed) throw new Error("Execution coordinator is closed.");
@@ -96,12 +269,15 @@ export class ExecutionCoordinator {
 
   private blocker(candidate: ClaimRow, input: ExecutionClaimInput, sequence = Number.MAX_SAFE_INTEGER): ClaimRow | undefined {
     // Expired WAITERS never started work. Active claims have no timeout-steal path.
-    this.database.sqlite.prepare("delete from execution_waiters where expires_at_ms <= ?").run(Date.now());
+    this.database.sqlite.prepare(
+      "delete from execution_waiters where expires_at_ms <= ? and owner_generation is null",
+    ).run(Date.now());
     const active = this.database.sqlite.prepare("select * from execution_claims").all() as ClaimRow[];
     const conflict = active.find((row) => exclusiveConflict(candidate, row));
     if (conflict) return conflict;
-    const prior = this.database.sqlite.prepare("select * from execution_waiters where sequence < ? order by sequence")
-      .all(sequence) as WaiterRow[];
+    const prior = this.database.sqlite.prepare(`select * from execution_waiters
+      where sequence < ? and (expires_at_ms is null or expires_at_ms > ?)
+      order by sequence`).all(sequence, Date.now()) as WaiterRow[];
     // An earlier writer blocks later readers; neither reader-to-writer upgrades nor reader barging.
     const waiting = prior.find((row) => exclusiveConflict(candidate, row));
     if (waiting) return waiting;
@@ -154,7 +330,11 @@ export class ExecutionCoordinator {
     const candidate = this.row(input);
     if (!Number.isInteger(waitMs) || waitMs < 1 || waitMs > 900_000) throw new Error("Queue timeout must be 1–900000 ms.");
     this.database.sqlite.transaction(() => {
-      this.database.sqlite.prepare("delete from execution_waiters where expires_at_ms <= ?").run(Date.now());
+      // Managed (v19) waiting tickets are bound to a durable Owner generation.
+      // A legacy admission MUST NOT sweep them solely because TTL expired.
+      this.database.sqlite.prepare(
+        "delete from execution_waiters where expires_at_ms <= ? and owner_generation is null",
+      ).run(Date.now());
       const count = (this.database.sqlite.prepare("select count(*) as n from execution_waiters").get() as { n: number }).n;
       if (count >= 64) throw new ExecutionConflictError("queue", undefined, "Local queue capacity reached; no provider invoked");
       this.database.sqlite.prepare(`insert into execution_waiters

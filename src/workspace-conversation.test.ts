@@ -136,6 +136,21 @@ test("concurrent worktree opens remain fresh and return complete context", async
   );
 });
 
+test("eight concurrent worktree opens for the same repo serialize metadata but retain independent roots", async (t) => {
+  const { project, registry } = await fixture(t, { git: true });
+  const contexts = await Promise.all(Array.from({ length: 8 }, () =>
+    registry.openWorkspace({ path: project, mode: "worktree" }, {
+      conversationScopeId: "worktree-burst",
+    })));
+  assert.equal(new Set(contexts.map((value) => value.workspace.id)).size, 8);
+  assert.equal(new Set(contexts.map((value) => value.workspace.root)).size, 8);
+  for (const entry of contexts) {
+    assert.equal(entry.workspace.mode, "worktree");
+    assert.ok(entry.workspace.worktree?.managed);
+    assert.ok(entry.workspace.worktree?.baseSha);
+  }
+});
+
 test("checkout reuse survives a registry restart", async (t) => {
   const context = await fixture(t);
   const first = await context.registry.openWorkspace(context.project, {

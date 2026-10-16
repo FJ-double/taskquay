@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { Result, type Result as BetterResult } from "better-result";
-import { openDatabase, type DatabaseHandle } from "./db/client.js";
+import { openDatabase, databasePath, type DatabaseHandle } from "./db/client.js";
 import { AgentConflictError, AgentStoreError, isProgrammerDefect } from "./local-agent-errors.js";
 import { recordAgentUsage, readAgentUsage, type AgentUsageObservation } from "./agent-usage.js";
 import { decodeAgentProgress, type AgentActivity, type AgentProgress } from "./agent-progress.js";
@@ -138,10 +138,30 @@ interface LocalAgentTurnRow {
 }
 
 export class LocalAgentStore {
-  private readonly database: DatabaseHandle;
+  private database: DatabaseHandle;
+  private ownsDatabase = true;
 
   constructor(readonly stateDir: string) {
     this.database = openDatabase(stateDir);
+  }
+
+  /**
+   * Experimental managed execution path only. Rebind this previously owned
+   * store to the ExecutionCoordinator's exact SQLite connection, so Agent
+   * session / turn changes can join atomic claim + ledger transactions.
+   * Must be called before the manager begins accepting turns.
+   */
+  useSharedDatabase(database: DatabaseHandle): void {
+    if (!this.ownsDatabase || this.database === database) {
+      throw new Error("LOCAL_AGENT_STORE_ALREADY_BORROWED");
+    }
+    if (resolve(databasePath(this.stateDir)).toLowerCase() !==
+        resolve(database.sqlite.name).toLowerCase()) {
+      throw new Error("LOCAL_AGENT_STORE_DATABASE_PATH_MISMATCH");
+    }
+    this.database.close();
+    this.database = database;
+    this.ownsDatabase = false;
   }
 
   recordUsageResult(agentId: string, usage: AgentUsageObservation): BetterResult<void, AgentStoreError> {
@@ -670,7 +690,7 @@ export class LocalAgentStore {
   }
 
   close(): void {
-    this.database.close();
+    if (this.ownsDatabase) this.database.close();
   }
 
 }

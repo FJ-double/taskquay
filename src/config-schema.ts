@@ -44,6 +44,44 @@ const skillsConfigSchema = z.object({
   agentDir: z.string().trim().min(1).default("~/.codex"),
 }).strict().prefault({});
 
+const windowsMcpConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  command: z.string().trim().default(""),
+  args: z.array(z.string()).default([
+    "stdio",
+    "--toolsets",
+    "screen,interaction,apps,system",
+    "--exclude-tools",
+    "Kill,Process,Notification,Recording",
+  ]),
+  allowedTools: z.array(z.string().trim().min(1)).default([
+    "App",
+    "Click",
+    "Clipboard",
+    "DisplayInventory",
+    "GetText",
+    "GuardrailStatus",
+    "Invoke",
+    "Move",
+    "MultiEdit",
+    "MultiSelect",
+    "Screenshot",
+    "Scroll",
+    "Shortcut",
+    "Snapshot",
+    "Type",
+    "Wait",
+    "WaitFor",
+  ]),
+}).strict().prefault({});
+
+const blenderMcpConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  command: z.string().trim().default(""),
+  args: z.array(z.string()).default(["--python", "3.11", "mcp-for-blender"]),
+  allowedTools: z.array(z.string().trim().min(1)).default(["*"]),
+}).strict().prefault({});
+
 const loggingConfigSchema = z.object({
   level: z.enum(["silent", "error", "warn", "info", "debug"]).default("info"),
   format: z.enum(["json", "pretty"]).default("json"),
@@ -87,6 +125,8 @@ export const devspaceConfigSchema = z.object({
   }).strict().prefault({}),
   artifacts: artifactsConfigSchema,
   skills: skillsConfigSchema,
+  windowsMcp: windowsMcpConfigSchema,
+  blenderMcp: blenderMcpConfigSchema,
   subagents: subagentsConfigSchema.default({
     enabled: false,
     instructions: "on-demand",

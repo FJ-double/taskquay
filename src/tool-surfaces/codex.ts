@@ -56,7 +56,8 @@ function processResult(snapshot: ProcessSnapshot): string {
   const output = snapshot.output
     ? `${snapshot.output.replace(/\n$/, "")}\n${status}`
     : status;
-  return output + correlation + recovery + `\nSession ${snapshot.sessionId}; phase=${snapshot.phase}; terminalReplay=${snapshot.terminalReplay}; outputScope=${snapshot.outputScope}. Execution: ${JSON.stringify(snapshot.execution)}.`;
+  const managedIdentity = snapshot.executionId ? ` Execution ID: ${snapshot.executionId} (required on write_stdin).` : "";
+  return output + correlation + recovery + `\nSession ${snapshot.sessionId}; phase=${snapshot.phase}; terminalReplay=${snapshot.terminalReplay}; outputScope=${snapshot.outputScope}.${managedIdentity} Execution: ${JSON.stringify(snapshot.execution)}.`;
 }
 
 function processOutputSchema(): z.ZodRawShape {
@@ -69,6 +70,7 @@ function processOutputSchema(): z.ZodRawShape {
     operation_id: z.string().optional(),
     work_run_id: z.string().optional(),
     session_id: z.number().optional(),
+    execution_id: z.string().optional(),
     running: z.boolean(),
     exit_code: z.number().int().optional(),
     signal: z.string().optional(),
@@ -99,6 +101,7 @@ function processToolResponse(snapshot: ProcessSnapshot) {
       operation_id: snapshot.operationId,
       work_run_id: snapshot.workRunId,
       session_id: snapshot.sessionId,
+      execution_id: snapshot.executionId,
       running: snapshot.running,
       exit_code: snapshot.exitCode,
       signal: snapshot.signal,
@@ -314,6 +317,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
         session_id: z
           .number()
           .describe("Process session identifier returned by exec_command."),
+        execution_id: z.string().optional().describe("Execution identity from exec_command; mandatory for Windows Job-managed sessions to prevent stale session IDs controlling another task."),
         chars: z
           .string()
           .optional()
@@ -357,6 +361,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
     async ({
       workspace_id,
       session_id,
+      execution_id,
       chars,
       columns,
       rows,
@@ -377,6 +382,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
           return processSessions.write({
             workspaceId,
             sessionId,
+            executionId: execution_id,
             chars,
             columns,
             rows,

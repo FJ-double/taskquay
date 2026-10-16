@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { Panic, Result, type Result as BetterResult } from "better-result";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { LocalAgentManager } from "./local-agent-manager.js";
@@ -463,16 +464,23 @@ const wrongWorkspaceId = await manager.continue(
 assert.equal(wrongWorkspaceId.isErr(), true);
 if (wrongWorkspaceId.isErr()) assert.equal(wrongWorkspaceId.error.code, "WORKSPACE_MISMATCH");
 
-const directOutside = unwrap(await manager.start({
+// Allowed roots bound every scope, including direct/CLI calls without a workspaceId.
+const directOutside = await manager.start({
   target: "reviewer",
   prompt: "direct outside allowed roots",
   workspaceRoot: directRoot,
-}));
-await waitFor(() => unwrap(manager.get(directOutside.id, { workspaceRoot: directRoot })).status === "idle");
-assert.equal(directOutside.workspaceId, undefined);
-assert.deepEqual(unwrap(manager.list({ workspaceRoot: directRoot })).map((record) => record.id), [
-  directOutside.id,
-]);
+});
+assert.equal(directOutside.isErr(), true);
+if (directOutside.isErr()) assert.equal(directOutside.error.code, "WORKSPACE_NOT_ALLOWED");
+const directOutsideList = manager.list({ workspaceRoot: directRoot });
+assert.equal(directOutsideList.isErr(), true);
+if (directOutsideList.isErr()) assert.equal(directOutsideList.error.code, "WORKSPACE_NOT_ALLOWED");
+const legacyOutside = store.create({ workspaceRoot: directRoot, profileName: "reviewer", provider: "codex" });
+store.update(legacyOutside.id, { status: "idle" });
+const legacyOutsideContinue = await manager.continue(legacyOutside.id, "continue outside", {}, { workspaceRoot: directRoot });
+assert.equal(legacyOutsideContinue.isErr(), true);
+if (legacyOutsideContinue.isErr()) assert.equal(legacyOutsideContinue.error.code, "WORKSPACE_NOT_ALLOWED");
+assert.equal(runtimes.has(legacyOutside.id), false);
 
 const direct = unwrap(await manager.start({
   target: "reviewer",
@@ -509,6 +517,64 @@ assert.equal(runtimes.get(shuttingDown.id)?.closed, true);
 await closing;
 
 await manager.close();
+
+{
+  // The configured provider writeMode is a ceiling a caller may narrow but never widen.
+  const ceilingRoot = realpathSync.native(await mkdtemp(join(tmpdir(), "devspace-write-ceiling-test-")));
+  const ceilingScope = { workspaceId: "ws_ceiling", workspaceRoot: ceilingRoot };
+  const ceilingManager = (writeMode?: "read_only" | "allowed", stateName = "state") => new LocalAgentManager({
+    store: new LocalAgentStore(join(ceilingRoot, stateName)), drivers: [driver], pool: new LocalAgentRuntimePool(),
+    loadProfiles: async () => [], allowedRoots: [ceilingRoot],
+    subagents: { enabled: true, instructions: "on-demand", providers: [{ id: "codex", enabled: true, ...(writeMode ? { writeMode } : {}) }] },
+  });
+  const readOnly = ceilingManager("read_only");
+  const runtimeCount = runtimes.size;
+  const widened = await readOnly.start({ target: "codex", prompt: "escalate", ...ceilingScope, writeMode: "full_access" });
+  assert.equal(widened.isErr(), true);
+  if (widened.isErr()) {
+    assert.equal(widened.error.code, "TARGET_RESOLUTION_FAILED");
+    assert.match(widened.error.message, /writeMode full_access exceeds the configured codex provider writeMode read_only/);
+  }
+  const widenedAllowed = await readOnly.start({ target: "codex", prompt: "escalate", ...ceilingScope, writeMode: "allowed" });
+  assert.equal(widenedAllowed.isErr(), true);
+  assert.equal(unwrap(readOnly.list(ceilingScope)).length, 0, "a rejected writeMode must not persist an agent");
+  const narrowed = unwrap(await readOnly.start({ target: "codex", prompt: "inspect", ...ceilingScope, writeMode: "read_only" }));
+  await waitFor(() => unwrap(readOnly.get(narrowed.id, ceilingScope)).status === "idle");
+  assert.equal(runtimes.get(narrowed.id)!.inputs.at(-1)!.writeMode, "read_only");
+  unwrap(await readOnly.continue(narrowed.id, "inspect again", {}, ceilingScope));
+  await waitFor(() => unwrap(readOnly.get(narrowed.id, ceilingScope)).status === "idle");
+  assert.equal(runtimes.get(narrowed.id)!.inputs.at(-1)!.writeMode, "read_only", "the ceiling is the default");
+  const widenedContinue = await readOnly.continue(narrowed.id, "escalate", { writeMode: "full_access", requestKey: "escalate-1" }, ceilingScope);
+  assert.equal(widenedContinue.isErr(), true);
+  if (widenedContinue.isErr()) assert.equal(widenedContinue.error.code, "TARGET_RESOLUTION_FAILED");
+  assert.equal(runtimes.get(narrowed.id)!.inputs.length, 2, "an over-ceiling continuation never reaches the provider");
+  assert.equal(unwrap(readOnly.get(narrowed.id, ceilingScope)).status, "idle");
+  assert.equal(runtimes.size, runtimeCount + 1);
+  await readOnly.close();
+
+  const unconfigured = ceilingManager(undefined, "state-default");
+  const defaultWidened = await unconfigured.start({ target: "codex", prompt: "escalate", ...ceilingScope, writeMode: "full_access" });
+  assert.equal(defaultWidened.isErr(), true, "an unconfigured provider caps at allowed");
+  const defaultAllowed = unwrap(await unconfigured.start({ target: "codex", prompt: "edit", ...ceilingScope }));
+  await waitFor(() => unwrap(unconfigured.get(defaultAllowed.id, ceilingScope)).status === "idle");
+  assert.equal(runtimes.get(defaultAllowed.id)!.inputs.at(-1)!.writeMode, "allowed");
+  await unconfigured.close();
+
+  // A CLI scope arrives realpath-canonicalized; an allowed root reached through a link still admits it.
+  const linkedRoot = join(directRoot, "linked-root");
+  await symlink(ceilingRoot, linkedRoot, "junction");
+  const linked = new LocalAgentManager({
+    store: new LocalAgentStore(join(ceilingRoot, "state-linked")), drivers: [driver], pool: new LocalAgentRuntimePool(),
+    loadProfiles: async () => [], allowedRoots: [linkedRoot],
+    subagents: { enabled: true, instructions: "on-demand", providers: [{ id: "codex", enabled: true }] },
+  });
+  assert.equal(unwrap(linked.list({ workspaceRoot: ceilingRoot })).length, 0);
+  const linkedOutside = linked.list({ workspaceRoot: directRoot });
+  assert.equal(linkedOutside.isErr(), true, "canonicalizing an allowed root must not widen it");
+  await linked.close();
+  await rm(ceilingRoot, { recursive: true, force: true });
+}
+
 await rm(root, { recursive: true, force: true });
 await rm(directRoot, { recursive: true, force: true });
 

@@ -1,9 +1,15 @@
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import { executionContract, type ExecutionContract, resolveShellCommand, terminateProcessTree } from "./process-platform.js";
 import { ExecutionCoordinator, type ExecutionClaim } from "./execution-coordinator.js";
 import { WorkLedger } from "./work-ledger.js";
-import { randomUUID, createHash, type Hash } from "node:crypto";
+import { randomUUID, randomBytes, createHash, type Hash } from "node:crypto";
 import { diagnosticError } from "./server-diagnostics.js";
+import { WindowsCommandRunner, type JobExitEvidence } from "./execution-runner.js";
+import { ExecutionStateStore, type ExecutionOwnerIdentity } from "./execution-state-store.js";
+import { windowsProcessCreatedAt, WindowsJobObject } from "./windows-job-object.js";
+import { windowsBootIdentity } from "./windows-boot-identity.js";
+import { ManagedOwnerLease } from "./managed-owner-lease.js";
 
 const DEFAULT_EXEC_YIELD_MS = 10_000;
 const DEFAULT_INTERACTIVE_YIELD_MS = 250;
@@ -33,6 +39,8 @@ export interface StartCommandInput {
 export interface WriteStdinInput {
   workspaceId: string;
   sessionId: number;
+  /** Mandatory for Job-managed sessions. The session ID alone can be reused on restart. */
+  executionId?: string;
   chars?: string;
   columns?: number;
   rows?: number;
@@ -49,6 +57,7 @@ export interface ProcessSnapshot {
   operationId?: string;
   workRunId?: string;
   sessionId?: number;
+  executionId?: string;
   output: string;
   outputTruncated: boolean;
   running: boolean;
@@ -69,6 +78,14 @@ interface ProcessSession {
   finishedAt?: number;
   terminalReceipt?: ProcessSnapshot;
   id: number;
+  executionId?: string;
+  managedJob?: WindowsCommandRunner;
+  /** Flushes partial multi-byte sequences held by per-stream decoders. */
+  flushOutput?: () => void;
+  /** Legacy win32 pipe path: owns the shell's descendants for terminate. */
+  pipeJob?: WindowsJobObject;
+  managedReleased?: boolean;
+  workFinalized?: boolean;
   workspaceId: string;
   process?: ManagedProcess;
   startedAt: number;
@@ -95,6 +112,8 @@ interface ProcessSessionManagerOptions {
   completedSessionTtlMs?: number;
   maxCompletedSessions?: number;
   stateDir?: string;
+  /** Staged rollout only: production remains on legacy path until release gate. */
+  managedWindowsCommands?: boolean;
 }
 
 function boundedInteger(value: number | undefined, fallback: number, maximum: number): number {
@@ -244,6 +263,8 @@ export class ProcessSessionManager {
   private readonly completedSessionTtlMs: number;
   private nextSessionId = 1;
   readonly executionCoordinator?: ExecutionCoordinator;
+  private readonly managedOwner?: ExecutionOwnerIdentity;
+  private readonly managedLease?: ManagedOwnerLease;
   private readonly claims = new Set<ExecutionClaim>();
   private shuttingDown = false;
 
@@ -252,7 +273,25 @@ export class ProcessSessionManager {
     this.workStateDir = options.stateDir;
     this.maxBufferCharacters = options.maxBufferCharacters ?? DEFAULT_BUFFER_CHARACTERS;
     this.completedSessionTtlMs = options.completedSessionTtlMs ?? COMPLETED_SESSION_TTL_MS;
-    if (options.stateDir) this.executionCoordinator = new ExecutionCoordinator(options.stateDir);
+    if (options.stateDir) {
+      this.executionCoordinator = new ExecutionCoordinator(options.stateDir);
+      if (process.platform === "win32" && options.managedWindowsCommands === true) {
+        const runtimeIdentity = randomUUID();
+        this.managedOwner = {
+          id: this.executionCoordinator.managedOwnerId,
+          kind: "mcp", pid: process.pid,
+          processCreatedAt: windowsProcessCreatedAt(process.pid),
+          // Not an OS reboot proof. Stage 3 must replace this before
+          // automatic post-restart recovery is permitted.
+          bootId: windowsBootIdentity(),
+          generation: runtimeIdentity,
+        };
+        this.executionCoordinator.registerManagedOwner(this.managedOwner);
+        this.managedLease = new ManagedOwnerLease(
+          this.executionCoordinator.sharedDatabaseHandle.sqlite, this.managedOwner);
+        this.managedLease.start();
+      }
+    }
   }
 
   async mutate<T>(workspaceRoot: string, operation: () => Promise<T>): Promise<T> {
@@ -277,6 +316,10 @@ export class ProcessSessionManager {
 
   async start(input: StartCommandInput): Promise<ProcessSnapshot> {
     if (this.shuttingDown) throw new Error("Execution manager is shutting down.");
+    if (this.managedOwner && this.executionCoordinator) {
+      this.managedLease?.assertCanAdmit();
+      return this.startManaged(input);
+    }
     if (input.requestKey) {
       if (!input.workRunId || !this.workStateDir) throw new Error("Command requestKey requires persistent workRunId.");
       const ledger = new WorkLedger(this.workStateDir);
@@ -324,8 +367,238 @@ export class ProcessSessionManager {
     return snapshot;
   }
 
+  /** Win32 managed command path. No user command starts until SQLite has
+   * atomically admitted its claim, work receipt and execution identity, and
+   * a suspended-by-protocol Runner has durably persisted Job membership.
+   */
+  private async startManaged(input: StartCommandInput): Promise<ProcessSnapshot> {
+    const owner = this.managedOwner!;
+    const coordinator = this.executionCoordinator!;
+    if (input.requestKey && (!input.workRunId || !this.workStateDir)) {
+      throw new Error("Command requestKey requires persistent workRunId.");
+    }
+    const yieldTimeMs = boundedInteger(input.yieldTimeMs, DEFAULT_EXEC_YIELD_MS, MAX_PROCESS_YIELD_MS);
+    boundedInteger(input.maxOutputTokens, DEFAULT_MAX_OUTPUT_TOKENS, 100_000);
+    const session = this.createSession(input);
+    const semanticHash = createHash("sha256").update(JSON.stringify({
+      workspaceId: input.workspaceId, command: input.command, cwd: input.cwd,
+      workspaceRoot: input.workspaceRoot ?? input.cwd,
+      tty: Boolean(input.tty), resources: [...new Set(input.resources ?? [])].sort(),
+      workRunId: input.workRunId ?? null,
+    })).digest("hex");
+
+    // Network reconnect/retry must report the prior durable command identity
+    // BEFORE attempting admission. Otherwise a still-running first attempt
+    // looks like a generic occupied-checkout error, inviting the host to
+    // retry a potentially non-idempotent command under a new request key.
+    // This preflight is advisory; the transactional check below remains the
+    // definitive defense when two clients race on the same requestKey.
+    if (input.requestKey && input.workRunId && this.workStateDir) {
+      const ledger = new WorkLedger(this.workStateDir, coordinator.sharedDatabaseHandle);
+      ledger.requireScope(input.workRunId, input.workspaceRoot ?? input.cwd, input.workspaceId);
+      const prior = ledger.db.prepare(`select id,request_hash,command_operation_id
+        from managed_executions where idempotency_scope=? and request_key=?`)
+        .get(`command:${input.workRunId}`, input.requestKey) as
+        { id: string; request_hash: string; command_operation_id: string | null } | undefined;
+      if (prior) {
+        if (prior.request_hash !== semanticHash) {
+          throw new Error("IDEMPOTENCY_CONFLICT: requestKey belongs to different command inputs; no command replayed.");
+        }
+        if (prior.command_operation_id) {
+          throw new Error(`RECORDED_OPERATION: ${prior.command_operation_id}; recover through work_task get. Command was not replayed.`);
+        }
+        throw new Error(`RECORDED_EXECUTION: ${prior.id}; original command outcome requires reconciliation. Command was not replayed.`);
+      }
+      const oldOperation = ledger.db.prepare(`select id from console_operations
+        where run_id=? and request_key=?`)
+        .get(input.workRunId, `command:${input.requestKey}`) as {id:string} | undefined;
+      if (oldOperation) {
+        throw new Error(`RECORDED_OPERATION: ${oldOperation.id}; recover through work_task get. Command was not replayed.`);
+      }
+    }
+
+    // The SQLite callback MUST stay synchronous. Admission rolls everything
+    // back, including the claim, if the work run is closed or a request is
+    // duplicated. Node/Windows process creation happens after commit.
+    const admitted = coordinator.admitManaged({
+      workspaceRoot: input.workspaceRoot ?? input.cwd,
+      kind: "command", resources: input.resources,
+    }, (sqlite, borrowedDatabase) => {
+      const store = new ExecutionStateStore(sqlite);
+      const ledger = input.workRunId && this.workStateDir
+        ? new WorkLedger(this.workStateDir, borrowedDatabase) : undefined;
+      if (input.workRunId && !ledger) throw new Error("Work accounting is unavailable; command was not started.");
+      if (ledger && input.workRunId) {
+        ledger.requireScope(input.workRunId, input.workspaceRoot ?? input.cwd, input.workspaceId);
+        if (input.requestKey) {
+          const prior = sqlite.prepare("select id from console_operations where run_id=? and request_key=?")
+            .get(input.workRunId, `command:${input.requestKey}`) as { id: string } | undefined;
+          if (prior) throw new Error(`RECORDED_OPERATION: ${prior.id}; recover through work_task get. Command was not replayed.`);
+        }
+      }
+      const result = store.create({
+        kind: "command", workspaceId: input.workspaceId,
+        checkoutRoot: input.workspaceRoot ?? input.cwd,
+        workRunId: input.workRunId, owner, access: "write",
+        resources: [...(input.resources ?? [])],
+        idempotencyScope: input.workRunId
+          ? `command:${input.workRunId}` : `command:ephemeral:${owner.id}`,
+        requestKey: input.requestKey,
+        requestHash: semanticHash, initialPhase: "starting",
+      }, () => {
+        if (ledger && input.workRunId) {
+          session.workOperationId = ledger.operation({
+            runId: input.workRunId, requestKey: `command:${input.requestKey ?? randomUUID()}`,
+            kind: "command", label: "受管命令（不记录原始命令或凭据）", status: "running",
+          });
+        }
+      });
+      if (!result.created) {
+        throw new Error(`RECORDED_EXECUTION: ${result.execution.id}; previous command was not replayed.`);
+      }
+      // The command ledger operation is created by onCreate, inside the same
+      // outer admission transaction. Persist its exact identity before GO:
+      // without this link a crash recovery can free the native Job claim but
+      // leave console_operations running forever (work_task cannot finish).
+      // Never guess an operation from timestamps, command text or PID.
+      if (input.workRunId) {
+        if (!session.workOperationId) throw new Error("MANAGED_COMMAND_LEDGER_LINK_MISSING");
+        const linked = sqlite.prepare(`update managed_executions
+          set command_operation_id=?
+          where id=? and kind='command' and work_run_id=? and command_operation_id is null`)
+          .run(session.workOperationId, result.execution.id, input.workRunId);
+        if (linked.changes !== 1) throw new Error("MANAGED_COMMAND_LEDGER_LINK_CONFLICT");
+      }
+      return { executionId: result.execution.id, value: result.execution.id };
+    });
+    session.executionClaim = admitted.claim;
+    session.executionId = admitted.value;
+    session.workRunId = input.workRunId;
+    this.claims.add(admitted.claim);
+    this.sessions.set(session.id, session);
+    // One decoder per stream: a multi-byte UTF-8 sequence may be split across
+    // pipe chunks. Flushed by flushManagedOutput() before the session ends.
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
+    session.flushOutput = () => {
+      this.append(session, stdoutDecoder.end());
+      this.append(session, stderrDecoder.end());
+    };
+    try {
+      const runner = await WindowsCommandRunner.start({
+        executionId: session.executionId, generation: 1,
+        command: input.command, cwd: input.cwd,
+        environment: processEnvironment({ workspaceId: input.workspaceId, workspaceRoot: input.workspaceRoot }),
+        persistArmed: (proof) => coordinator.withManagedState((sqlite) => {
+          const store = new ExecutionStateStore(sqlite);
+          const armed = store.arm({
+            executionId: proof.executionId, expectedVersion: 0, expectedGeneration: proof.generation,
+            pid: proof.runnerPid, createdAt: proof.runnerCreatedAt,
+            bootId: owner.bootId, jobIdentity: proof.jobIdentity,
+            evidence: JSON.stringify({ kind: "os_job_membership", count: proof.memberCount,
+              jobIdentity: proof.jobIdentity, createdAt: proof.runnerCreatedAt }),
+          });
+          store.transition({
+            executionId: proof.executionId, expectedVersion: armed.state_version,
+            expectedGeneration: proof.generation, phase: "running",
+          });
+        }),
+        onStdout: (data) => this.append(session, stdoutDecoder.write(data)),
+        onStderr: (data) => this.append(session, stderrDecoder.write(data)),
+      });
+      session.managedJob = runner;
+      session.process = {
+        write: (data) => runner.sendInput(data),
+        kill: () => { void runner.cancel(0).catch((error) =>
+          this.record(session, "managed_cancel_failed", diagnosticError(error), "error")); },
+      };
+      this.record(session, "process_started", { childPid: runner.runnerPid, executionId: session.executionId });
+      void runner.finished.then((proof) => this.completeManagedSession(session, proof),
+        (error: unknown) => this.failManagedSession(session, error));
+    } catch (error) {
+      this.record(session, "managed_start_failed", diagnosticError(error), "error");
+      // Even if no GO was intended, keep the claim quarantined when Job
+      // identity/cleanup is unproven. Stage 3 recovery must inspect it.
+      try {
+        coordinator.withManagedState((sqlite) => {
+          const store = new ExecutionStateStore(sqlite);
+          const row = store.get(session.executionId!);
+          if (row && row.phase !== "terminal") store.transition({
+            executionId: row.id, expectedVersion: row.state_version,
+            expectedGeneration: row.generation, phase: "terminal", outcome: "unknown",
+            resourceState: "quarantined", recoveryReason: "managed_runner_start_failed",
+          });
+        });
+      } catch (stateError) {
+        this.record(session, "managed_quarantine_failed", diagnosticError(stateError), "error");
+      }
+      this.sessions.delete(session.id);
+      throw error;
+    }
+    await this.waitForExit(session, yieldTimeMs);
+    return this.consume(session, input.maxOutputTokens);
+  }
+
+  private completeManagedSession(session: ProcessSession, proof: JobExitEvidence): void {
+    if (!session.executionId || !this.executionCoordinator || !session.managedJob || !session.running) return;
+    try {
+      const successful = proof.stopReason === "root_exit" && proof.rootExitCode === 0;
+      const outcome = proof.stopReason === "cancelled" ? "cancelled"
+        : successful ? "completed" : "failed";
+      const status = successful ? "completed" : "failed";
+      this.executionCoordinator.completeManaged(session.executionId, (sqlite, borrowedDatabase) => {
+        const store = new ExecutionStateStore(sqlite);
+        let row = store.get(session.executionId!);
+        if (!row || row.job_identity !== proof.jobIdentity ||
+          row.runner_pid !== proof.runnerPid || row.generation !== proof.generation ||
+          row.phase !== "running" || proof.activeProcesses !== 0) {
+          throw new Error("MANAGED_RELEASE_IDENTITY_MISMATCH: Job identity or empty proof is invalid.");
+        }
+        row = store.transition({
+          executionId: row.id, expectedVersion: row.state_version,
+          expectedGeneration: row.generation, phase: "terminal",
+          outcome, resourceState: "cleanup_pending",
+        });
+        row = store.transition({
+          executionId: row.id, expectedVersion: row.state_version,
+          expectedGeneration: row.generation, resourceState: "released",
+          exitEvidence: { kind: "job_empty_verified", verifiedAt: proof.verifiedAt,
+            verifier: "WindowsCommandRunner", detail: JSON.stringify(proof) },
+        });
+        if (session.workOperationId && this.workStateDir) {
+          const ledger = new WorkLedger(this.workStateDir, borrowedDatabase);
+          ledger.endOperation(session.workOperationId, status, [{
+            label: "Windows Job tree verified empty before command resource release",
+            reference: JSON.stringify({ executionId: row.id, jobIdentity: proof.jobIdentity,
+              runnerPid: proof.runnerPid, exitCode: proof.rootExitCode ?? null,
+              stopReason: proof.stopReason, verifiedAt: proof.verifiedAt }),
+            outcome: successful ? "passed" : "failed",
+          }]);
+        }
+      });
+      session.managedReleased = true;
+      session.workFinalized = true;
+      this.finish(session, proof.rootExitCode, proof.rootSignal);
+    } catch (error) {
+      this.failManagedSession(session, error);
+    }
+  }
+
+  private failManagedSession(session: ProcessSession, error: unknown): void {
+    if (!session.running) return;
+    session.failure = diagnosticError(error);
+    this.record(session, "managed_cleanup_unverified", session.failure, "error");
+    this.append(session, "Windows Job cleanup or database receipt is unverified; claim retained for recovery.\n");
+    // Do not mark the work ledger completed or release the claim.
+    session.workFinalized = true;
+    this.finish(session, undefined, "SIGTERM");
+  }
+
   async write(input: WriteStdinInput): Promise<ProcessSnapshot> {
     const session = this.getOwnedSession(input.workspaceId, input.sessionId);
+    if (session.executionId && input.executionId !== session.executionId) {
+      throw new Error("EXECUTION_ID_MISMATCH: provide the execution_id returned by exec_command; session_id alone is not sufficient.");
+    }
     const chars = input.chars ?? "";
     const interactionRequested =
       chars.length > 0 || input.columns !== undefined || input.rows !== undefined;
@@ -364,6 +637,7 @@ export class ProcessSessionManager {
 
   shutdown(): void {
     this.shuttingDown = true;
+    this.managedLease?.stop();
     for (const session of this.sessions.values()) {
       if (session.cleanupTimer) clearTimeout(session.cleanupTimer);
       if (session.running) session.process?.kill("SIGTERM");
@@ -394,7 +668,9 @@ export class ProcessSessionManager {
 
     return {
       execution: executionContract(input.tty),
-      id: this.nextSessionId++,
+      // Managed sessions use unpredictable safe integers so stale IDs after a
+      // daemon restart cannot readily target an unrelated live command.
+      id: this.managedOwner ? randomBytes(6).readUIntBE(0, 6) : this.nextSessionId++,
       workspaceId: input.workspaceId,
       workRunId: input.workRunId,
       outputBytes: 0,
@@ -423,10 +699,11 @@ export class ProcessSessionManager {
       detached,
       shell: shell.executable,
     });
+    if (process.platform === "win32" && child.pid) session.pipeJob = this.attachPipeJob(session, child.pid);
 
     session.process = {
       write: (data) => child.stdin.write(data),
-      kill: (signal = "SIGTERM") => terminateProcessTree(child, signal, detached),
+      kill: (signal = "SIGTERM") => this.killPipe(session, child, signal, detached),
     };
     child.once("spawn", () => this.record(session, "process_started", { childPid: child.pid }));
     child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
@@ -437,8 +714,66 @@ export class ProcessSessionManager {
       this.record(session, "process_error", session.failure, "error");
       this.append(session, `${error.message}\n`);
     });
-    child.on("close", (code, signal) => this.finish(session, code ?? undefined, signal ?? undefined));
+    child.on("close", (code, signal) => {
+      // Deliberate: once all stdio is closed the session is terminal and its
+      // claim is released, so the Job handle is closed here. KILL_ON_JOB_CLOSE
+      // then ends any member that detached from our pipes (e.g. a GUI or
+      // `start` target); the managed path is stricter and kills on root exit.
+      this.closePipeJob(session);
+      this.finish(session, code ?? undefined, signal ?? undefined);
+    });
     child.once("exit", () => { session.rootExitedAt = Date.now(); });
+  }
+
+  /** Assigned right after spawn returns. A descendant the shell creates
+   * before assignment escapes the Job; that small race is accepted. */
+  private attachPipeJob(session: ProcessSession, pid: number): WindowsJobObject | undefined {
+    let job: WindowsJobObject | undefined;
+    try {
+      job = new WindowsJobObject();
+      job.assignVerified(pid);
+      return job;
+    } catch (error) {
+      // Fail closed if assignment succeeded but verification did not.
+      try { job?.close(); } catch {}
+      this.record(session, "process_job_unavailable", { childPid: pid, ...diagnosticError(error) }, "warn");
+      return undefined;
+    }
+  }
+
+  private closePipeJob(session: ProcessSession): void {
+    const job = session.pipeJob;
+    if (!job) return;
+    session.pipeJob = undefined;
+    try {
+      const remaining = job.activeProcesses();
+      if (remaining > 0) this.record(session, "process_job_closed_with_members", { remaining }, "warn");
+    } catch {}
+    try { job.close(); }
+    catch (error) { this.record(session, "process_job_close_failed", diagnosticError(error), "error"); }
+  }
+
+  private killPipe(
+    session: ProcessSession,
+    child: Parameters<typeof terminateProcessTree>[0],
+    signal: NodeJS.Signals,
+    detached: boolean,
+  ): void {
+    if (session.pipeJob) {
+      // Kills the whole Job, including descendants started after assignment
+      // and those orphaned after the root shell exited.
+      try { session.pipeJob.terminate(1); return; }
+      catch (error) { this.record(session, "process_job_terminate_failed", diagnosticError(error), "error"); }
+    }
+    if (process.platform === "win32" && session.rootExitedAt !== undefined) {
+      // The root PID may already be reused; never taskkill it. Without a Job,
+      // orphaned descendants cannot be located safely.
+      this.record(session, "process_terminate_skipped", {
+        reason: "root_exited_without_job", rootExitedElapsedMs: Date.now() - session.rootExitedAt,
+      }, "warn");
+      return;
+    }
+    terminateProcessTree(child, signal, detached);
   }
 
   private async startPty(session: ProcessSession, input: StartCommandInput): Promise<void> {
@@ -480,14 +815,26 @@ export class ProcessSessionManager {
 
   private finish(session: ProcessSession, exitCode?: number, signal?: string): void {
     if (!session.running) return;
+    // Managed runner exposes no stdio-end hook; its Job-empty proof is the
+    // last point before the receipt, so emit any trailing partial sequence.
+    session.flushOutput?.();
     session.running = false;
     session.finishedAt = Date.now();
     session.exitCode = exitCode;
     session.signal = signal;
     const success = exitCode === 0 && !signal && !session.failure;
     this.record(session, "process_finished", { exitCode, signal, outputBytes: session.outputBytes, ...session.failure }, success ? "info" : "warn");
-    this.endWorkOperation(session, success);
-    this.releaseClaim(session.executionClaim);
+    if (!session.workFinalized) this.endWorkOperation(session, success);
+    if (session.executionId) {
+      // The SQLite proof-gated transaction already deleted a verified claim.
+      // On failed cleanup, preserve the active claim for Stage 3 recovery.
+      if (session.managedReleased && session.executionClaim) {
+        this.claims.delete(session.executionClaim);
+        if (this.shuttingDown && this.claims.size === 0) this.executionCoordinator?.close();
+      }
+    } else {
+      this.releaseClaim(session.executionClaim);
+    }
     session.resolveExit();
     session.cleanupTimer = setTimeout(
       () => this.sessions.delete(session.id),
@@ -552,6 +899,7 @@ export class ProcessSessionManager {
       operationId: session.workOperationId,
       workRunId: session.workRunId,
       sessionId: session.id,
+      executionId: session.executionId,
       output: buffered.output,
       outputTruncated: buffered.truncated,
       running: session.running,

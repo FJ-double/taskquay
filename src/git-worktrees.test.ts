@@ -7,12 +7,16 @@ import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
 import { Result, type Result as BetterResult } from "better-result";
+import { loadConfig } from "./config.js";
 import {
   cleanupManagedWorktrees,
+  createManagedWorktree,
+  GitWorktreeError,
   ManagedWorktreeError,
   managedWorktreeRecoveryRef,
   restoreManagedWorktree,
 } from "./git-worktrees.js";
+import { writeTestDevspaceConfig } from "./test-support/config.test.js";
 import {
   SqliteWorkspaceStore,
   WorkspaceStoreError,
@@ -20,6 +24,19 @@ import {
 } from "./workspace-store.js";
 
 const execFileAsync = promisify(execFile);
+
+test("worktree base refs that look like git options are rejected", async (t) => {
+  const fixture = await worktreeFixture(t, "ws_option_ref");
+  const config = loadConfig(writeTestDevspaceConfig(join(fixture.root, ".devspace-home"), {
+    workspaces: { allowedRoots: [fixture.root], worktreeRoot: join(fixture.root, "managed") },
+  }));
+  for (const baseRef of ["--all", "-h"]) {
+    await assert.rejects(
+      createManagedWorktree({ sourcePath: fixture.sourceRoot, baseRef, config }),
+      (error: unknown) => error instanceof GitWorktreeError && error.code === "GIT_INVALID_BASE_REF",
+    );
+  }
+});
 
 test("stale clean worktrees at their base are removed without recovery refs", async (t) => {
   const fixture = await worktreeFixture(t, "ws_clean");

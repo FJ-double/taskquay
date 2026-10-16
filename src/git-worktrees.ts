@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { lstat, mkdir, realpath, rm, stat } from "node:fs/promises";
 import { basename, join, relative, resolve } from "node:path";
+import { withWindowsGitMetadataMutex } from "./windows-git-metadata-mutex.js";
 import { Result, TaggedError, type Result as BetterResult } from "better-result";
 import type { ServerConfig } from "./config.js";
 import {
@@ -18,6 +19,32 @@ import type {
 } from "./workspace-store.js";
 
 const execFileAsync = promisify(execFile);
+// Bounds hangs on index locks, credential helpers or fsmonitor; generous
+// enough for `add -A`/`stash create` on large checkouts.
+const GIT_COMMAND_TIMEOUT_MS = 5 * 60_000;
+
+// Git worktree add mutates .git/worktrees metadata for the *source* checkout.
+// Concurrent git processes against one common directory have exhibited
+// transient unreadable commondir files on Windows. Serialize only worktree
+// metadata creation for that source, NOT subsequent independent Agent work.
+// This protects one daemon instance; cross-process Git transactions still
+// need a separate interprocess arbitration during Stage 5 rollout.
+const worktreeCreationLocks = new Map<string, Promise<void>>();
+async function withWorktreeCreationLock<T>(sourceRoot: string,
+  action: () => Promise<T>): Promise<T> {
+  const key = process.platform === "win32" ? sourceRoot.toLowerCase() : sourceRoot;
+  const prior = worktreeCreationLocks.get(key);
+  let done!: () => void;
+  const current = new Promise<void>((resolve) => { done = resolve; });
+  worktreeCreationLocks.set(key, current);
+  try {
+    if (prior) await prior;
+    return await action();
+  } finally {
+    done();
+    if (worktreeCreationLocks.get(key) === current) worktreeCreationLocks.delete(key);
+  }
+}
 
 export class GitWorktreeError extends Error {
   constructor(
@@ -104,37 +131,47 @@ export async function createManagedWorktree(input: {
   }
 
   const sourceRoot = await resolveGitRoot(sourcePath, input.config.allowedRoots);
-  const baseRef = input.baseRef ?? "HEAD";
-  const baseSha = await resolveBaseCommit(sourceRoot, baseRef);
-  const dirtySource = (await git(["status", "--porcelain=v1"], sourceRoot)).trim().length > 0;
-  const worktreePath = managedWorktreePath({
-    worktreeRoot: input.config.worktreeRoot,
-    repoRoot: sourceRoot,
-  });
-
-  await mkdir(input.config.worktreeRoot, { recursive: true });
-  assertAllowedPath(worktreePath, [input.config.worktreeRoot]);
-
-  try {
-    await git(["worktree", "add", "--detach", worktreePath, baseSha], sourceRoot);
-  } catch (error) {
-    await rm(worktreePath, { recursive: true, force: true });
-    const message = error instanceof Error ? error.message : String(error);
+  // Pure input validation must not run inside the metadata mutex: any failure
+  // there leaves a guard that quarantines the repository for manual review.
+  if (input.baseRef?.startsWith("-")) {
     throw new GitWorktreeError(
-      "GIT_WORKTREE_CREATE_FAILED",
-      `Git failed to create the managed worktree. ${message}`,
+      "GIT_INVALID_BASE_REF",
+      `Cannot open workspace in worktree mode because baseRef ${JSON.stringify(input.baseRef)} looks like a git option.`,
     );
   }
+  return withWorktreeCreationLock(sourceRoot, () => withWindowsGitMetadataMutex(sourceRoot, async () => {
+    const baseRef = input.baseRef ?? "HEAD";
+    const baseSha = await resolveBaseCommit(sourceRoot, baseRef);
+    const dirtySource = (await git(["status", "--porcelain=v1"], sourceRoot)).trim().length > 0;
+    const worktreePath = managedWorktreePath({
+      worktreeRoot: input.config.worktreeRoot,
+      repoRoot: sourceRoot,
+    });
 
-  return {
-    sourceRoot,
-    path: worktreePath,
-    baseRef,
-    baseSha,
-    dirtySource,
-    detached: true,
-    managed: true,
-  };
+    await mkdir(input.config.worktreeRoot, { recursive: true });
+    assertAllowedPath(worktreePath, [input.config.worktreeRoot]);
+
+    try {
+      await git(["worktree", "add", "--detach", worktreePath, baseSha], sourceRoot);
+    } catch (error) {
+      await rm(worktreePath, { recursive: true, force: true });
+      const message = error instanceof Error ? error.message : String(error);
+      throw new GitWorktreeError(
+        "GIT_WORKTREE_CREATE_FAILED",
+        `Git failed to create the managed worktree. ${message}`,
+      );
+    }
+
+    return {
+      sourceRoot,
+      path: worktreePath,
+      baseRef,
+      baseSha,
+      dirtySource,
+      detached: true,
+      managed: true,
+    };
+  }));
 }
 
 export async function cleanupManagedWorktrees(input: {
@@ -534,10 +571,15 @@ async function git(args: string[], cwd: string): Promise<string> {
     const { stdout } = await execFileAsync("git", args, {
       cwd,
       maxBuffer: 10 * 1024 * 1024,
+      timeout: GIT_COMMAND_TIMEOUT_MS,
+      windowsHide: true,
     });
     return stdout;
   } catch (error) {
     if (isGitUnavailable(error)) throw error;
+    if (typeof error === "object" && error && "killed" in error && (error as { killed?: unknown }).killed) {
+      throw new Error(`git ${args[0]} timed out after ${GIT_COMMAND_TIMEOUT_MS / 1000}s (lock, credential prompt or hook?)`);
+    }
 
     const stderr = typeof error === "object" && error && "stderr" in error
       ? String((error as { stderr?: unknown }).stderr ?? "").trim()

@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { randomBytes } from "node:crypto";
 import { createServer as createNetServer } from "node:net";
 import type {
   OpencodeClient,
@@ -21,6 +22,7 @@ import type {
 import { terminateProcessTree } from "./process-platform.js";
 
 const OPENCODE_SERVER_HOSTNAME = "127.0.0.1";
+const OPENCODE_SERVER_USERNAME = "opencode";
 const OPENCODE_SERVER_START_TIMEOUT_MS = 5_000;
 const OPENCODE_SERVER_START_ATTEMPTS = 3;
 const OPENCODE_PROMPT_TIMEOUT_MS = 5 * 60_000;
@@ -173,9 +175,16 @@ export class OpencodeLocalAgentDriver implements LocalAgentDriver {
   }
 }
 
-async function defaultOpencodeFactory(
+export type OpencodeServerStarter = (
+  env: NodeJS.ProcessEnv,
+  config: Record<string, unknown>,
+  credentials: OpencodeServerCredentials,
+) => Promise<OpencodeServerLike & { url: string }>;
+
+export async function defaultOpencodeFactory(
   _context?: LocalAgentRuntimeContext,
   env: NodeJS.ProcessEnv = process.env,
+  startServer: OpencodeServerStarter = startOpencodeServer,
 ): Promise<{ client: OpencodeClientLike; server: OpencodeServerLike }> {
   const { createOpencodeClient } = await import("@opencode-ai/sdk/v2");
   const config = {
@@ -185,21 +194,53 @@ async function defaultOpencodeFactory(
       devspace_full_access: opencodeAgentConfig("full_access"),
     },
   };
-  const server = await startOpencodeServer(env, config);
+  // The injected config carries an unrestricted agent; a per-server password
+  // keeps other local processes from driving it through the loopback port.
+  const credentials = createOpencodeServerCredentials();
+  const server = await startServer(env, config, credentials);
   return {
-    client: createOpencodeClient({ baseUrl: server.url }),
+    client: createOpencodeClient({ baseUrl: server.url, headers: opencodeAuthorizationHeaders(credentials) }),
     server,
+  };
+}
+
+export interface OpencodeServerCredentials {
+  username: string;
+  password: string;
+}
+
+export function createOpencodeServerCredentials(): OpencodeServerCredentials {
+  return { username: OPENCODE_SERVER_USERNAME, password: randomBytes(32).toString("base64url") };
+}
+
+export function opencodeServerEnvironment(
+  env: NodeJS.ProcessEnv,
+  config: Record<string, unknown>,
+  credentials: OpencodeServerCredentials,
+): NodeJS.ProcessEnv {
+  return {
+    ...env,
+    OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
+    OPENCODE_SERVER_USERNAME: credentials.username,
+    OPENCODE_SERVER_PASSWORD: credentials.password,
+  };
+}
+
+export function opencodeAuthorizationHeaders(credentials: OpencodeServerCredentials): { Authorization: string } {
+  return {
+    Authorization: `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString("base64")}`,
   };
 }
 
 async function startOpencodeServer(
   env: NodeJS.ProcessEnv,
   config: Record<string, unknown>,
+  credentials: OpencodeServerCredentials,
 ): Promise<OpencodeServerLike & { url: string }> {
   for (let attempt = 1; attempt <= OPENCODE_SERVER_START_ATTEMPTS; attempt += 1) {
     const port = await allocateOpencodePort();
     try {
-      return await launchOpencodeServer(env, config, port);
+      return await launchOpencodeServer(env, config, credentials, port);
     } catch (error) {
       if (attempt === OPENCODE_SERVER_START_ATTEMPTS || !await isOpencodePortInUse(port)) throw error;
     }
@@ -210,6 +251,7 @@ async function startOpencodeServer(
 async function launchOpencodeServer(
   env: NodeJS.ProcessEnv,
   config: Record<string, unknown>,
+  credentials: OpencodeServerCredentials,
   port: number,
 ): Promise<OpencodeServerLike & { url: string }> {
   const detached = process.platform !== "win32";
@@ -219,10 +261,7 @@ async function launchOpencodeServer(
     `--port=${port}`,
   ], {
     detached,
-    env: {
-      ...env,
-      OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
-    },
+    env: opencodeServerEnvironment(env, config, credentials),
     stdio: ["ignore", "pipe", "pipe"],
   });
   let closed = false;

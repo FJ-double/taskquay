@@ -30,6 +30,12 @@ const manager = new LocalAgentManager({
   allowedRoots: config.allowedRoots,
   logger: log,
   subagents: config.subagents,
+  // Experimental; OFF by default. Enabling on a real daemon requires the
+  // separate Stage 3/4 recovery and atomic-admission release gate.
+  isolatedProviderTurns: {
+    enabled: process.platform === "win32" &&
+      process.env.TASKQUAY_EXPERIMENTAL_PROVIDER_JOB_TURNS === "1",
+  },
 });
 const daemon = new LocalAgentDaemon({
   stateDir: paths.stateDir,

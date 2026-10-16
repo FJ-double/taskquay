@@ -16,6 +16,9 @@ export type ExecutionContract = ReturnType<typeof executionContract>;
 
 export interface KillableProcess {
   pid?: number;
+  /** Set by Node once the root has exited (ChildProcess exposes both). */
+  exitCode?: number | null;
+  signalCode?: NodeJS.Signals | string | null;
   kill(signal?: NodeJS.Signals): boolean;
 }
 
@@ -71,6 +74,11 @@ export function terminateProcessTree(
   runtime: ProcessTreeRuntime = defaultProcessTreeRuntime,
 ): void {
   if (runtime.platform === "win32" && child.pid) {
+    // Once the root has exited its PID may already belong to an unrelated
+    // process; `taskkill /T` would then kill that tree instead. Orphaned
+    // descendants cannot be found by PID anyway (use a Job Object for them).
+    const rootExited = (child.exitCode ?? null) !== null || (child.signalCode ?? null) !== null;
+    if (rootExited) return;
     if (runtime.killWindowsTree(child.pid)) return;
   } else if (detached && child.pid) {
     try {

@@ -47,7 +47,14 @@ const parser = new TestReceiptSummary();
 let savedBytes = 0, truncated = false, timedOut = false, interrupted = false;
 const started = new Date().toISOString();
 const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", windowsHide: true, timeout: 5_000 }).stdout?.trim();
-const child = spawn(process.execPath, ["--import", "tsx", "--test", "--test-concurrency=1", "--test-timeout=120000", "--test-reporter=tap", ...tests], {
+// Enables read-only socket error diagnosis in fixtures without ever retrying
+// mutating MCP requests. The default suite remains unchanged.
+const httpDiagnostics = process.env.TASKQUAY_TEST_HTTP_DIAGNOSTICS === "1";
+// Node --import takes a file:// URL for an absolute Windows path.
+const diagnosticPreload = new URL("../src/test-http-fetch-diagnostics.ts", import.meta.url).href;
+const child = spawn(process.execPath, ["--import", "tsx",
+  ...(httpDiagnostics ? ["--import", diagnosticPreload] : []),
+  "--test", "--test-concurrency=1", "--test-timeout=120000", "--test-reporter=tap", ...tests], {
   // Unit/integration fixtures must not discover the operator's real Desktop
   // catalog or authenticated Codex home when exercising automatic creation.
   // Real Desktop acceptance uses the separate explicit verification command.
@@ -80,7 +87,7 @@ child.once("close", (exitCode, signal) => {
   try { after = fingerprint(); } catch { /* Deleted sources fail verification. */ }
   const receipt = { id, started, finished: new Date().toISOString(), sourceCommit: /^[a-f0-9]{40,64}$/.test(head ?? "") ? head : null,
     sourceSha256: before, afterSourceSha256: after, selectedTestFiles: tests.length,
-    runner: { engine: "node:test", loader: "tsx", concurrency: 1, reporter: "tap", perTestTimeoutMs: 120_000, processTimeoutMs: 600_000, isolatedCodexHome: true },
+    runner: { engine: "node:test", loader: "tsx", concurrency: 1, reporter: "tap", perTestTimeoutMs: 120_000, processTimeoutMs: 600_000, isolatedCodexHome: true, httpDiagnostics },
     ...parser.result(exitCode, before === after), startupFailed, timedOut, interrupted, signal,
     rawLogPath: logPath, rawLogTruncated: truncated, rawLogSha256: createHash("sha256").update(readFileSync(logPath)).digest("hex"), receiptPath };
   writeFileSync(receiptPath, JSON.stringify(receipt, null, 2), { flag: "wx", mode: 0o600 });

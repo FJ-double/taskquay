@@ -33,8 +33,12 @@ function redirectHostAllowed(redirectUri: string, allowedHosts: string[]): boole
     return false;
   }
 
-  if (["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname)) return true;
-  return allowedHosts.includes(parsed.hostname);
+  if (["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname)) {
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  }
+  // Remote callbacks receive authorization codes; never over plaintext or a
+  // non-web scheme that merely reuses an allowed hostname.
+  return parsed.protocol === "https:" && allowedHosts.includes(parsed.hostname);
 }
 
 export class SqliteOAuthStore {

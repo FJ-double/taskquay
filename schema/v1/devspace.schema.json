@@ -181,6 +181,96 @@
       },
       "additionalProperties": false
     },
+    "windowsMcp": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "command": {
+          "default": "",
+          "type": "string"
+        },
+        "args": {
+          "default": [
+            "stdio",
+            "--toolsets",
+            "screen,interaction,apps,system",
+            "--exclude-tools",
+            "Kill,Process,Notification,Recording"
+          ],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowedTools": {
+          "default": [
+            "App",
+            "Click",
+            "Clipboard",
+            "DisplayInventory",
+            "GetText",
+            "GuardrailStatus",
+            "Invoke",
+            "Move",
+            "MultiEdit",
+            "MultiSelect",
+            "Screenshot",
+            "Scroll",
+            "Shortcut",
+            "Snapshot",
+            "Type",
+            "Wait",
+            "WaitFor"
+          ],
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "blenderMcp": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "command": {
+          "default": "",
+          "type": "string"
+        },
+        "args": {
+          "default": [
+            "--python",
+            "3.11",
+            "mcp-for-blender"
+          ],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowedTools": {
+          "default": [
+            "*"
+          ],
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "subagents": {
       "default": {
         "enabled": false,

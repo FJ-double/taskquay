@@ -84,8 +84,12 @@ export function summarizeExecutions(rows: ExecutionRow[]): UsageSummary {
 /** Work/task accounting is separate from model sessions. No model calls occur here. */
 export class WorkLedger {
   readonly database: DatabaseHandle;
-  constructor(readonly stateDir: string) { this.database = openDatabase(stateDir); }
-  close(): void { this.database.close(); }
+  private readonly ownsDatabase: boolean;
+  constructor(readonly stateDir: string, borrowedDatabase?: DatabaseHandle) {
+    this.database = borrowedDatabase ?? openDatabase(stateDir);
+    this.ownsDatabase = !borrowedDatabase;
+  }
+  close(): void { if (this.ownsDatabase) this.database.close(); }
   get db() { return this.database.sqlite; }
 
   project(root: string, name?: string): ProjectRow {
