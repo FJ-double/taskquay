@@ -20,11 +20,33 @@ export interface RecoveryApplyResult {
  */
 export function inspectManagedRecovery(
   sqlite: Database.Database, executionId: string,
-  options: { apply?: boolean; expectedVersion?: number } = {},
+  options: {
+    apply?: boolean; expectedVersion?: number;
+    /** Mandatory for unattended recovery: stale heartbeat is only a scan trigger. */
+    requireOwnerSilenceMs?: number;
+  } = {},
   probe: RecoveryOsProbe = nativeRecoveryProbe,
 ): RecoveryApplyResult {
   const before = readRecoverySnapshot(sqlite, executionId);
   if (!before) return { status: "not_found" };
+  if (options.requireOwnerSilenceMs !== undefined &&
+      (!Number.isSafeInteger(options.requireOwnerSilenceMs) ||
+       options.requireOwnerSilenceMs < 60_000)) {
+    throw new Error("RECOVERY_OWNER_SILENCE_INVALID");
+  }
+  const ownerBefore = options.requireOwnerSilenceMs === undefined ? undefined :
+    sqlite.prepare(`select heartbeat_at_ms,status from execution_owners
+      where id=? and generation=?`).get(before.owner_id,before.owner_generation) as
+      {heartbeat_at_ms:number;status:string}|undefined;
+  const nowMs = Date.now();
+  if (ownerBefore && (!Number.isSafeInteger(ownerBefore.heartbeat_at_ms) ||
+      nowMs < ownerBefore.heartbeat_at_ms ||
+      nowMs - ownerBefore.heartbeat_at_ms < options.requireOwnerSilenceMs!)) {
+    return { status: "active" };
+  }
+  if (options.requireOwnerSilenceMs !== undefined && !ownerBefore) {
+    return { status: "quarantined" };
+  }
   const observation = observeRecovery(before, probe);
   if (options.apply && probe !== nativeRecoveryProbe && !process.env.NODE_TEST_CONTEXT) {
     throw new Error("RECOVERY_SYNTHETIC_OS_PROBE_FORBIDDEN_OUTSIDE_TESTS");
@@ -48,6 +70,18 @@ export function inspectManagedRecovery(
     if (count.n !== 1) throw new Error("RECOVERY_CLAIM_AMBIGUOUS");
   };
   sqlite.transaction(() => {
+    if (ownerBefore) {
+      const ownerNow = sqlite.prepare(`select heartbeat_at_ms,status from execution_owners
+        where id=? and generation=?`).get(before.owner_id,before.owner_generation) as
+        typeof ownerBefore | undefined;
+      if (!ownerNow || ownerNow.heartbeat_at_ms !== ownerBefore.heartbeat_at_ms ||
+          ownerNow.status !== ownerBefore.status ||
+          Date.now() - ownerNow.heartbeat_at_ms < options.requireOwnerSilenceMs!) {
+        // Even a native candidate cannot release a Claim if its owner
+        // resumed heartbeats while the kernel probes were underway.
+        throw new Error("RECOVERY_OWNER_HEARTBEAT_CHANGED");
+      }
+    }
     verifySnapshot();
     const store = new ExecutionStateStore(sqlite);
     const current = store.get(executionId);

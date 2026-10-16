@@ -10,6 +10,7 @@ import { ExecutionStateStore, type ExecutionOwnerIdentity } from "./execution-st
 import { windowsProcessCreatedAt, WindowsJobObject } from "./windows-job-object.js";
 import { windowsBootIdentity } from "./windows-boot-identity.js";
 import { ManagedOwnerLease } from "./managed-owner-lease.js";
+import { sweepManagedRecovery } from "./windows-recovery-sweep.js";
 
 const DEFAULT_EXEC_YIELD_MS = 10_000;
 const DEFAULT_INTERACTIVE_YIELD_MS = 250;
@@ -267,6 +268,9 @@ export class ProcessSessionManager {
   readonly executionCoordinator?: ExecutionCoordinator;
   private readonly managedOwner?: ExecutionOwnerIdentity;
   private readonly managedLease?: ManagedOwnerLease;
+  private recoveryTimer?: NodeJS.Timeout;
+  private initialRecoveryTimer?: NodeJS.Timeout;
+  private recoveryCursor?: string;
   private readonly claims = new Set<ExecutionClaim>();
   private shuttingDown = false;
 
@@ -292,7 +296,34 @@ export class ProcessSessionManager {
         this.managedLease = new ManagedOwnerLease(
           this.executionCoordinator.sharedDatabaseHandle.sqlite, this.managedOwner);
         this.managedLease.start();
+        // Only enabled within the separately gated Windows managed runner.
+        // Heartbeat silence triggers an inspection, never a TTL unlock.
+        this.recoveryTimer = setInterval(() => this.recoverStaleManagedClaims(), 30_000);
+        this.recoveryTimer.unref();
+        this.initialRecoveryTimer = setTimeout(() => this.recoverStaleManagedClaims(), 2_000);
+        this.initialRecoveryTimer.unref();
       }
+    }
+  }
+
+  private recoverStaleManagedClaims(): void {
+    if (this.shuttingDown || !this.managedLease || !this.executionCoordinator) return;
+    try {
+      this.managedLease.assertCanAdmit();
+      const result = sweepManagedRecovery(this.executionCoordinator.sharedDatabaseHandle.sqlite, {
+        afterExecutionId: this.recoveryCursor, limit: 25, minOwnerSilenceMs: 95_000,
+      });
+      this.recoveryCursor = result.nextCursor; // Wrap after last page.
+      for (const entry of result.entries) {
+        if (entry.status === "released" || entry.status === "failed") {
+          this.options.diagnostics?.("managed_claim_recovery", {
+            executionId: entry.executionId, status: entry.status, reason: entry.reason,
+          }, entry.status === "released" ? "info" : "warn");
+        }
+      }
+    } catch (error) {
+      this.options.diagnostics?.("managed_claim_recovery_error",
+        diagnosticError(error), "warn");
     }
   }
 
@@ -639,6 +670,8 @@ export class ProcessSessionManager {
 
   shutdown(): void {
     this.shuttingDown = true;
+    if (this.recoveryTimer) clearInterval(this.recoveryTimer);
+    if (this.initialRecoveryTimer) clearTimeout(this.initialRecoveryTimer);
     this.managedLease?.stop();
     for (const session of this.sessions.values()) {
       if (session.cleanupTimer) clearTimeout(session.cleanupTimer);
