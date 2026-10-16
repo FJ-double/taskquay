@@ -159,9 +159,12 @@ export class WindowsJobObject {
 
   close(): void {
     if (this.closed) return;
-    this.closed = true;
     const handle = this.handle;
-    this.handle = null;
+    // Retain the handle on a failed CloseHandle call. A caller must not
+    // mistake an unclosed KILL_ON_JOB_CLOSE Job for native cleanup proof,
+    // and should still be able to retry closing the same handle.
     if (handle && !this.api.close(handle)) fail("CLOSE", this.api.error);
+    this.handle = null;
+    this.closed = true;
   }
 }

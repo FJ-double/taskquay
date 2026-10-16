@@ -84,6 +84,8 @@ interface ProcessSession {
   flushOutput?: () => void;
   /** Legacy win32 pipe path: owns the shell's descendants for terminate. */
   pipeJob?: WindowsJobObject;
+  /** Job assignment or cleanup failure cannot authorize a legacy Claim release. */
+  pipeJobSafetyUnverified?: boolean;
   managedReleased?: boolean;
   workFinalized?: boolean;
   workspaceId: string;
@@ -699,7 +701,22 @@ export class ProcessSessionManager {
       detached,
       shell: shell.executable,
     });
-    if (process.platform === "win32" && child.pid) session.pipeJob = this.attachPipeJob(session, child.pid);
+    if (process.platform === "win32" && child.pid) {
+      session.pipeJob = this.attachPipeJob(session, child.pid);
+      if (!session.pipeJob) {
+        // The shell may have launched a descendant before Job assignment.
+        // Stop the known root by its live ChildProcess handle; never release
+        // the Claim on root exit alone when the process tree is unverified.
+        session.pipeJobSafetyUnverified = true;
+        session.failure = { code: "WINDOWS_PIPE_JOB_ASSIGNMENT_UNVERIFIED" };
+        session.workFinalized = true;
+        this.append(session,
+          "Windows Job assignment failed. Command cancellation requested; write claim retained for manual reconciliation.\n");
+        try { child.kill(); }
+        catch (error) { this.record(session, "process_unmanaged_root_terminate_failed",
+          diagnosticError(error), "error"); }
+      }
+    }
 
     session.process = {
       write: (data) => child.stdin.write(data),
@@ -714,14 +731,25 @@ export class ProcessSessionManager {
       this.record(session, "process_error", session.failure, "error");
       this.append(session, `${error.message}\n`);
     });
-    child.on("close", (code, signal) => {
+    child.on("close", (code, signal) => { void (async () => {
       // Deliberate: once all stdio is closed the session is terminal and its
-      // claim is released, so the Job handle is closed here. KILL_ON_JOB_CLOSE
-      // then ends any member that detached from our pipes (e.g. a GUI or
-      // `start` target); the managed path is stricter and kills on root exit.
-      this.closePipeJob(session);
+      // claim is released only after native Job members are verified empty.
+      // A detached GUI process may hold no pipe even while it is still alive.
+      if (!(await this.closePipeJob(session))) {
+        session.pipeJobSafetyUnverified = true;
+        session.failure = { code: "WINDOWS_PIPE_JOB_CLOSE_UNVERIFIED" };
+        session.workFinalized = true;
+        this.append(session,
+          "Windows Job handle cleanup is unverified. The write claim is retained for manual reconciliation.\n");
+      }
       this.finish(session, code ?? undefined, signal ?? undefined);
-    });
+    })().catch((error: unknown) => {
+      session.pipeJobSafetyUnverified = true;
+      session.failure = diagnosticError(error);
+      session.workFinalized = true;
+      this.record(session, "process_job_cleanup_unverified", session.failure, "error");
+      this.finish(session, undefined, "SIGTERM");
+    }); });
     child.once("exit", () => { session.rootExitedAt = Date.now(); });
   }
 
@@ -741,16 +769,40 @@ export class ProcessSessionManager {
     }
   }
 
-  private closePipeJob(session: ProcessSession): void {
+  private async closePipeJob(session: ProcessSession): Promise<boolean> {
     const job = session.pipeJob;
-    if (!job) return;
-    session.pipeJob = undefined;
+    if (!job) return true;
     try {
       const remaining = job.activeProcesses();
-      if (remaining > 0) this.record(session, "process_job_closed_with_members", { remaining }, "warn");
-    } catch {}
-    try { job.close(); }
-    catch (error) { this.record(session, "process_job_close_failed", diagnosticError(error), "error"); }
+      if (remaining > 0) {
+        this.record(session, "process_job_closed_with_members", { remaining }, "warn");
+        job.terminate(1);
+      }
+      // CloseHandle with KILL_ON_JOB_CLOSE requests termination but does not
+      // itself give a durable observation of an empty tree. The Claim must
+      // survive until the Job accounting query confirms zero processes.
+      const deadline = Date.now() + 3_000;
+      while (job.activeProcesses() !== 0) {
+        if (Date.now() >= deadline) throw new Error("WINDOWS_PIPE_JOB_EMPTY_UNVERIFIED");
+        await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      }
+    } catch (error) {
+      this.record(session, "process_job_cleanup_unverified", diagnosticError(error), "error");
+      return false;
+    }
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        job.close();
+        session.pipeJob = undefined;
+        return true;
+      } catch (error) {
+        this.record(session, "process_job_close_failed",
+          { attempt, ...diagnosticError(error) }, "error");
+      }
+    }
+    // Keep the handle available to manual reconciliation; never turn an
+    // unverified CloseHandle failure into proof for releasing the Claim.
+    return false;
   }
 
   private killPipe(
@@ -832,7 +884,7 @@ export class ProcessSessionManager {
         this.claims.delete(session.executionClaim);
         if (this.shuttingDown && this.claims.size === 0) this.executionCoordinator?.close();
       }
-    } else {
+    } else if (!session.pipeJobSafetyUnverified) {
       this.releaseClaim(session.executionClaim);
     }
     session.resolveExit();
