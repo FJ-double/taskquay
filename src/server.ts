@@ -43,7 +43,6 @@ import { SingleUserOAuthProvider } from "./oauth-provider.js";
 import {
   compileMcpRegistrationSurface,
   createModernMcpServerAdapter,
-  modernMcpAdapterErrorLogFields,
   type McpRegistrationTarget,
 } from "./mcp-modern-server.js";
 import { ProcessSessionManager } from "./process-sessions.js";
@@ -53,7 +52,7 @@ import { createProjectConsoleRouter } from "./project-console-router.js";
 import { createReviewCheckpointManager } from "./review-checkpoints.js";
 import { conversationScopeIdFromRequestMeta } from "./request-meta.js";
 import { shutdownHttpServer } from "./server-shutdown.js";
-import { ServerDiagnostics, diagnosticError } from "./server-diagnostics.js";
+import { ServerDiagnostics, diagnosticError, recordMcpBoundaryError } from "./server-diagnostics.js";
 import { traceMcpRequest } from "./mcp-request-diagnostics.js";
 import { formatPathForPrompt } from "./skills.js";
 import { DEVSPACE_VERSION } from "./version.js";
@@ -1015,12 +1014,8 @@ export function createServer(
       blenderMcpBridge,
     );
   });
-  const logMcpHandlerError = (error: Error) => logEvent(
-    config.logging,
-    "error",
-    "mcp_handler_error",
-    modernMcpAdapterErrorLogFields(error),
-  );
+  const logMcpHandlerError = (error: Error) =>
+    recordMcpBoundaryError("mcp_handler_error", error, config.logging, options.diagnostics);
   const mcpHandler = createMcpHandler(() => {
     const adapter = createModernMcpServerAdapter(
       mcpServerInfo(),
@@ -1135,10 +1130,8 @@ export function createServer(
         if (!res.headersSent) sendJsonRpcError(res, 400, -32602, error.message);
         return;
       }
-      logEvent(config.logging, "error", "mcp_request_error", {
-        requestId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      recordMcpBoundaryError("mcp_request_error", error, config.logging,
+        options.diagnostics, requestId);
       if (!res.headersSent) {
         sendJsonRpcError(res, 500, -32603, "Internal server error");
       }

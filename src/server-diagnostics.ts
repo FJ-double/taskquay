@@ -18,6 +18,29 @@ export function diagnosticError(error: unknown): Record<string, unknown> {
   };
 }
 
+/** Persist MCP boundary failures, not only the console output. Never include
+ * raw Error.message/cause, credentials, request payload or response content.
+ * Telemetry must not change the MCP response if its sink is unavailable.
+ */
+export function recordMcpBoundaryError(
+  event: "mcp_handler_error" | "mcp_request_error",
+  error: unknown,
+  config: LoggingConfig,
+  diagnostics?: Pick<ServerDiagnostics, "record">,
+  requestId?: string,
+): void {
+  const fields = {
+    ...(requestId ? { requestId } : {}),
+    ...diagnosticError(error),
+  };
+  try {
+    if (diagnostics) diagnostics.record(event, fields, "error");
+    else logEvent(config, "error", event, fields);
+  } catch {
+    // Logging can fail during a transport error; never trigger a second one.
+  }
+}
+
 export class ServerDiagnostics {
   private readonly instanceId = randomUUID();
   private readonly path: string;

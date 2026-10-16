@@ -8,7 +8,7 @@ import { createServer, request } from "node:http";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
-import { diagnosticError, ServerDiagnostics } from "./server-diagnostics.js";
+import { diagnosticError, recordMcpBoundaryError, ServerDiagnostics } from "./server-diagnostics.js";
 import type { LoggingConfig } from "./logger.js";
 
 const logging: LoggingConfig = { level: "info", format: "json", requests: true, assets: false, toolCalls: false, shellCommands: false, trustProxy: false };
@@ -67,6 +67,34 @@ test("rotation bounds disk usage and error summaries omit raw messages", (contex
     assert(existsSync(`${fixtureData.path}.1`));
     assert(readFileSync(fixtureData.path).length < 4096);
   }
+});
+
+test("MCP transport/handler exceptions persist safe fingerprints and request correlation", (context) => {
+  const f = fixture(context);
+  const diagnostics = new ServerDiagnostics({ stateDir: f.stateDir, logging });
+  context.after(() => diagnostics.dispose());
+  const secret = "Bearer do-not-log-my-private-token";
+  const failure = Object.assign(new Error(secret), { code: "ECONNRESET" });
+  recordMcpBoundaryError("mcp_handler_error", failure, logging, diagnostics);
+  recordMcpBoundaryError("mcp_request_error", failure, logging, diagnostics, "isolated-request-123");
+  const rows = f.rows();
+  const handler = rows.find((row) => row.event === "mcp_handler_error");
+  const request = rows.find((row) => row.event === "mcp_request_error");
+  assert.equal(handler?.errorCode, "ECONNRESET");
+  assert.equal(handler?.errorFingerprint, request?.errorFingerprint);
+  assert.equal(request?.requestId, "isolated-request-123");
+  assert.equal(request?.level, "error");
+  assert(!readFileSync(f.path, "utf8").includes(secret));
+  assert(!("error" in handler!), "raw exception messages must never be logged");
+});
+
+test("MCP telemetry sink failure does not produce a secondary MCP exception", () => {
+  const brokenDiagnostics = {
+    record() { throw new Error("INJECTED_DIAGNOSTIC_STORAGE_FAILURE"); },
+  } as unknown as Pick<ServerDiagnostics, "record">;
+  assert.doesNotThrow(() => recordMcpBoundaryError(
+    "mcp_handler_error", new Error("fixture-secret"), logging, brokenDiagnostics,
+  ));
 });
 
 test("unwritable diagnostics do not mask the original startup failure", (context) => {
