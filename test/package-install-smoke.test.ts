@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,15 @@ function testPackedPackageLaunchers(): void {
   const installRoot = join(root, "install");
   try {
     mkdirSync(installRoot, { recursive: true });
+    // npm walks up from an empty directory to find a package root. On
+    // machines with a package.json under the user's home directory this made
+    // the smoke test install dependencies outside its disposable fixture,
+    // leaving the expected .bin launchers missing.
+    writeFileSync(join(installRoot, "package.json"), JSON.stringify({
+      name: "devspace-package-install-smoke",
+      version: "0.0.0",
+      private: true,
+    }) + "\n");
     execFileSync(npmExecutable(), ["pack", "--silent", "--pack-destination", root], {
       cwd: projectRoot,
       encoding: "utf8",
@@ -39,8 +48,15 @@ function testPackedPackageLaunchers(): void {
       encoding: "utf8",
       stdio: "pipe",
       shell: process.platform === "win32",
+      // The smoke test verifies the packaged CLI, not Puppeteer's unrelated
+      // browser download. Still run other dependency install scripts.
+      env: { ...process.env, PUPPETEER_SKIP_DOWNLOAD: "1" },
+      timeout: 180_000,
     });
 
+    assert.ok(existsSync(join(installRoot, "node_modules", ".bin",
+      process.platform === "win32" ? "devspace.cmd" : "devspace")),
+      "npm must install the packaged CLI into the isolated fixture");
     const configRoot = join(root, "config");
     const env = writeTestDevspaceConfig(configRoot, {
       storage: { stateDir: join(root, "state") },
