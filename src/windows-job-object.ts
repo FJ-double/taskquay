@@ -20,8 +20,13 @@ const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
 type Pointer = unknown;
 
+/** Job Objects are used only where the struct layout below is verified. */
+export function windowsJobObjectsSupported(): boolean {
+  return process.platform === "win32" && process.arch === "x64";
+}
+
 function win32() {
-  if (process.platform !== "win32" || process.arch !== "x64") {
+  if (!windowsJobObjectsSupported()) {
     throw new Error("WINDOWS_JOB_UNSUPPORTED: only win32 x64 has a verified layout.");
   }
   const kernel32 = koffi.load("kernel32.dll");

@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { lstat, mkdir, realpath, rm, stat } from "node:fs/promises";
 import { basename, join, relative, resolve } from "node:path";
-import { withWindowsGitMetadataMutex } from "./windows-git-metadata-mutex.js";
+import { windowsGitMetadataMutexName, withWindowsGitMetadataMutex } from "./windows-git-metadata-mutex.js";
 import { Result, TaggedError, type Result as BetterResult } from "better-result";
 import type { ServerConfig } from "./config.js";
 import {
@@ -53,7 +53,12 @@ async function withWorktreeCreationLock<T>(sourceRoot: string,
 async function withGitMetadataMutation<T>(sourceRoot: string,
   action: () => Promise<T>): Promise<T> {
   const canonicalRoot = await realpath(sourceRoot);
-  return withWorktreeCreationLock(canonicalRoot,
+  // Queue by the native mutex identity (Git common dir), not the checkout
+  // root: Windows mutexes are re-entrant per thread, so two linked worktrees
+  // of one repository would otherwise both "acquire" it in this process and
+  // collide on the pending-transaction guard.
+  const queueKey = process.platform === "win32" ? windowsGitMetadataMutexName(canonicalRoot) : canonicalRoot;
+  return withWorktreeCreationLock(queueKey,
     () => withWindowsGitMetadataMutex(canonicalRoot, action));
 }
 

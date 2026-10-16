@@ -7,7 +7,7 @@ import { randomUUID, randomBytes, createHash, type Hash } from "node:crypto";
 import { diagnosticError } from "./server-diagnostics.js";
 import { WindowsCommandRunner, type JobExitEvidence } from "./execution-runner.js";
 import { ExecutionStateStore, type ExecutionOwnerIdentity } from "./execution-state-store.js";
-import { windowsProcessCreatedAt, WindowsJobObject } from "./windows-job-object.js";
+import { windowsJobObjectsSupported, windowsProcessCreatedAt, WindowsJobObject } from "./windows-job-object.js";
 import { windowsBootIdentity } from "./windows-boot-identity.js";
 import { ManagedOwnerLease } from "./managed-owner-lease.js";
 import { sweepManagedRecovery } from "./windows-recovery-sweep.js";
@@ -734,7 +734,11 @@ export class ProcessSessionManager {
       detached,
       shell: shell.executable,
     });
-    if (process.platform === "win32" && child.pid) {
+    // Job Objects are only verified on win32 x64. Elsewhere (e.g. Windows on
+    // ARM64) keep the prior taskkill-based behavior: failing closed there
+    // would retain every write claim with no recovery path and lock the
+    // checkout after the first command.
+    if (windowsJobObjectsSupported() && child.pid) {
       session.pipeJob = this.attachPipeJob(session, child.pid);
       if (!session.pipeJob) {
         // The shell may have launched a descendant before Job assignment.

@@ -40,6 +40,25 @@ test("worktree base refs that look like git options are rejected", async (t) => 
   }
 });
 
+test("concurrent worktree creation through two linked checkouts of one repository both succeed", {
+  skip: platform() !== "win32",
+}, async (t) => {
+  const fixture = await worktreeFixture(t, "ws_linked_concurrent");
+  // fixture.worktreePath is a linked worktree sharing sourceRoot's Git common dir.
+  const config = loadConfig(writeTestDevspaceConfig(join(fixture.root, ".devspace-home"), {
+    workspaces: { allowedRoots: [fixture.root], worktreeRoot: join(fixture.root, "managed") },
+  }));
+  const created = await Promise.all([
+    createManagedWorktree({ sourcePath: fixture.sourceRoot, config }),
+    createManagedWorktree({ sourcePath: fixture.worktreePath, config }),
+  ]);
+  for (const worktree of created) {
+    assert.equal(await pathExists(worktree.path), true);
+    await git(fixture.sourceRoot, ["worktree", "remove", "--force", worktree.path]);
+  }
+  assert.equal(await pathExists(join(fixture.sourceRoot, ".git", GIT_METADATA_GUARD_FILE)), false);
+});
+
 test("an unknown worktree base ref cannot quarantine otherwise healthy Git metadata", {
   skip: platform() !== "win32",
 }, async (t) => {
