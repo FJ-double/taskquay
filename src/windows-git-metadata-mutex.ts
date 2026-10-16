@@ -10,21 +10,12 @@ const ABANDONED = 0x80;
 const TIMEOUT = 0x102;
 export const GIT_METADATA_GUARD_FILE = "taskquay-metadata-operation.pending";
 
-/** The manual-review gate MUST acquire the identical OS mutex name.
- * Do not canonicalize only one caller: the older writer contract hashes
- * its caller-supplied root, so both paths must use exactly this function.
+/** Resolve the Git common directory *before* naming the native mutex.
+ * Linked worktrees have different checkout roots but mutate the same
+ * common-dir metadata. A checkout-root hash would let them race.
+ * Missing synthetic fixture roots use a mutex without a Git guard.
  */
-export function windowsGitMetadataMutexName(sourceRoot:string):string {
-  const digest=createHash("sha256")
-    .update(sourceRoot.toLowerCase().replaceAll("/", "\\")).digest("hex");
-  return `Local\\taskquay-git-metadata-${digest}`;
-}
-
-/** Shared with all Taskquay daemons referencing the same Git common dir.
- * Crashes leave a persistent marker that a later mutex acquisition
- * must NOT quietly clear. A manual review/repair has no automatic API.
- */
-function guardFileForRepo(sourceRoot:string):string|null {
+function gitCommonDirForRepo(sourceRoot:string):string|null {
   if (!existsSync(sourceRoot)) return null; // Native mutex-only test fixtures
   if(!statSync(sourceRoot).isDirectory())throw new Error("GIT_METADATA_REPO_NOT_DIRECTORY");
   let value:string;
@@ -37,7 +28,24 @@ function guardFileForRepo(sourceRoot:string):string|null {
     }).trim();
   }catch{throw new Error("GIT_METADATA_COMMON_DIR_UNVERIFIABLE");}
   if(!value||!isAbsolute(value))throw new Error("GIT_METADATA_COMMON_DIR_INVALID");
-  return join(realpathSync(resolve(value)),GIT_METADATA_GUARD_FILE);
+  return realpathSync(resolve(value));
+}
+
+/** The writer and the manual-review gate MUST derive the same mutex name. */
+export function windowsGitMetadataMutexName(sourceRoot:string):string {
+  const identity=gitCommonDirForRepo(sourceRoot) ?? resolve(sourceRoot);
+  const digest=createHash("sha256")
+    .update(identity.toLowerCase().replaceAll("/", "\\")).digest("hex");
+  return `Local\\taskquay-git-metadata-${digest}`;
+}
+
+/** Shared with all Taskquay daemons referencing the same Git common dir.
+ * Crashes leave a persistent marker that a later mutex acquisition
+ * must NOT quietly clear. A manual review/repair has no automatic API.
+ */
+function guardFileForRepo(sourceRoot:string):string|null {
+  const commonDir=gitCommonDirForRepo(sourceRoot);
+  return commonDir ? join(commonDir,GIT_METADATA_GUARD_FILE) : null;
 }
 function recordPendingGuard(path:string,reason:"mutation_pending"|"abandoned_owner"):void {
   const fd=openSync(path,"wx",0o600);

@@ -46,6 +46,17 @@ async function withWorktreeCreationLock<T>(sourceRoot: string,
   }
 }
 
+/** Every Git common-dir mutation, not only initial worktree creation, must
+ * share the same native mutex and same-daemon queue. Normalize aliases before
+ * deriving the mutex name so a junction path cannot bypass a second caller.
+ */
+async function withGitMetadataMutation<T>(sourceRoot: string,
+  action: () => Promise<T>): Promise<T> {
+  const canonicalRoot = await realpath(sourceRoot);
+  return withWorktreeCreationLock(canonicalRoot,
+    () => withWindowsGitMetadataMutex(canonicalRoot, action));
+}
+
 export class GitWorktreeError extends Error {
   constructor(
     readonly code:
@@ -139,9 +150,12 @@ export async function createManagedWorktree(input: {
       `Cannot open workspace in worktree mode because baseRef ${JSON.stringify(input.baseRef)} looks like a git option.`,
     );
   }
-  return withWorktreeCreationLock(sourceRoot, () => withWindowsGitMetadataMutex(sourceRoot, async () => {
-    const baseRef = input.baseRef ?? "HEAD";
-    const baseSha = await resolveBaseCommit(sourceRoot, baseRef);
+  // A nonexistent ref is a normal user input error, not evidence of a
+  // partially written Git transaction. Resolve it before creating the
+  // durable pending-mutation guard, then use the pinned commit SHA.
+  const baseRef = input.baseRef ?? "HEAD";
+  const baseSha = await resolveBaseCommit(sourceRoot, baseRef);
+  return withGitMetadataMutation(sourceRoot, async () => {
     const dirtySource = (await git(["status", "--porcelain=v1"], sourceRoot)).trim().length > 0;
     const worktreePath = managedWorktreePath({
       worktreeRoot: input.config.worktreeRoot,
@@ -171,7 +185,7 @@ export async function createManagedWorktree(input: {
       detached: true,
       managed: true,
     };
-  }));
+  });
 }
 
 export async function cleanupManagedWorktrees(input: {
@@ -257,26 +271,28 @@ export async function restoreManagedWorktree(input: {
     await mkdir(input.worktreeRoot, { recursive: true });
     await resolveCanonicalAllowedPath(worktreePath, input.worktreeRoot, [input.worktreeRoot]);
 
-    let created = false;
-    try {
-      await git(["worktree", "add", "--detach", worktreePath, restoreRef], sourceRoot);
-      created = true;
-      if (session.recoveryKind === "stash") {
-        await git(["stash", "apply", "--index", recoveryRef], worktreePath);
-      }
-    } catch (cause) {
-      if (created) {
-        try {
-          await git(["worktree", "remove", "--force", worktreePath], sourceRoot);
-        } catch (cleanupCause) {
-          throw new AggregateError(
-            [cause, cleanupCause],
-            `Failed to restore workspace ${session.id} and remove its partial worktree.`,
-          );
+    await withGitMetadataMutation(sourceRoot, async () => {
+      let created = false;
+      try {
+        await git(["worktree", "add", "--detach", worktreePath, restoreRef], sourceRoot);
+        created = true;
+        if (session.recoveryKind === "stash") {
+          await git(["stash", "apply", "--index", recoveryRef], worktreePath);
         }
+      } catch (cause) {
+        if (created) {
+          try {
+            await git(["worktree", "remove", "--force", worktreePath], sourceRoot);
+          } catch (cleanupCause) {
+            throw new AggregateError(
+              [cause, cleanupCause],
+              `Failed to restore workspace ${session.id} and remove its partial worktree.`,
+            );
+          }
+        }
+        throw cause;
       }
-      throw cause;
-    }
+    });
   }, "WORKTREE_RESTORE_FAILED");
 }
 
@@ -301,8 +317,10 @@ export async function discardRestoredManagedWorktree(input: {
     if (!(await isDirectory(worktreePath))) return;
 
     const sourceRoot = await assertCleanupSourceRootAllowed(sourceRootPath, input.allowedRoots);
-    await assertManagedWorktreePath(worktreePath, input.worktreeRoot);
-    await git(["worktree", "remove", "--force", worktreePath], sourceRoot);
+    await withGitMetadataMutation(sourceRoot, async () => {
+      await assertManagedWorktreePath(worktreePath, input.worktreeRoot);
+      await git(["worktree", "remove", "--force", worktreePath], sourceRoot);
+    });
   }, "WORKTREE_PATH_INVALID");
 }
 
@@ -333,45 +351,47 @@ async function cleanupManagedWorktree(input: {
 
     const sourceRoot = await assertCleanupSourceRootAllowed(session.sourceRoot, input.allowedRoots);
     await assertManagedWorktreePath(worktreePath, input.worktreeRoot);
-    const status = await git(
-      ["status", "--porcelain=v1", "--untracked-files=normal", "--ignored=no"],
-      worktreePath,
-    );
-    if (status.split("\n").some((line) => line.startsWith("?? "))) {
-      return { kind: "skipped" } as const;
-    }
-
-    const hasTrackedChanges = status.trim().length > 0;
-    const headSha = (await git(["rev-parse", "HEAD"], worktreePath)).trim();
-    let recoverySha: string | undefined;
-    let recoveryKind: WorkspaceRecoveryKind | undefined;
-    if (hasTrackedChanges) {
-      recoverySha = (await git(
-        ["stash", "create", `DevSpace recovery ${session.id}`],
+    return withGitMetadataMutation(sourceRoot, async () => {
+      const status = await git(
+        ["status", "--porcelain=v1", "--untracked-files=normal", "--ignored=no"],
         worktreePath,
-      )).trim();
-      if (!recoverySha) {
-        throw new Error(`Git could not snapshot tracked changes for ${session.id}.`);
+      );
+      if (status.split("\n").some((line) => line.startsWith("?? "))) {
+        return { kind: "skipped" } as const;
       }
-      recoveryKind = "stash";
-    } else if (!session.baseSha || headSha !== session.baseSha) {
-      recoverySha = headSha;
-      recoveryKind = "head";
-    }
 
-    const recoveryRef = recoverySha ? managedWorktreeRecoveryRef(session.id) : undefined;
-    if (recoveryRef && recoverySha) {
-      await git(["update-ref", recoveryRef, recoverySha], sourceRoot);
-    }
+      const hasTrackedChanges = status.trim().length > 0;
+      const headSha = (await git(["rev-parse", "HEAD"], worktreePath)).trim();
+      let recoverySha: string | undefined;
+      let recoveryKind: WorkspaceRecoveryKind | undefined;
+      if (hasTrackedChanges) {
+        recoverySha = (await git(
+          ["stash", "create", `DevSpace recovery ${session.id}`],
+          worktreePath,
+        )).trim();
+        if (!recoverySha) {
+          throw new Error(`Git could not snapshot tracked changes for ${session.id}.`);
+        }
+        recoveryKind = "stash";
+      } else if (!session.baseSha || headSha !== session.baseSha) {
+        recoverySha = headSha;
+        recoveryKind = "head";
+      }
 
-    // Revalidate immediately before the only destructive filesystem operation.
-    await assertManagedWorktreePath(worktreePath, input.worktreeRoot);
-    await git(["worktree", "remove", "--force", worktreePath], sourceRoot);
-    return {
-      kind: "removed",
-      entry: { workspaceId: session.id, recoveryRef, recoverySha },
-      recoveryKind,
-    } as const;
+      const recoveryRef = recoverySha ? managedWorktreeRecoveryRef(session.id) : undefined;
+      if (recoveryRef && recoverySha) {
+        await git(["update-ref", recoveryRef, recoverySha], sourceRoot);
+      }
+
+      // Revalidate immediately before the only destructive filesystem operation.
+      await assertManagedWorktreePath(worktreePath, input.worktreeRoot);
+      await git(["worktree", "remove", "--force", worktreePath], sourceRoot);
+      return {
+        kind: "removed",
+        entry: { workspaceId: session.id, recoveryRef, recoverySha },
+        recoveryKind,
+      } as const;
+    });
   });
   if (prepared.isErr()) return prepared;
 

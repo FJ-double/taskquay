@@ -11,11 +11,13 @@ import { loadConfig } from "./config.js";
 import {
   cleanupManagedWorktrees,
   createManagedWorktree,
+  discardRestoredManagedWorktree,
   GitWorktreeError,
   ManagedWorktreeError,
   managedWorktreeRecoveryRef,
   restoreManagedWorktree,
 } from "./git-worktrees.js";
+import { GIT_METADATA_GUARD_FILE } from "./windows-git-metadata-mutex.js";
 import { writeTestDevspaceConfig } from "./test-support/config.test.js";
 import {
   SqliteWorkspaceStore,
@@ -36,6 +38,23 @@ test("worktree base refs that look like git options are rejected", async (t) => 
       (error: unknown) => error instanceof GitWorktreeError && error.code === "GIT_INVALID_BASE_REF",
     );
   }
+});
+
+test("an unknown worktree base ref cannot quarantine otherwise healthy Git metadata", {
+  skip: platform() !== "win32",
+}, async (t) => {
+  const fixture = await worktreeFixture(t, "ws_invalid_ref_no_quarantine");
+  const config = loadConfig(writeTestDevspaceConfig(join(fixture.root, ".devspace-home"), {
+    workspaces: { allowedRoots: [fixture.root], worktreeRoot: join(fixture.root, "managed") },
+  }));
+  await assert.rejects(createManagedWorktree({
+    sourcePath: fixture.sourceRoot, baseRef: "does-not-exist-2026", config,
+  }), (error: unknown) => error instanceof GitWorktreeError && error.code === "GIT_INVALID_BASE_REF");
+  assert.equal(await pathExists(join(fixture.sourceRoot, ".git", GIT_METADATA_GUARD_FILE)), false,
+    "invalid input must not leave an OS/metadata quarantine guard");
+  const valid = await createManagedWorktree({ sourcePath: fixture.sourceRoot, config });
+  assert.equal(await pathExists(valid.path), true);
+  await git(fixture.sourceRoot, ["worktree", "remove", "--force", valid.path]);
 });
 
 test("stale clean worktrees at their base are removed without recovery refs", async (t) => {
@@ -144,6 +163,49 @@ test("non-ignored untracked files keep a stale worktree alive", async (t) => {
   assert.deepEqual(result.skipped, [{ workspaceId: "ws_untracked", reason: "untracked_files" }]);
   assert.equal(await pathExists(fixture.worktreePath), true);
   assert.ok(fixture.store.getSession("ws_untracked"));
+});
+
+test("Windows Git quarantine blocks stale worktree cleanup before metadata mutation", {
+  skip: platform() !== "win32",
+}, async (t) => {
+  const fixture = await worktreeFixture(t, "ws_quarantined_cleanup");
+  const guard = join(fixture.sourceRoot, ".git", GIT_METADATA_GUARD_FILE);
+  await writeFile(guard, '{"reason":"injected_review_only"}\n');
+
+  const result = unwrap(await cleanupManagedWorktrees({
+    store: fixture.store, worktreeRoot: fixture.worktreeRoot,
+    allowedRoots: [fixture.root], staleBefore: futureCutoff(),
+  }));
+  assert.equal(result.failed.length, 1);
+  assert.match(result.failed[0]!.error.message, /GIT_METADATA_PENDING_TRANSACTION_REQUIRES_REVIEW/);
+  assert.equal(await pathExists(fixture.worktreePath), true);
+  assert.equal(fixture.store.getSession("ws_quarantined_cleanup")?.status, "active");
+  assert.equal(await pathExists(guard), true);
+});
+
+test("Windows Git quarantine blocks restored and discarded worktree metadata operations", {
+  skip: platform() !== "win32",
+}, async (t) => {
+  const fixture = await worktreeFixture(t, "ws_quarantined_restore");
+  const guard = join(fixture.sourceRoot, ".git", GIT_METADATA_GUARD_FILE);
+  const session = fixture.store.getSession("ws_quarantined_restore");
+  assert.ok(session);
+  await writeFile(guard, '{"reason":"injected_review_only"}\n');
+
+  const discard = await discardRestoredManagedWorktree({
+    session, worktreeRoot: fixture.worktreeRoot, allowedRoots: [fixture.root],
+  });
+  assert.equal(discard.isErr(), true);
+  assert.equal(await pathExists(fixture.worktreePath), true);
+
+  // Use Git directly for fixture preparation, never a Taskquay mutation.
+  await git(fixture.sourceRoot, ["worktree", "remove", "--force", fixture.worktreePath]);
+  const restore = await restoreManagedWorktree({
+    session, worktreeRoot: fixture.worktreeRoot, allowedRoots: [fixture.root],
+  });
+  assert.equal(restore.isErr(), true);
+  assert.equal(await pathExists(fixture.worktreePath), false);
+  assert.equal(await pathExists(guard), true);
 });
 
 test("ignored worktree files are discarded during cleanup", async (t) => {

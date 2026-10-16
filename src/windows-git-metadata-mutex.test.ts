@@ -6,12 +6,26 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { withWindowsGitMetadataMutex, GIT_METADATA_GUARD_FILE } from "./windows-git-metadata-mutex.js";
+import { withWindowsGitMetadataMutex, windowsGitMetadataMutexName, GIT_METADATA_GUARD_FILE } from "./windows-git-metadata-mutex.js";
 import { inspectGitMetadataReadonly } from "./git-metadata-recovery-inspection.js";
 
 const win = process.platform === "win32" ? {} : {skip:"Windows kernel named mutex"};
 const fixture = fileURLToPath(new URL("./windows-git-metadata-mutex-fixture.ts", import.meta.url));
 const pause = (ms:number)=>new Promise<void>((resolve)=>setTimeout(resolve,ms));
+
+test("linked worktrees of one Git repository share the exact same native metadata mutex",win,()=>{
+  const dir=mkdtempSync(join(tmpdir(),"taskquay-git-common-mutex-"));
+  const repo=join(dir,"source"),wt=join(dir,"linked");
+  try{
+    execFileSync("git",["init",repo],{windowsHide:true,stdio:"ignore"});
+    execFileSync("git",["-C",repo,"-c","user.name=Test","-c","user.email=test@example.invalid",
+      "commit","--allow-empty","-m","init"],{windowsHide:true,stdio:"ignore"});
+    execFileSync("git",["-C",repo,"worktree","add","--detach",wt,"HEAD"],
+      {windowsHide:true,stdio:"ignore"});
+    assert.equal(windowsGitMetadataMutexName(repo),windowsGitMetadataMutexName(wt),
+      "different checkout paths cannot bypass the shared Git common-dir mutex");
+  }finally{rmSync(dir,{recursive:true,force:true,maxRetries:20,retryDelay:100});}
+});
 
 test("three independent Windows processes share a native Git mutex, never entering the critical section simultaneously",win,async()=>{
   const dir=mkdtempSync(join(tmpdir(),"taskquay-git-kernel-mutex-"));
