@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, mkdir, rm, symlink, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, symlink, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { prepareProjectRoots, projectPathKey, registerProject, type ProjectControl, type ProjectMethod } from "./codex-projects.js";
+import { prepareProjectRoots, projectPathKey, registerProject, ensureDesktopProject, type ProjectControl, type ProjectMethod } from "./codex-projects.js";
 
 function fixture() {
   const home = "C:\\Users\\fixture\\.codex", root = "D:\\projects\\voice-memory";
@@ -128,4 +128,16 @@ test("Windows extended paths, UNC and WSL aliases retain Linux path case", () =>
   assert.equal(projectPathKey("\\\\?\\UNC\\Server\\Share\\a"), projectPathKey("\\\\server\\share\\a"));
   assert.equal(projectPathKey("\\\\wsl$\\Ubuntu\\home\\User\\project"), projectPathKey("\\\\wsl.localhost\\ubuntu\\home\\User\\project"));
   assert.notEqual(projectPathKey("\\\\wsl$\\Ubuntu\\home\\User"), projectPathKey("\\\\wsl$\\Ubuntu\\home\\user"));
+});
+
+test("macOS/Linux Codex CLI does not require Windows Desktop project registration", async (t) => {
+  if (process.platform === "win32") return;
+  const home = await mkdtemp(join(tmpdir(), "devspace-cli-codex-home-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  await writeFile(join(home, ".codex-global-state.json"), '{"local-projects":{}}');
+  // A Desktop state file alone must not block a direct local Codex CLI turn.
+  const receipt = await ensureDesktopProject([home], [], { CODEX_HOME: home, PATH: "" });
+  assert.equal(receipt.status, "not_applicable");
+  assert.equal(receipt.roots[0], home);
+  assert.equal(receipt.clientRegistration, undefined);
 });

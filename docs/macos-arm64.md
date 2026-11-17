@@ -58,3 +58,7 @@ This is a local candidate package, not a notarized application or a public npm r
 初始化时检测已安装的 Claude Code、Codex、OpenCode 和 Pi CLI，并把选中的本地命令路径写入配置；缺失的 CLI 不会因 Taskquay 内置 SDK 而被标记为可用。
 
 Claude Agent SDK 调用已安装的 `claude`，OpenCode SDK 启动已安装的 `opencode serve`。Pi 保留 SDK 会话和 Taskquay 的工作区沙箱，并使用本地 Pi 的 `~/.pi/agent` 认证、模型和会话数据；本机必须已安装 `pi` 命令，但 Pi 会话仍由 SDK 在 Taskquay 进程内运行。
+
+Codex 使用用户已安装的本地 `codex app-server`。macOS/Linux 的 CLI Agent 不依赖 Windows Codex Desktop 的项目注册协议，即使 `~/.codex/.codex-global-state.json` 存在也不触发 Desktop RPC；显式指定 `DEVSPACE_CODEX_DESKTOP_COMMAND` 时仍可走原 Desktop 集成。
+
+macOS LaunchAgent 的 PATH 包含 `~/.local/node/bin`，便于复用通过该路径安装的 Codex、OpenCode 与 Pi；后台启动不会依赖交互式 shell 的 PATH。

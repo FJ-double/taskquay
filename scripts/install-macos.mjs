@@ -54,7 +54,7 @@ function point(path) {
   renameSync(temporary,current);
 }
 function plist(release) {
-  const environment={DEVSPACE_CONFIG_DIR:config,PATH:[join(release,'runtime/bin'),join(homedir(),'.local/bin'),'/opt/homebrew/bin','/opt/homebrew/sbin',process.env.PATH??'/usr/bin:/bin:/usr/sbin:/sbin'].join(':'),SHELL:process.env.SHELL||'/bin/zsh'};
+  const environment={DEVSPACE_CONFIG_DIR:config,PATH:[join(release,'runtime/bin'),join(homedir(),'.local/bin'),join(homedir(),'.local/node/bin'),'/opt/homebrew/bin','/opt/homebrew/sbin',process.env.PATH??'/usr/bin:/bin:/usr/sbin:/sbin'].join(':'),SHELL:process.env.SHELL||'/bin/zsh'};
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>
 <key>Label</key><string>${xml(label)}</string>
 <key>ProgramArguments</key><array><string>${xml(join(release,'runtime/bin/node'))}</string><string>${xml(join(release,'app/dist/cli.js'))}</string><string>serve</string></array>

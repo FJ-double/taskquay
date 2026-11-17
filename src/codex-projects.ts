@@ -261,7 +261,10 @@ export async function connectDesktopProjects(env: NodeJS.ProcessEnv = process.en
 }
 
 export async function ensureDesktopProject(roots: string[], threadIds: string[] = [], env: NodeJS.ProcessEnv = process.env): Promise<ProjectReceipt> {
-  if (!hasDesktop(env)) return { protocol: PROJECT_PROTOCOL, status: "not_applicable", roots, createdDirectories: [], uiStatus: "unverified" };
+  // Native Codex CLI runs independently of Codex Desktop's Windows-only project catalog.
+  // On macOS/Linux, a Desktop global-state file is not evidence that project RPCs are available.
+  if ((process.platform !== "win32" && !env.DEVSPACE_CODEX_DESKTOP_COMMAND) || !hasDesktop(env))
+    return { protocol: PROJECT_PROTOCOL, status: "not_applicable", roots, createdDirectories: [], uiStatus: "unverified" };
   let client: ProjectControl | undefined;
   try {
     client = await connectDesktopProjects(env);
