@@ -1,10 +1,14 @@
 # TaskQuay
 
+macOS 1.1.1 arm64 候选版：[安装、升级、工具与回滚说明](docs/macos-arm64.md)。
+
 **让懂你需求的网页 GPT，真正带着本地 Coding Agent 干活。**
 
 [简体中文](README.md) · [English](README.en.md) · [GitHub](https://github.com/wrfgup/taskquay) · [接入教程](docs/chatgpt-mcp-setup.zh-CN.md) · [MIT 许可证](LICENSE)
 
 [2026-09-08 轨迹复盘：两处有界修复与验证边界](docs/trajectory-review-20260908.md)
+
+v1.1.0 可选固定 Bearer Token：[本机管理、超级小爱验收与升级回滚](docs/static-bearer-tokens.zh-CN.md)。默认关闭，保留现有 OAuth。
 
 TaskQuay 是一个自托管的 MCP 本地执行与项目任务管理工具。你继续在熟悉的 ChatGPT 对话里讨论方案、下发任务、查看结果；主控直接读取工作区，在确有必要时调度本地 Codex，并带回变更、验收证据和 Token 回执。
 

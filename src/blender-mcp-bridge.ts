@@ -12,7 +12,7 @@ export class BlenderMcpBridge {
 
   async listTools(): Promise<Tool[]> {
     const client = await this.ensureClient();
-    const result = await client.listTools();
+    const result = await client.listTools({}, { timeout: 2000 });
     if (this.config.allowedTools.includes("*")) return result.tools;
     const allowed = new Set(this.config.allowedTools);
     return result.tools.filter((tool) => allowed.has(tool.name));
@@ -62,7 +62,7 @@ export class BlenderMcpBridge {
     });
     const client = new Client({ name: "taskquay-blender-mcp-bridge", version: "0.1.0" });
     try {
-      await client.connect(transport);
+      await client.connect(transport, { timeout: 2000 });
     } catch (error) {
       await transport.close().catch(() => undefined);
       throw error;

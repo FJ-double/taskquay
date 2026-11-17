@@ -59,3 +59,32 @@ assert.equal(
     rmSync(directory, { recursive: true, force: true });
   }
 }
+
+{
+  const unavailableClaude = getLocalAgentProviderAvailabilitySnapshot({
+    PATH: "",
+    CLAUDE_COMMAND: "/definitely/missing/claude",
+  }).find((provider) => provider.name === "claude");
+  assert.deepEqual(unavailableClaude, {
+    name: "claude",
+    available: false,
+    reason: "/definitely/missing/claude executable not found",
+  });
+  const installedClaude = getLocalAgentProviderAvailabilitySnapshot({
+    PATH: "",
+    CLAUDE_COMMAND: process.execPath,
+  }).find((provider) => provider.name === "claude");
+  assert.deepEqual(installedClaude, { name: "claude", available: true });
+}
+
+for (const [provider, variable] of [["opencode", "OPENCODE_COMMAND"], ["pi", "PI_COMMAND"]] as const) {
+  const missing = getLocalAgentProviderAvailabilitySnapshot({
+    PATH: "", [variable]: "/definitely/missing/local-agent",
+  }).find((entry) => entry.name === provider);
+  assert.deepEqual(missing, { name: provider, available: false,
+    reason: "/definitely/missing/local-agent executable not found" });
+  const installed = getLocalAgentProviderAvailabilitySnapshot({
+    PATH: "", [variable]: process.execPath,
+  }).find((entry) => entry.name === provider);
+  assert.deepEqual(installed, { name: provider, available: true });
+}

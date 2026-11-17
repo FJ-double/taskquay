@@ -492,6 +492,11 @@
                     "additionalProperties": {
                       "type": "string"
                     }
+                  },
+                  "command": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S"
                   }
                 },
                 "required": [
@@ -637,6 +642,18 @@
             "type": "string",
             "minLength": 1
           }
+        }
+      },
+      "additionalProperties": false
+    },
+    "staticTokens": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Accept owner-created static Bearer tokens on /mcp. OAuth remains available.",
+          "type": "boolean"
         }
       },
       "additionalProperties": false

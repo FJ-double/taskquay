@@ -92,7 +92,9 @@ export async function resolvePathInsideCanonicalRoot(
   logicalRoot: string,
   canonicalRoot: string,
 ): Promise<string> {
-  const absolutePath = resolveAllowedPath(inputPath, cwd, [logicalRoot]);
+  // Reauthorization may receive the canonical path returned by a prior resolution.
+  // Both spellings still pass the same final canonical containment check below.
+  const absolutePath = resolveAllowedPath(inputPath, cwd, [logicalRoot, canonicalRoot]);
   const canonicalPath = await canonicalizePath(absolutePath);
   if (isPathInsideRoot(canonicalPath, canonicalRoot)) return canonicalPath;
   throw new AccessDeniedError(`Path is outside allowed roots: ${inputPath}`);

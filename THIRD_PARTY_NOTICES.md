@@ -59,3 +59,7 @@ OpenAI, Codex, ChatGPT, Anthropic, Claude, DevSpace, and LINUX DO remain names o
 Determine exactly which dependency code and assets are embedded. Preserve applicable license text, attribution, NOTICE content, and any required source/distribution material. Resolve unclassified or custom-license packages rather than replacing their labels with MIT. Review native binaries and bundled UI separately from source publication.
 
 `package.json` remains in the upstream namespace for runtime compatibility and is marked `private: true` as a publication guard. Choose a namespace you control, update distribution metadata, review the tarball, and complete this checklist before deliberately enabling package publication.
+
+## macOS 1.1.1 document/runtime additions
+
+The arm64 candidate includes Node.js with its complete distribution LICENSE. Document processing adds exceljs 4.4.0 (MIT), pdf-lib 1.17.1 (MIT), pizzip 3.3.0 (MIT or GPL-3.0, used under MIT), and unpdf 1.8.1 (MIT). Their installed license files remain in the production dependency tree. HP v22 shared document-engine code remains under this project’s MIT terms; parser/worker/job semantics are retained rather than replaced by macOS-only implementations.

@@ -1,6 +1,6 @@
 {
   "name": "@waishnav/devspace",
-  "version": "1.0.8",
+  "version": "1.1.3",
   "private": true,
   "repository": {
     "type": "git",
@@ -38,7 +38,9 @@
     "README.en.md",
     "README.zh-CN.md",
     "NOTICE",
-    "THIRD_PARTY_NOTICES.md"
+    "THIRD_PARTY_NOTICES.md",
+    "CHANGELOG.md",
+    "build-info.json"
   ],
   "publishConfig": {
     "access": "public"
@@ -56,7 +58,8 @@
     "start": "node dist/cli.js serve",
     "test": "tsx scripts/test-with-receipt.ts",
     "test:package-install": "tsx --test --test-concurrency=1 \"test/package-install-smoke.test.ts\"",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "package:macos": "node scripts/package-macos.mjs"
   },
   "keywords": [],
   "author": "",
@@ -78,13 +81,17 @@
     "cross-spawn": "^7.0.6",
     "diff": "^8.0.3",
     "drizzle-orm": "^0.45.2",
+    "exceljs": "4.4.0",
     "express": "^5.2.1",
     "jsonc-parser": "^3.3.1",
     "koffi": "^3.1.2",
     "lucide": "^1.24.0",
+    "pdf-lib": "1.17.1",
+    "pizzip": "3.3.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "semver": "^7.8.4",
+    "unpdf": "1.8.1",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
   },

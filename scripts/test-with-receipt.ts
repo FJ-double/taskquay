@@ -12,7 +12,7 @@ const root = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), "..")
 function walk(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name);
-    return entry.isDirectory() ? walk(path) : entry.isFile() && entry.name.endsWith(".ts") ? [path] : [];
+    return entry.isDirectory() ? walk(path) : entry.isFile() && /\.(?:ts|js)$/.test(entry.name) ? [path] : [];
   });
 }
 const sources = walk(join(root, "src")).sort();

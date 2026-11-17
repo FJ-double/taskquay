@@ -1,5 +1,9 @@
 # TaskQuay
 
+macOS 1.1.1 arm64 candidate: [installation, tools and rollback](docs/macos-arm64.md).
+
+v1.1.0 optional static Bearer tokens: [local management, phone verification and rollback](docs/static-bearer-tokens.en.md). Disabled by default; existing OAuth remains available.
+
 **Your familiar ChatGPT conversation, connected to the coding agents on your machine.**
 
 [简体中文](README.md) · [English](README.en.md) · [GitHub](https://github.com/wrfgup/taskquay) · [Connection guide](docs/chatgpt-mcp-setup.zh-CN.md) · [MIT license](LICENSE)

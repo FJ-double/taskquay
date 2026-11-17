@@ -1,4 +1,9 @@
-import type { SubagentsConfig } from "./local-agent-config.js";
+import {
+  localAgentProviderEnvironment,
+  providerCommandVariable,
+  type SubagentsConfig,
+} from "./local-agent-config.js";
+import { resolveExecutableCommand } from "./local-agent-command.js";
 import {
   LOCAL_AGENT_PROVIDERS,
   type LocalAgentProvider,
@@ -47,5 +52,24 @@ export function updateOnboardingSubagentsConfig(
           enabled: selected.has(id),
         };
       }),
+  };
+}
+
+/** Pin selected local CLI paths so the background service doesn't depend on the installer's PATH. */
+export function bindOnboardingAgentCommands(
+  subagents: SubagentsConfig,
+  inherited: NodeJS.ProcessEnv = process.env,
+): SubagentsConfig {
+  return {
+    ...subagents,
+    providers: subagents.providers.map((provider) => {
+      if (!provider.enabled) return provider;
+      const variable = providerCommandVariable(provider.id);
+      if (!variable || ("command" in provider && provider.command)) return provider;
+      const env = localAgentProviderEnvironment(subagents, provider.id, inherited);
+      const fallback = provider.id === "cursor" ? "cursor-agent" : provider.id;
+      const executable = resolveExecutableCommand(env[variable] ?? fallback, env);
+      return executable ? { ...provider, command: executable } : provider;
+    }),
   };
 }

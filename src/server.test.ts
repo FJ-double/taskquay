@@ -65,11 +65,11 @@ test("tool modes expose the expected host-facing tool surface", async (t) => {
   }> = [
     {
       mode: "claude",
-      expected: ["open_workspace", "read", "workspace_context", "work_task", "agent_task", "write", "edit", "bash", "show_changes"],
+      expected: ["open_workspace", "read", "workspace_context", "work_task", "agent_task", "write", "edit", "bash", "show_changes", "document_tool", "terminal_sessions", "system_processes"],
     },
     {
       mode: "codex",
-      expected: ["open_workspace", "read", "workspace_context", "work_task", "agent_task", "apply_patch", "exec_command", "write_stdin", "show_changes"],
+      expected: ["open_workspace", "read", "workspace_context", "work_task", "agent_task", "apply_patch", "exec_command", "write_stdin", "show_changes", "document_tool", "terminal_sessions", "system_processes"],
     },
   ];
 
@@ -86,7 +86,7 @@ test("tool modes expose the expected host-facing tool surface", async (t) => {
   }
 });
 
-test("windows_mcp proxies only through an explicitly configured bridge", async (t) => {
+test("windows_mcp proxies only through an explicitly configured bridge", { skip: process.platform !== "win32" }, async (t) => {
   const withoutBridge = await fixture(t, { uiEnabled: false });
   assert.equal(
     (await withoutBridge.client.listTools()).tools.some(({ name }) => name === "windows_mcp"),
@@ -166,7 +166,7 @@ test("blender_mcp proxies direct Blender tools without a model worker", async (t
   assert.equal(toolText(called), "viewport_screenshot:{}");
 });
 
-test("windows_mcp can route blender-prefixed calls for hosts with a cached tool manifest", async (t) => {
+test("windows_mcp can route blender-prefixed calls for hosts with a cached tool manifest", { skip: process.platform !== "win32" }, async (t) => {
   const fakeWindows = {
     async listTools() {
       return [{ name: "Snapshot", description: "Capture desktop.", inputSchema: { type: "object" } }];
@@ -1076,7 +1076,7 @@ async function fixture(
   );
   const store = new SqliteWorkspaceStore(stateDir);
   const workspaces = new WorkspaceRegistry(config, store);
-  const server = createMcpServer(
+  const server = await createMcpServer(
     config,
     workspaces,
     createReviewCheckpointManager(),

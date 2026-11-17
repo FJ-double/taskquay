@@ -40,6 +40,8 @@ import {
 } from "./logger.js";
 import { readFileTool } from "./pi-tools.js";
 import { SingleUserOAuthProvider } from "./oauth-provider.js";
+import { StaticTokenStore } from "./static-token-store.js";
+import { createMcpTokenVerifier, restrictMcpTools, staticTokenAllowedTools } from "./static-token-auth.js";
 import {
   compileMcpRegistrationSurface,
   createModernMcpServerAdapter,
@@ -55,11 +57,14 @@ import { shutdownHttpServer } from "./server-shutdown.js";
 import { ServerDiagnostics, diagnosticError, recordMcpBoundaryError } from "./server-diagnostics.js";
 import { traceMcpRequest } from "./mcp-request-diagnostics.js";
 import { formatPathForPrompt } from "./skills.js";
-import { DEVSPACE_VERSION } from "./version.js";
+import { DEVSPACE_VERSION, DEVSPACE_BUILD_SHA } from "./version.js";
 import { createWorkspaceStore } from "./workspace-store.js";
 import { formatAgentsPath, WorkspaceRegistry } from "./workspaces.js";
 import { WindowsMcpBridge } from "./windows-mcp-bridge.js";
 import { BlenderMcpBridge } from "./blender-mcp-bridge.js";
+import { registerNativeDocumentTools } from "./tool-surfaces/native-documents.js";
+import { registerTerminalManagementTools } from "./tool-surfaces/terminal-sessions.js";
+import { filterToolAvailability, resolveToolAvailability } from "./mcp-tool-capabilities.js";
 import {
   getLocalAgentProviderAvailabilitySnapshot,
 } from "./local-agent-availability.js";
@@ -318,7 +323,7 @@ async function assertWorkspaceAppAssets(): Promise<void> {
   }
 }
 
-export function createMcpServer(
+export async function createMcpServer(
   config: ServerConfig,
   workspaces: WorkspaceRegistry,
   reviewCheckpoints: ReturnType<typeof createReviewCheckpointManager>,
@@ -329,7 +334,7 @@ export function createMcpServer(
   registerProject: typeof ensureDesktopProject = ensureDesktopProject,
   windowsMcpBridge?: WindowsMcpBridge,
   blenderMcpBridge?: BlenderMcpBridge,
-): McpServer {
+): Promise<McpServer> {
   const toolSurface = getToolSurface(config.toolMode);
   const server = new McpServer(
     mcpServerInfo(),
@@ -338,8 +343,9 @@ export function createMcpServer(
     },
   );
 
-  registerMcpSurface(
-    server,
+  const availability = await resolveToolAvailability(config, { windowsMcpBridge, blenderMcpBridge });
+  const nativeTools = registerMcpSurface(
+    filterToolAvailability(server, availability),
     config,
     workspaces,
     reviewCheckpoints,
@@ -351,6 +357,8 @@ export function createMcpServer(
     windowsMcpBridge,
     blenderMcpBridge,
   );
+  const close = server.close.bind(server);
+  server.close = async () => { await nativeTools.close(); await close(); };
   return server;
 }
 
@@ -366,7 +374,7 @@ function registerMcpSurface(
   registerProject: typeof ensureDesktopProject = ensureDesktopProject,
   windowsMcpBridge?: WindowsMcpBridge,
   blenderMcpBridge?: BlenderMcpBridge,
-): void {
+): { close(): Promise<void> } {
   const registrationTarget = trackToolActivity
     ? withTrackedToolHandlers(server, trackToolActivity)
     : server;
@@ -845,7 +853,10 @@ function registerMcpSurface(
     },
   );
 
-  registerWorkspaceContextTool({ server: registrationTarget, config, workspaces, processSessions });
+  const sharedContext = { server: registrationTarget, config, workspaces, processSessions };
+  const documents = registerNativeDocumentTools(sharedContext);
+  registerTerminalManagementTools(sharedContext);
+  registerWorkspaceContextTool(sharedContext);
   registerWorkTaskTool({ server: registrationTarget, config, workspaces, processSessions });
 
   toolSurface.register({
@@ -927,6 +938,7 @@ function registerMcpSurface(
       incomingArtifactAdapters,
     });
   }
+  return { close: () => documents.close() };
 }
 
 function withTrackedToolHandlers(
@@ -968,8 +980,9 @@ export function createServer(
   const mcpUrl = new URL("/mcp", config.publicBaseUrl);
   const resourceServerUrl = resourceUrlFromServerUrl(mcpUrl);
   const oauthProvider = new SingleUserOAuthProvider(config.oauth, mcpUrl, config.stateDir);
+  const staticTokenStore = config.staticTokens?.enabled ? new StaticTokenStore(config.stateDir) : undefined;
   const bearerAuth = requireBearerAuth({
-    verifier: oauthProvider,
+    verifier: createMcpTokenVerifier(oauthProvider, staticTokenStore, resourceServerUrl, config.oauth.scopes[0] ?? "devspace"),
     requiredScopes: [config.oauth.scopes[0] ?? "devspace"],
     resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resourceServerUrl),
   });
@@ -984,7 +997,7 @@ export function createServer(
     diagnostics: (event, fields, level) => options.diagnostics
       ? options.diagnostics.record(event, fields, level) : logEvent(config.logging, level, event, fields) });
   const toolActivities = new ToolActivityTracker();
-  const windowsMcpBridge = config.windowsMcp?.enabled
+  const windowsMcpBridge = process.platform === "win32" && config.windowsMcp?.enabled
     ? new WindowsMcpBridge(config.windowsMcp)
     : undefined;
   const blenderMcpBridge = config.blenderMcp?.enabled
@@ -999,8 +1012,9 @@ export function createServer(
     getLocalAgentProviderAvailabilitySnapshot(process.env, config.subagents),
   );
   const modernToolSurface = getToolSurface(config.toolMode);
+  let closeNativeTools: (() => Promise<void>) | undefined;
   const bindModernMcpSurface = compileMcpRegistrationSurface((target) => {
-    registerMcpSurface(
+    const nativeTools = registerMcpSurface(
       target,
       config,
       workspaces,
@@ -1013,15 +1027,19 @@ export function createServer(
       windowsMcpBridge,
       blenderMcpBridge,
     );
+    closeNativeTools = nativeTools.close;
   });
   const logMcpHandlerError = (error: Error) =>
     recordMcpBoundaryError("mcp_handler_error", error, config.logging, options.diagnostics);
-  const mcpHandler = createMcpHandler(() => {
+  const mcpHandler = createMcpHandler(async ({ authInfo }) => {
     const adapter = createModernMcpServerAdapter(
       mcpServerInfo(),
       { instructions: serverInstructions(config, modernToolSurface) },
     );
-    bindModernMcpSurface(adapter.registrationTarget);
+    const availability = await resolveToolAvailability(config, { windowsMcpBridge, blenderMcpBridge });
+    const availableTarget = filterToolAvailability(adapter.registrationTarget, availability);
+    const allowedTools = staticTokenAllowedTools(authInfo);
+    bindModernMcpSurface(allowedTools === undefined ? availableTarget : restrictMcpTools(availableTarget, allowedTools));
     return adapter.server;
   }, {
     legacy: "stateless",
@@ -1085,7 +1103,7 @@ export function createServer(
   );
 
   app.get("/healthz", (_req, res) => {
-    res.json({ ok: true, name: "devspace" });
+    res.json({ ok: true, name: "devspace", version: DEVSPACE_VERSION, build_sha: DEVSPACE_BUILD_SHA, platform: process.platform, arch: process.arch });
   });
 
   const projectConsole = createProjectConsoleRouter(config, { assetDirectory: uiBuildDirectory() });
@@ -1121,10 +1139,22 @@ export function createServer(
     logEvent(config.logging, "debug", "mcp_request", {
       requestId,
       method: req.method,
+      ...(req.auth?.extra?.staticTokenId ? { authType: "static", tokenId: req.auth.extra.staticTokenId } : {}),
     });
 
     try {
-      await mcpNodeHandler(req, res, normalizeCachedToolCall(req.body));
+      const body = normalizeCachedToolCall(req.body);
+      const call = body as { method?: string; params?: { name?: unknown } } | null;
+      const allowedTools = staticTokenAllowedTools(req.auth);
+      if (allowedTools !== undefined && call?.method === "tools/call"
+        && typeof call.params?.name === "string" && !allowedTools.includes(call.params.name)) {
+        logEvent(config.logging, "warn", "static_token_tool_denied", {
+          requestId, tokenId: req.auth?.extra?.staticTokenId, tool: call.params.name,
+        });
+        sendJsonRpcError(res, 403, -32003, "Tool is not allowed for this token");
+        return;
+      }
+      await mcpNodeHandler(req, res, body);
     } catch (error) {
       if (error instanceof ConflictingToolAliasError) {
         if (!res.headersSent) sendJsonRpcError(res, 400, -32602, error.message);
@@ -1153,11 +1183,13 @@ export function createServer(
           });
         }
         await toolActivities.waitForIdle();
+        await closeNativeTools?.();
         await windowsMcpBridge?.close();
         await blenderMcpBridge?.close();
         processSessions.shutdown();
         projectConsole.close();
         oauthProvider.close();
+        staticTokenStore?.close();
         workspaceStore.close?.();
       })();
       return closePromise;
@@ -1182,7 +1214,7 @@ if (await isMainModule()) {
       `devspace listening on http://${config.host}:${config.port}/mcp`,
     );
     console.log(`allowed roots: ${config.allowedRoots.join(", ")}`);
-    console.log("auth: oauth owner-token flow required");
+    console.log(config.staticTokens?.enabled ? "auth: OAuth or owner-created static Bearer token" : "auth: oauth owner-token flow required");
     console.log(`logging: ${config.logging.level} ${config.logging.format}`);
     console.log(`request logging: ${config.logging.requests ? "enabled" : "disabled"}`);
     console.log(`asset logging: ${config.logging.assets ? "enabled" : "disabled"}`);

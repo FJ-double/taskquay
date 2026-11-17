@@ -255,7 +255,7 @@ async function launchOpencodeServer(
   port: number,
 ): Promise<OpencodeServerLike & { url: string }> {
   const detached = process.platform !== "win32";
-  const child = spawn("opencode", [
+  const child = spawn(env.OPENCODE_COMMAND ?? "opencode", [
     "serve",
     `--hostname=${OPENCODE_SERVER_HOSTNAME}`,
     `--port=${port}`,

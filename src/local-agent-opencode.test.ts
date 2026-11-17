@@ -139,7 +139,8 @@ if (process.platform !== "win32") {
     ].join("\n"));
     await chmod(command, 0o700);
     const envDriver = new OpencodeLocalAgentDriver(undefined, {
-      PATH: commandRoot,
+      PATH: "/usr/bin:/bin",
+      OPENCODE_COMMAND: command,
       HARNESS_ENV: "opencode-child",
       MARKER: marker,
       ARGS_MARKER: argsMarker,

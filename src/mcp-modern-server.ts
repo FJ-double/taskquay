@@ -64,6 +64,17 @@ export function createModernMcpServerAdapter(
   };
 }
 
+export function filterMcpToolRegistrations(target: McpRegistrationTarget, allowed: (name: string) => boolean): McpRegistrationTarget {
+  return {
+    registerTool: ((...args: unknown[]) => {
+      if (typeof args[0] === "string" && allowed(args[0])) {
+        return (target.registerTool as (...values: unknown[]) => unknown)(...args);
+      }
+    }) as unknown as McpRegistrationTarget["registerTool"],
+    registerResource: target.registerResource.bind(target),
+  };
+}
+
 export function compileMcpRegistrationSurface(
   registerSurface: (target: McpRegistrationTarget) => void,
 ): (target: McpRegistrationTarget) => void {

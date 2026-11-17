@@ -134,6 +134,9 @@ export const devspaceConfigSchema = z.object({
   }),
   logging: loggingConfigSchema,
   oauth: oauthConfigSchema,
+  staticTokens: z.object({
+    enabled: z.boolean().default(false).describe("Accept owner-created static Bearer tokens on /mcp. OAuth remains available."),
+  }).strict().prefault({}),
 }).strict();
 
 export type DevspaceConfig = z.output<typeof devspaceConfigSchema>;

@@ -42,6 +42,7 @@ const providerSchema = z.discriminatedUnion("id", [
   z.object({
     id: z.enum(["opencode", "pi"]),
     ...providerShape,
+    command: commandSchema,
   }).strict(),
 ]);
 
@@ -135,12 +136,11 @@ export function providerCommandVariable(provider: LocalAgentProvider): string | 
   switch (provider) {
     case "codex": return "CODEX_COMMAND";
     case "claude": return "CLAUDE_COMMAND";
+    case "opencode": return "OPENCODE_COMMAND";
+    case "pi": return "PI_COMMAND";
     case "cursor": return "CURSOR_COMMAND";
     case "copilot": return "COPILOT_COMMAND";
     case "grok": return "GROK_COMMAND";
-    case "opencode":
-    case "pi":
-      return undefined;
   }
 }
 

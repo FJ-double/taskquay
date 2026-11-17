@@ -4,9 +4,11 @@ import { stdin as input, stdout as output } from "node:process";
 import { resolve } from "node:path";
 import type { Result as BetterResult } from "better-result";
 import * as prompts from "@clack/prompts";
-import { getShellConfig } from "@earendil-works/pi-coding-agent";
+import { resolveShellCommand } from "./process-platform.js";
+import { DEVSPACE_VERSION, DEVSPACE_BUILD_SHA } from "./version.js";
 import { satisfies } from "semver";
 import { loadConfig } from "./config.js";
+import { runAuthTokenCommand } from "./cli-auth-token.js";
 import type { ServerConfig } from "./config.js";
 import { resolveCliWorkspaceContext } from "./cli-workspace.js";
 import {
@@ -39,6 +41,7 @@ import {
 import {
   type OnboardingDestination,
   SUBAGENT_SKILL_INSTALL_COMMAND,
+  bindOnboardingAgentCommands,
   resolveOnboardingUsage,
   updateOnboardingSubagentsConfig,
   usesChatGpt,
@@ -63,6 +66,7 @@ type Command =
   | "init"
   | "doctor"
   | "config"
+  | "auth"
   | "worktrees"
   | "agents"
   | "show-changes"
@@ -91,6 +95,9 @@ async function main(argv: string[]): Promise<void> {
     case "config":
       runConfigCommand(args);
       return;
+    case "auth":
+      runAuthTokenCommand(args);
+      return;
     case "worktrees":
       await runWorktreesCommand(args);
       return;
@@ -115,6 +122,7 @@ function normalizeCommand(command: string | undefined): Command {
     command === "init"
     || command === "doctor"
     || command === "config"
+    || command === "auth"
     || command === "worktrees"
     || command === "agents"
     || command === "show-changes"
@@ -249,10 +257,10 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
     });
     if (prompts.isCancel(providerAnswer)) throw new SetupCancelledError();
     const selectedProviders = providerAnswer as LocalAgentProvider[];
-    const subagents = updateOnboardingSubagentsConfig(
+    const subagents = bindOnboardingAgentCommands(updateOnboardingSubagentsConfig(
       currentSubagents,
       selectedProviders,
-    );
+    ));
 
     const auth = {
       ownerToken: files.auth.ownerToken ?? generateOwnerToken(),
@@ -339,7 +347,7 @@ async function serve(): Promise<void> {
     if (config.allowedHosts.includes("*")) {
       console.warn("warning: Host header allowlist is disabled because server.allowedHosts contains '*'");
     }
-    console.log("auth: Owner password approval required");
+    console.log(config.staticTokens?.enabled ? "auth: OAuth or owner-created static Bearer token" : "auth: Owner password approval required");
     console.log(`logging: ${config.logging.level} ${config.logging.format}`);
     console.log(`subagent providers: ${formatLocalAgentProviderStatusSummary(localAgentProviders)}`);
   });
@@ -404,11 +412,12 @@ async function runDoctor(): Promise<void> {
   console.log(`Config dir: ${files.dir}`);
   console.log(`Config file: ${files.configExists ? files.configPath : "missing"}`);
   console.log(`Auth file: ${files.authExists ? files.authPath : "missing"}`);
+  console.log(`Taskquay: ${DEVSPACE_VERSION} (${DEVSPACE_BUILD_SHA})`);
   console.log(`Node: ${process.version} (${nodeVersionStatus()})`);
   console.log(`Node ABI: ${process.versions.modules}`);
   console.log(`Platform: ${process.platform} ${process.arch}`);
   console.log(`Git: ${checkGitAvailable()}`);
-  console.log(`Bash shell: ${checkBashShell()}`);
+  console.log(`Command shell: ${resolveShellCommand("").executable}`);
   console.log(`SQLite native dependency: ${checkSqliteNative()}`);
 
   try {
@@ -440,8 +449,16 @@ function runConfigCommand(args: string[]): void {
   if (subcommand !== "set") {
     throw new Error(`Unknown config command: ${subcommand}`);
   }
+  if (key === "staticTokens.enabled") {
+    if (rest.length !== 1 || !["true", "false"].includes(rest[0]!)) {
+      throw new Error("Usage: devspace config set staticTokens.enabled <true|false>");
+    }
+    setDevspaceConfigValue(["staticTokens", "enabled"], rest[0] === "true");
+    console.log(`Updated ${files.configPath}. Restart the server to apply.`);
+    return;
+  }
   if (key !== "publicBaseUrl") {
-    throw new Error("Only `devspace config set publicBaseUrl <url|null>` is supported right now.");
+    throw new Error("Supported config keys: publicBaseUrl, staticTokens.enabled");
   }
 
   const value = rest.join(" ").trim();
@@ -497,6 +514,10 @@ function printHelp(): void {
       "  devspace doctor          Show config, runtime, and native dependency status",
       "  devspace config get      Print persisted config",
       "  devspace config set publicBaseUrl <url|null>",
+      "  devspace config set staticTokens.enabled <true|false>",
+      "  devspace auth token create --name <name> --allowed-tools <tool,...>",
+      "  devspace auth token list",
+      "  devspace auth token revoke <token-id>",
       "  devspace worktrees prune Prune managed worktrees unused for 3 days",
       "  devspace show-changes <review-ref> [--json]",
       "  devspace agents targets [--json]  List usable subagent providers and profiles",
@@ -929,15 +950,6 @@ function checkGitAvailable(): string {
   }
 }
 
-function checkBashShell(): string {
-  try {
-    const { shell, args } = getShellConfig();
-    return `${shell} ${args.join(" ")}`;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return `unavailable (${message})`;
-  }
-}
 
 main(process.argv.slice(2)).catch((error) => {
   console.error(error instanceof Error ? error.message : String(error));

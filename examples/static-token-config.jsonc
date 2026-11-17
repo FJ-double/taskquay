@@ -1,0 +1,9 @@
+{
+  "configVersion": 1,
+  // Optional. Omit this section to retain OAuth-only behavior.
+  // Create credentials locally with `devspace auth token create`.
+  // Never put a token value in this file.
+  "staticTokens": {
+    "enabled": false
+  }
+}

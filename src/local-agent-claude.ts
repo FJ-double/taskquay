@@ -6,6 +6,7 @@ import {
   isProgrammerDefect,
 } from "./local-agent-errors.js";
 import type { LocalAgentProvider } from "./local-agent-profiles.js";
+import { resolveExecutableCommand } from "./local-agent-command.js";
 import type {
   LocalAgentDriver,
   LocalAgentRunCallbacks,
@@ -267,7 +268,9 @@ export function claudeQueryOptions(
   input: LocalAgentRunInput,
   env: NodeJS.ProcessEnv = process.env,
 ): Record<string, unknown> {
-  const executable = env.CLAUDE_COMMAND;
+  // Always use the user's installed CLI; the SDK must never fall back to its bundled binary.
+  const command = env.CLAUDE_COMMAND ?? "claude";
+  const executable = resolveExecutableCommand(command, env) ?? command;
   const permissionMode = claudePermissionMode(input.writeMode);
   const authority = claudeAuthorityOptions(input.workspaceRoot, input.writeMode);
   return {
@@ -285,7 +288,7 @@ export function claudeQueryOptions(
     settings: authority.settings,
     ...(input.writeMode === "full_access" ? { allowDangerouslySkipPermissions: true } : {}),
     env: claudeCommandEnvironment(env),
-    ...(executable ? { pathToClaudeCodeExecutable: executable } : {}),
+    pathToClaudeCodeExecutable: executable,
   };
 }
 

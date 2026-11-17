@@ -165,10 +165,10 @@ for (const id of ["opencode", "pi"] as const) {
     providers: [{ id, enabled: true, env: { HARNESS_ENV: id } }],
   });
   assert.equal(localAgentProviderEnvironment(embedded, id, {}).HARNESS_ENV, id);
-  assert.throws(
-    () => subagentsConfigSchema.parse({
-      enabled: true,
-      providers: [{ id, enabled: true, command: "/opt/bin/agent" }],
-    }),
-  );
+  const explicit = subagentsConfigSchema.parse({
+    enabled: true,
+    providers: [{ id, enabled: true, command: "/opt/bin/agent" }],
+  });
+  const variable = id === "opencode" ? "OPENCODE_COMMAND" : "PI_COMMAND";
+  assert.equal(localAgentProviderEnvironment(explicit, id, {})[variable], "/opt/bin/agent");
 }

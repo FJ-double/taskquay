@@ -37,3 +37,6 @@ releases/
 
 # Isolated verification output; never replace the running dist during tests.
 /.local/voice-memory-trace-candidate/
+
+# Generated arm64 release metadata.
+/build-info.json

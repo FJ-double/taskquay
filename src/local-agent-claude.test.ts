@@ -124,7 +124,7 @@ assert.equal(lastOptions?.resume, undefined);
 assert.equal(lastOptions?.permissionMode, "dontAsk");
 assert.equal(lastOptions?.allowDangerouslySkipPermissions, undefined);
 assert.deepEqual(lastOptions?.allowedTools, ["Read(/**)", "Edit(/**)", "Bash"]);
-assert.equal(lastOptions?.pathToClaudeCodeExecutable, undefined);
+assert.equal(lastOptions?.pathToClaudeCodeExecutable, "claude", "always use the user's CLI, never the SDK's bundled binary");
 const initialSandbox = lastOptions?.sandbox as Record<string, unknown>;
 assert.equal(initialSandbox.enabled, true);
 assert.equal(initialSandbox.failIfUnavailable, true);

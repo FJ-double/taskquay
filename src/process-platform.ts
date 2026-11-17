@@ -64,7 +64,9 @@ export function resolveShellCommand(
     return { executable: configuredShell, args: ["-c", command] };
   }
 
-  return { executable: "/bin/sh", args: ["-c", command] };
+  return platform === "darwin"
+    ? { executable: "/bin/zsh", args: ["-lc", command] }
+    : { executable: "/bin/sh", args: ["-c", command] };
 }
 
 export function terminateProcessTree(

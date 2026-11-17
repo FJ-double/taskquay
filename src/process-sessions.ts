@@ -110,6 +110,8 @@ interface ProcessSession {
 }
 
 interface ProcessSessionManagerOptions {
+  /** Dependency boundary for optional PTY loading; absence falls back before a command starts. */
+  ptyLoader?: () => Promise<typeof import("node-pty")>;
   diagnostics?: (event: string, fields: Record<string, unknown>, level: "info" | "warn" | "error") => void;
   maxBufferCharacters?: number;
   completedSessionTtlMs?: number;
@@ -668,6 +670,14 @@ export class ProcessSessionManager {
     if (session.running) session.process?.kill("SIGTERM");
   }
 
+  listOwnedSessions(workspaceId: string) {
+    return [...this.sessions.values()].filter(session => session.workspaceId === workspaceId).map(session => ({
+      sessionId: session.id, running: session.running,
+      phase: !session.running ? "closed" : session.rootExitedAt === undefined ? "running" : "root_exited_stdio_open",
+      wallTimeMs: (session.finishedAt ?? Date.now()) - session.startedAt, exitCode: session.exitCode,
+    }));
+  }
+
   shutdown(): void {
     this.shuttingDown = true;
     if (this.recoveryTimer) clearInterval(this.recoveryTimer);
@@ -723,17 +733,17 @@ export class ProcessSessionManager {
   private startPipe(session: ProcessSession, input: StartCommandInput): void {
     const shell = resolveShellCommand(input.command);
     const detached = process.platform !== "win32";
-    const child = spawn(input.command, {
+    const spawnOptions = {
       cwd: input.cwd,
       env: processEnvironment({
         workspaceId: input.workspaceId,
         workspaceRoot: input.workspaceRoot,
       }),
-      stdio: "pipe",
-      windowsHide: true,
-      detached,
-      shell: shell.executable,
-    });
+      stdio: "pipe" as const, windowsHide: true, detached,
+    };
+    const child = process.platform === "win32"
+      ? spawn(input.command, { ...spawnOptions, shell: shell.executable })
+      : spawn(shell.executable, shell.args, spawnOptions);
     // Job Objects are only verified on win32 x64. Elsewhere (e.g. Windows on
     // ARM64) keep the prior taskkill-based behavior: failing closed there
     // would retain every write claim with no recovery path and lock the
@@ -868,9 +878,12 @@ export class ProcessSessionManager {
   private async startPty(session: ProcessSession, input: StartCommandInput): Promise<void> {
     let nodePty: typeof import("node-pty");
     try {
-      nodePty = await import("node-pty");
+      nodePty = await (this.options.ptyLoader?.() ?? import("node-pty"));
     } catch {
-      throw new Error("PTY support requires the optional node-pty dependency.");
+      session.execution = { ...executionContract(false), ptyCapability: "pipe_fallback" };
+      this.record(session, "process_pty_fallback", { reason: "optional_node_pty_unavailable" }, "warn");
+      this.startPipe(session, input);
+      return;
     }
 
     const shell = resolveShellCommand(input.command);
@@ -892,7 +905,9 @@ export class ProcessSessionManager {
 
     session.process = {
       write: (data) => pty.write(data),
-      kill: (signal) => pty.kill(signal),
+      kill: (signal = "SIGTERM") => terminateProcessTree({
+        pid: pty.pid, kill: (fallbackSignal) => { pty.kill(fallbackSignal); return true; },
+      }, signal, true),
       resize: (columns, rows) => pty.resize(columns, rows),
     };
     this.record(session, "process_started", { childPid: pty.pid });

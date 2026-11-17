@@ -34,13 +34,11 @@ function checkLocalAgentProviderAvailability(
     case "codex":
       return codexAvailability(providerEnv);
     case "claude":
-      return providerEnv.CLAUDE_COMMAND
-        ? commandAvailability(provider, providerEnv.CLAUDE_COMMAND, providerEnv)
-        : packageAvailability(provider, "@anthropic-ai/claude-agent-sdk");
+      return commandAvailability(provider, providerEnv.CLAUDE_COMMAND ?? "claude", providerEnv);
     case "opencode":
-      return packageAvailability(provider, "@opencode-ai/sdk/v2");
+      return installedAgentAvailability(provider, providerEnv.OPENCODE_COMMAND ?? "opencode", providerEnv, "@opencode-ai/sdk/v2");
     case "pi":
-      return packageAvailability(provider, "@earendil-works/pi-coding-agent");
+      return installedAgentAvailability(provider, providerEnv.PI_COMMAND ?? "pi", providerEnv, "@earendil-works/pi-coding-agent");
     case "cursor":
       return commandAvailability(provider, providerEnv.CURSOR_COMMAND ?? "cursor-agent", providerEnv);
     case "copilot":
@@ -60,6 +58,16 @@ export function assertLocalAgentProviderAvailable(
   throw new Error(
     `${provider} provider is not available: ${availability.reason ?? "provider preflight failed"}`,
   );
+}
+
+function installedAgentAvailability(
+  provider: LocalAgentProvider,
+  command: string,
+  env: NodeJS.ProcessEnv,
+  packageName: string,
+): LocalAgentProviderAvailability {
+  const executable = commandAvailability(provider, command, env);
+  return executable.available ? packageAvailability(provider, packageName) : executable;
 }
 
 function packageAvailability(
