@@ -1,6 +1,6 @@
 {
   "name": "@waishnav/devspace",
-  "version": "1.0.8",
+  "version": "1.1.0",
   "private": true,
   "repository": {
     "type": "git",
@@ -38,7 +38,8 @@
     "README.en.md",
     "README.zh-CN.md",
     "NOTICE",
-    "THIRD_PARTY_NOTICES.md"
+    "THIRD_PARTY_NOTICES.md",
+    "CHANGELOG.md"
   ],
   "publishConfig": {
     "access": "public"

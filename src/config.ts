@@ -27,6 +27,7 @@ export interface ServerConfig {
   host: string;
   port: number;
   oauth: OAuthConfig;
+  staticTokens?: { enabled: boolean };
   allowedRoots: string[];
   allowedHosts: string[];
   publicBaseUrl: string;
@@ -68,6 +69,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
 
   return {
     configDir: files.dir,
+    staticTokens: stored.staticTokens,
     host,
     port,
     oauth: {

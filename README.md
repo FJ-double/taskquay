@@ -6,6 +6,8 @@
 
 [2026-09-08 轨迹复盘：两处有界修复与验证边界](docs/trajectory-review-20260908.md)
 
+v1.1.0 可选固定 Bearer Token：[本机管理、超级小爱验收与升级回滚](docs/static-bearer-tokens.zh-CN.md)。默认关闭，保留现有 OAuth。
+
 TaskQuay 是一个自托管的 MCP 本地执行与项目任务管理工具。你继续在熟悉的 ChatGPT 对话里讨论方案、下发任务、查看结果；主控直接读取工作区，在确有必要时调度本地 Codex，并带回变更、验收证据和 Token 回执。
 
 本项目是 **[Waishnav/DevSpace](https://github.com/Waishnav/devspace) 的独立二开分支**。保留上游 MIT 版权声明，重点补齐主控直读、受控并行、会话复用、任务台与用量统计；不是 OpenAI、Anthropic 或上游 DevSpace 的官方产品。

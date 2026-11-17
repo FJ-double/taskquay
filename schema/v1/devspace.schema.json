@@ -640,6 +640,18 @@
         }
       },
       "additionalProperties": false
+    },
+    "staticTokens": {
+      "default": {},
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Accept owner-created static Bearer tokens on /mcp. OAuth remains available.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
     }
   },
   "required": [

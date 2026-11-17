@@ -40,6 +40,8 @@ import {
 } from "./logger.js";
 import { readFileTool } from "./pi-tools.js";
 import { SingleUserOAuthProvider } from "./oauth-provider.js";
+import { StaticTokenStore } from "./static-token-store.js";
+import { createMcpTokenVerifier, restrictMcpTools, staticTokenAllowedTools } from "./static-token-auth.js";
 import {
   compileMcpRegistrationSurface,
   createModernMcpServerAdapter,
@@ -968,8 +970,9 @@ export function createServer(
   const mcpUrl = new URL("/mcp", config.publicBaseUrl);
   const resourceServerUrl = resourceUrlFromServerUrl(mcpUrl);
   const oauthProvider = new SingleUserOAuthProvider(config.oauth, mcpUrl, config.stateDir);
+  const staticTokenStore = config.staticTokens?.enabled ? new StaticTokenStore(config.stateDir) : undefined;
   const bearerAuth = requireBearerAuth({
-    verifier: oauthProvider,
+    verifier: createMcpTokenVerifier(oauthProvider, staticTokenStore, resourceServerUrl, config.oauth.scopes[0] ?? "devspace"),
     requiredScopes: [config.oauth.scopes[0] ?? "devspace"],
     resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(resourceServerUrl),
   });
@@ -1016,12 +1019,15 @@ export function createServer(
   });
   const logMcpHandlerError = (error: Error) =>
     recordMcpBoundaryError("mcp_handler_error", error, config.logging, options.diagnostics);
-  const mcpHandler = createMcpHandler(() => {
+  const mcpHandler = createMcpHandler(({ authInfo }) => {
     const adapter = createModernMcpServerAdapter(
       mcpServerInfo(),
       { instructions: serverInstructions(config, modernToolSurface) },
     );
-    bindModernMcpSurface(adapter.registrationTarget);
+    const allowedTools = staticTokenAllowedTools(authInfo);
+    bindModernMcpSurface(allowedTools === undefined
+      ? adapter.registrationTarget
+      : restrictMcpTools(adapter.registrationTarget, allowedTools));
     return adapter.server;
   }, {
     legacy: "stateless",
@@ -1121,10 +1127,22 @@ export function createServer(
     logEvent(config.logging, "debug", "mcp_request", {
       requestId,
       method: req.method,
+      ...(req.auth?.extra?.staticTokenId ? { authType: "static", tokenId: req.auth.extra.staticTokenId } : {}),
     });
 
     try {
-      await mcpNodeHandler(req, res, normalizeCachedToolCall(req.body));
+      const body = normalizeCachedToolCall(req.body);
+      const call = body as { method?: string; params?: { name?: unknown } } | null;
+      const allowedTools = staticTokenAllowedTools(req.auth);
+      if (allowedTools !== undefined && call?.method === "tools/call"
+        && typeof call.params?.name === "string" && !allowedTools.includes(call.params.name)) {
+        logEvent(config.logging, "warn", "static_token_tool_denied", {
+          requestId, tokenId: req.auth?.extra?.staticTokenId, tool: call.params.name,
+        });
+        sendJsonRpcError(res, 403, -32003, "Tool is not allowed for this token");
+        return;
+      }
+      await mcpNodeHandler(req, res, body);
     } catch (error) {
       if (error instanceof ConflictingToolAliasError) {
         if (!res.headersSent) sendJsonRpcError(res, 400, -32602, error.message);
@@ -1158,6 +1176,7 @@ export function createServer(
         processSessions.shutdown();
         projectConsole.close();
         oauthProvider.close();
+        staticTokenStore?.close();
         workspaceStore.close?.();
       })();
       return closePromise;
@@ -1182,7 +1201,7 @@ if (await isMainModule()) {
       `devspace listening on http://${config.host}:${config.port}/mcp`,
     );
     console.log(`allowed roots: ${config.allowedRoots.join(", ")}`);
-    console.log("auth: oauth owner-token flow required");
+    console.log(config.staticTokens?.enabled ? "auth: OAuth or owner-created static Bearer token" : "auth: oauth owner-token flow required");
     console.log(`logging: ${config.logging.level} ${config.logging.format}`);
     console.log(`request logging: ${config.logging.requests ? "enabled" : "disabled"}`);
     console.log(`asset logging: ${config.logging.assets ? "enabled" : "disabled"}`);

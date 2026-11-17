@@ -5,6 +5,10 @@ import {
   devspaceConfigSchema,
 } from "./config-schema.js";
 
+assert.deepEqual(devspaceConfigSchema.parse({ configVersion: 1 }).staticTokens, { enabled: false });
+assert.deepEqual(devspaceConfigSchema.parse({ configVersion: 1, staticTokens: { enabled: true } }).staticTokens, { enabled: true });
+assert.equal(devspaceConfigSchema.safeParse({ configVersion: 1, staticTokens: { enabled: "true" } }).success, false);
+
 assert.throws(
   () => devspaceConfigSchema.parse({ configVersion: 1, typo: true }),
   /Unrecognized key/,
