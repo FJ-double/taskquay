@@ -14,16 +14,11 @@ Versions below reflect the reviewed source and the fresh frozen-lockfile verific
 
 | Dependency | Observed version | Declared license / terms |
 | --- | --- | --- |
-| `@agentclientprotocol/sdk` | 1.1.0 | Apache-2.0 |
-| `@anthropic-ai/claude-agent-sdk` | 0.3.200 | `SEE LICENSE IN README.md`; Anthropic terms apply |
-| `@anthropic-ai/sandbox-runtime` | 0.0.71 | Apache-2.0 |
 | `@clack/prompts` | 1.5.1 | MIT |
-| `@earendil-works/pi-coding-agent` | 0.80.3 | MIT |
 | `@modelcontextprotocol/ext-apps` | 1.7.2 | MIT |
 | `@modelcontextprotocol/node` | 2.0.0 | MIT |
 | `@modelcontextprotocol/sdk` | 1.29.0 | MIT |
 | `@modelcontextprotocol/server` | 2.0.0 | MIT |
-| `@opencode-ai/sdk` | 1.17.13 | MIT |
 | `@pierre/diffs` | 1.3.6 | Apache-2.0 |
 | `better-result` | 2.10.0 | MIT |
 | `better-sqlite3` | 12.10.0 | MIT |
@@ -38,7 +33,6 @@ Versions below reflect the reviewed source and the fresh frozen-lockfile verific
 | `semver` | 7.8.4 | ISC |
 | `yaml` | 2.9.0 | ISC |
 | `zod` | 4.4.3 | MIT |
-| `node-pty` (optional) | 1.1.0 | MIT |
 
 Package metadata is an entry point for review, not conclusive legal clearance. Development and transitive dependencies are not exhaustively listed here.
 
@@ -59,3 +53,5 @@ OpenAI, Codex, ChatGPT, Anthropic, Claude, DevSpace, and LINUX DO remain names o
 Determine exactly which dependency code and assets are embedded. Preserve applicable license text, attribution, NOTICE content, and any required source/distribution material. Resolve unclassified or custom-license packages rather than replacing their labels with MIT. Review native binaries and bundled UI separately from source publication.
 
 `package.json` remains in the upstream namespace for runtime compatibility and is marked `private: true` as a publication guard. Choose a namespace you control, update distribution metadata, review the tarball, and complete this checklist before deliberately enabling package publication.
+
+Windows edition: agent SDKs and agent runtimes are not distributed. Exact production dependencies and retained upstream license files accompany the Windows archive. The embedded Node.js runtime license is in runtime/LICENSE.

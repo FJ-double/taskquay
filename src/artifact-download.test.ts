@@ -99,8 +99,9 @@ function testOneToolContract(): void {
 }
 
 function testPlatformSupportContract(): void {
-  assert.equal(isArtifactDownloadSupportedPlatform("linux"), true);
-  assert.equal(isArtifactDownloadSupportedPlatform("darwin"), true);
+  // The Windows release deliberately ships only the Windows artifact destination.
+  assert.equal(isArtifactDownloadSupportedPlatform("linux"), false);
+  assert.equal(isArtifactDownloadSupportedPlatform("darwin"), false);
   assert.equal(isArtifactDownloadSupportedPlatform("freebsd"), false);
   assert.equal(isArtifactDownloadSupportedPlatform("openbsd"), false);
   assert.equal(isArtifactDownloadSupportedPlatform("netbsd"), false);

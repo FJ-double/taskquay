@@ -21,7 +21,7 @@ assert.equal(
 
 {
   const directory = mkdtempSync(join(tmpdir(), "devspace-provider-command-"));
-  const executable = join(directory, "codex-wrapper");
+  const executable = process.platform === "win32" ? process.execPath : join(directory, "codex-wrapper");
   try {
     assert.equal(
       getLocalAgentProviderAvailabilitySnapshot({
@@ -30,8 +30,10 @@ assert.equal(
       }).find((provider) => provider.name === "codex")?.available,
       false,
     );
-    writeFileSync(executable, "#!/bin/sh\nexit 0\n");
-    chmodSync(executable, 0o700);
+    if (process.platform !== "win32") {
+      writeFileSync(executable, "#!/bin/sh\nexit 0\n");
+      chmodSync(executable, 0o700);
+    }
     const availability = getLocalAgentProviderAvailabilitySnapshot(
       {
         ...process.env,
@@ -52,7 +54,7 @@ assert.equal(
     assert.deepEqual(availability, {
       name: "codex",
       available: true,
-      note: "available",
+      note: "Installed Codex CLI via MCP stdio",
     });
     assert.doesNotMatch(JSON.stringify(availability), /configured-secret|must-not-appear/);
   } finally {

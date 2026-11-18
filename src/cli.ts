@@ -4,9 +4,12 @@ import { stdin as input, stdout as output } from "node:process";
 import { resolve } from "node:path";
 import type { Result as BetterResult } from "better-result";
 import * as prompts from "@clack/prompts";
-import { getShellConfig } from "@earendil-works/pi-coding-agent";
+import { resolveShellCommand } from "./process-platform.js";
+import { discoverHostAgents, HostAgentBridge } from "./host-agents.js";
+import { DEVSPACE_VERSION } from "./version.js";
 import { satisfies } from "semver";
 import { loadConfig } from "./config.js";
+import { runAuthTokenCommand } from "./cli-auth-token.js";
 import type { ServerConfig } from "./config.js";
 import { resolveCliWorkspaceContext } from "./cli-workspace.js";
 import {
@@ -63,13 +66,14 @@ type Command =
   | "init"
   | "doctor"
   | "config"
+  | "auth"
   | "worktrees"
   | "agents"
   | "show-changes"
   | "help"
   | "version";
 const require = createRequire(import.meta.url);
-const SUPPORTED_NODE_RANGE = ">=20.12 <27";
+const SUPPORTED_NODE_RANGE = ">=22.19 <27";
 
 async function main(argv: string[]): Promise<void> {
   assertSupportedNode();
@@ -90,6 +94,9 @@ async function main(argv: string[]): Promise<void> {
       return;
     case "config":
       runConfigCommand(args);
+      return;
+    case "auth":
+      runAuthTokenCommand(args);
       return;
     case "worktrees":
       await runWorktreesCommand(args);
@@ -115,6 +122,7 @@ function normalizeCommand(command: string | undefined): Command {
     command === "init"
     || command === "doctor"
     || command === "config"
+    || command === "auth"
     || command === "worktrees"
     || command === "agents"
     || command === "show-changes"
@@ -220,39 +228,32 @@ async function runInit({ force }: { force: boolean }): Promise<void> {
     }
 
     const currentSubagents = files.config.subagents;
-    const availability = getLocalAgentProviderAvailabilitySnapshot(
-      process.env,
-      currentSubagents,
-    );
-    const configuredProviders = currentSubagents.providers
-      .filter((provider) => provider.enabled)
-      .map((provider) => provider.id);
-    const initialValues = configuredProviders.length > 0
-      ? configuredProviders
-      : availability
-          .filter((provider) => provider.available)
-          .map((provider) => provider.name);
-    prompts.log.info(
-      "DevSpace can delegate work to these agents from ChatGPT or another coding agent.",
-    );
-    const providerAnswer = await prompts.multiselect({
-      message: "Which agents can DevSpace use as subagents?",
-      options: availability.map((provider) => ({
-        value: provider.name,
-        label: provider.name,
-        hint: provider.available
-          ? provider.note ?? "available"
-          : `unavailable: ${provider.reason ?? "provider preflight failed"}`,
-      })),
-      initialValues,
-      required: true,
-    });
-    if (prompts.isCancel(providerAnswer)) throw new SetupCancelledError();
-    const selectedProviders = providerAnswer as LocalAgentProvider[];
-    const subagents = updateOnboardingSubagentsConfig(
-      currentSubagents,
-      selectedProviders,
-    );
+    const installed = discoverHostAgents(process.env, currentSubagents).filter(agent => agent.installed);
+    let selectedProviders: LocalAgentProvider[] = [];
+    if (installed.length) {
+      const previous = installed.find(agent => currentSubagents.providers.some(provider => provider.id === agent.id && provider.enabled));
+      const answer = await prompts.select({
+        message: "Which installed agent CLI should Taskquay connect to?",
+        options: [{ value: "none", label: "Connect an agent later" }, ...installed.map(agent => ({ value: agent.id, label: agent.id, hint: agent.command }))],
+        initialValue: previous?.id ?? "none",
+      });
+      if (prompts.isCancel(answer)) throw new SetupCancelledError();
+      if (answer !== "none") {
+        const agent = installed.find(agent => agent.id === answer)!;
+        const bridge = new HostAgentBridge(agent);
+        try {
+          const tools = await bridge.listTools();
+          if (!tools.length) throw new Error("The selected CLI exposes no MCP tools.");
+          prompts.log.info(`Connected ${agent.id}: ${tools.length} MCP capabilities.`);
+          selectedProviders = [agent.id];
+        } finally { await bridge.close(); }
+      }
+    } else {
+      prompts.log.info("No installed agent CLI found. You can finish setup and connect an agent later.");
+      for (const agent of discoverHostAgents()) prompts.log.info(agent.install);
+      prompts.log.info("After installation: devspace agents discover, then devspace agents select <id>.");
+    }
+    const subagents = { ...updateOnboardingSubagentsConfig(currentSubagents, selectedProviders), enabled: selectedProviders.length > 0 };
 
     const auth = {
       ownerToken: files.auth.ownerToken ?? generateOwnerToken(),
@@ -339,7 +340,7 @@ async function serve(): Promise<void> {
     if (config.allowedHosts.includes("*")) {
       console.warn("warning: Host header allowlist is disabled because server.allowedHosts contains '*'");
     }
-    console.log("auth: Owner password approval required");
+    console.log(config.staticTokens?.enabled ? "auth: OAuth or owner-created static Bearer token" : "auth: Owner password approval required");
     console.log(`logging: ${config.logging.level} ${config.logging.format}`);
     console.log(`subagent providers: ${formatLocalAgentProviderStatusSummary(localAgentProviders)}`);
   });
@@ -401,6 +402,12 @@ async function runStartupWorktreeCleanup(config: ServerConfig): Promise<void> {
 
 async function runDoctor(): Promise<void> {
   const files = loadDevspaceFiles();
+  console.log(`Taskquay Windows x64 ${DEVSPACE_VERSION}`);
+  const buildInfo = (() => { try { return require("../build-info.json"); } catch { return { sourceSha: "development" }; } })();
+  console.log(`Build SHA: ${buildInfo.sourceSha}`);
+  const installed = discoverHostAgents();
+  for (const agent of installed) console.log(`Agent ${agent.id}: ${agent.command ?? agent.install}`);
+  if (!installed.some(agent => agent.installed)) console.log("No installed agent CLI found. Install a CLI above, then run devspace agents discover and devspace agents select <id>.");
   console.log(`Config dir: ${files.dir}`);
   console.log(`Config file: ${files.configExists ? files.configPath : "missing"}`);
   console.log(`Auth file: ${files.authExists ? files.authPath : "missing"}`);
@@ -408,7 +415,7 @@ async function runDoctor(): Promise<void> {
   console.log(`Node ABI: ${process.versions.modules}`);
   console.log(`Platform: ${process.platform} ${process.arch}`);
   console.log(`Git: ${checkGitAvailable()}`);
-  console.log(`Bash shell: ${checkBashShell()}`);
+  console.log(`Windows shell: ${checkWindowsShell()}`);
   console.log(`SQLite native dependency: ${checkSqliteNative()}`);
 
   try {
@@ -440,8 +447,16 @@ function runConfigCommand(args: string[]): void {
   if (subcommand !== "set") {
     throw new Error(`Unknown config command: ${subcommand}`);
   }
+  if (key === "staticTokens.enabled") {
+    if (rest.length !== 1 || !["true", "false"].includes(rest[0]!)) {
+      throw new Error("Usage: devspace config set staticTokens.enabled <true|false>");
+    }
+    setDevspaceConfigValue(["staticTokens", "enabled"], rest[0] === "true");
+    console.log(`Updated ${files.configPath}. Restart the server to apply.`);
+    return;
+  }
   if (key !== "publicBaseUrl") {
-    throw new Error("Only `devspace config set publicBaseUrl <url|null>` is supported right now.");
+    throw new Error("Supported config keys: publicBaseUrl, staticTokens.enabled");
   }
 
   const value = rest.join(" ").trim();
@@ -497,8 +512,14 @@ function printHelp(): void {
       "  devspace doctor          Show config, runtime, and native dependency status",
       "  devspace config get      Print persisted config",
       "  devspace config set publicBaseUrl <url|null>",
+      "  devspace config set staticTokens.enabled <true|false>",
+      "  devspace auth token create --name <name> --allowed-tools <tool,...>",
+      "  devspace auth token list",
+      "  devspace auth token revoke <token-id>",
       "  devspace worktrees prune Prune managed worktrees unused for 3 days",
       "  devspace show-changes <review-ref> [--json]",
+      "  devspace agents discover        Find installed agent CLIs (no SDK installation)",
+      "  devspace agents select <id>     Connect and select an installed MCP CLI",
       "  devspace agents targets [--json]  List usable subagent providers and profiles",
       "  devspace agents ls       List subagent sessions",
       "  devspace agents run <target> [--task-key <key>] [--work-item <id>] [--context-key <domain>] [--fresh-context] [--read-only] [--model <model>] [--effort <level>] <prompt>",
@@ -536,6 +557,28 @@ async function runAgentsCommand(args: string[]): Promise<void> {
   const [subcommand, ...rest] = args;
   const { args: commandArgs, json } = extractJsonOption(rest);
   switch (subcommand) {
+    case "discover": {
+      const agents = discoverHostAgents(process.env, loadDevspaceFiles().config.subagents);
+      console.log(JSON.stringify({ agents, message: agents.some(agent => agent.installed)
+        ? "Select an installed CLI with devspace agents select <id>."
+        : "No installed agent CLI found. Follow the install links, then run agents discover again." }, null, 2));
+      return;
+    }
+    case "select": {
+      const files = loadDevspaceFiles();
+      const agent = discoverHostAgents(process.env, files.config.subagents).find(agent => agent.id === commandArgs[0] && agent.installed);
+      if (!agent || commandArgs.length !== 1) throw new Error("Choose an installed CLI with agents discover, then agents select <id>.");
+      const bridge = new HostAgentBridge(agent);
+      try {
+        const tools = await bridge.listTools();
+        if (!tools.length) throw new Error("Selected CLI exposes no MCP tools.");
+        const subagents = { ...files.config.subagents, enabled: true, providers: files.config.subagents.providers.map(provider => ({ ...provider, enabled: provider.id === agent.id })) };
+        if (!subagents.providers.some(provider => provider.id === agent.id)) subagents.providers.push({ id: agent.id, enabled: true });
+        setDevspaceConfigValue(["subagents"], subagents);
+        console.log(JSON.stringify({ selected: agent.id, command: agent.command, tools: tools.map(tool => tool.name), message: agent.id === "claude" ? "Connected through MCP stdio. Restart Taskquay for workspace-scoped agent_mcp Read." : "Connected through MCP stdio. Restart Taskquay to use the Codex provider through agent_task." }, null, 2));
+      } finally { await bridge.close(); }
+      return;
+    }
     case "ls":
     case "list":
       await runAgentWorkflowCommand(json, () => runAgentsList(commandArgs, json));
@@ -929,9 +972,9 @@ function checkGitAvailable(): string {
   }
 }
 
-function checkBashShell(): string {
+function checkWindowsShell(): string {
   try {
-    const { shell, args } = getShellConfig();
+    const { executable: shell, args } = resolveShellCommand("");
     return `${shell} ${args.join(" ")}`;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

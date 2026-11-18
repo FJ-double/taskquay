@@ -49,7 +49,7 @@ test("advertised skill tilde/absolute read and capture agree; unadvertised and s
   const tilde = "~/.codex/skills/advertised/SKILL.md"; const absolute = join(skill, "SKILL.md");
   assert.deepEqual(await read(tilde), await read(absolute));
   const short = await capture(tilde); const full = await capture(absolute);
-  assert(!short.isError); assert.deepEqual(short.content, full.content);
+  assert(!short.isError, JSON.stringify(short)); assert.deepEqual(short.content, full.content);
   const data = JSON.parse((short.content as Array<{ text: string }>)[0]!.text);
   assert.equal(data.entries.length, 1); assert.equal(data.refs.length, 0, "External skill evidence is not a workspace delegation ref");
   for (const path of ["~/private/SKILL.md", join(outside, "SKILL.md"), "~/.codex/skills/advertised/../../../private/SKILL.md",

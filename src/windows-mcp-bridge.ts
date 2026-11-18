@@ -12,7 +12,7 @@ export class WindowsMcpBridge {
 
   async listTools(): Promise<Tool[]> {
     const client = await this.ensureClient();
-    const result = await client.listTools();
+    const result = await client.listTools(undefined, { timeout: 4000 });
     const allowed = new Set(this.config.allowedTools);
     return result.tools.filter((tool) => allowed.has(tool.name));
   }
@@ -67,7 +67,7 @@ export class WindowsMcpBridge {
     const client = new Client({ name: "taskquay-windows-mcp-bridge", version: "0.1.0" });
 
     try {
-      await client.connect(transport);
+      await client.connect(transport, { timeout: 4000 });
     } catch (error) {
       await transport.close().catch(() => undefined);
       throw error;

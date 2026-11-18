@@ -4,9 +4,14 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProcessSessionManager } from "./process-sessions.js";
+import { resolveShellCommand } from "./process-platform.js";
 import { WorkLedger } from "./work-ledger.js";
 import { WorkRunViews } from "./work-run-views.js";
 import { trackedWork } from "./tool-surfaces/work-task.js";
+
+const nodeCommand = /(?:^|[\\/])pwsh(?:\.exe)?$/i.test(resolveShellCommand("", process.platform, process.env, process.platform === "win32").executable)
+  ? `& "${process.execPath}"` : `"${process.execPath}"`;
+const exitCodePassThrough = nodeCommand.startsWith("& ") ? "; exit $LASTEXITCODE" : "";
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "devspace-process-evidence-"));
@@ -26,7 +31,7 @@ test("yielded failure persists safe exit evidence even without a terminal poll",
   const { manager, ledger, run, project, events } = context;
   try {
     const initial = await manager.start({ workspaceId: "ws", cwd: project, workRunId: run.id,
-      command: `"${process.execPath}" -e "console.log('private-output-marker');setTimeout(()=>process.exit(7),100)"`, yieldTimeMs: 0 });
+      command: `${nodeCommand} -e "console.log('private-output-marker');setTimeout(()=>process.exit(7),100)"${exitCodePassThrough}`, yieldTimeMs: 0 });
     assert.equal(initial.running, true);
     assert.ok(initial.operationId);
     for (let attempt = 0; attempt < 100 && !events.some((entry) => entry.event === "process_finished"); attempt++) {
@@ -67,7 +72,7 @@ test("spawn errors have fingerprints and release claims; logging failures do not
     assert.equal(context.manager.executionCoordinator?.inspect(context.project).length, 0);
     const manager = new ProcessSessionManager({ diagnostics: () => { throw new Error("log failure"); } });
     try {
-      const success = await manager.start({ workspaceId: "ws", cwd: context.project, command: `"${process.execPath}" -e "process.exit(0)"`, yieldTimeMs: 2000 });
+      const success = await manager.start({ workspaceId: "ws", cwd: context.project, command: `${nodeCommand} -e "process.exit(0)"`, yieldTimeMs: 2000 });
       assert.equal(success.exitCode, 0);
     } finally { manager.shutdown(); }
   } finally { context.close(); }
@@ -96,7 +101,7 @@ test("accounting failure is observable without blocking process completion or re
   try {
     context.mock.method(WorkLedger.prototype, "endOperation", () => { throw new Error("private-database-error"); });
     const result = await fixtureContext.manager.start({ workspaceId: "ws", cwd: fixtureContext.project,
-      workRunId: fixtureContext.run.id, command: `"${process.execPath}" -e "process.exit(0)"`, yieldTimeMs: 2000 });
+      workRunId: fixtureContext.run.id, command: `${nodeCommand} -e "process.exit(0)"`, yieldTimeMs: 2000 });
     assert.equal(result.running, false);
     assert.equal(result.exitCode, 0);
     assert.match(result.output, /accounting could not be finalized/);

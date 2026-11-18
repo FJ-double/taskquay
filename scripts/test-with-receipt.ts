@@ -41,6 +41,12 @@ mkdirSync(directory, { recursive: true, mode: 0o700 });
 const id = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID()}`;
 const testCodexHome = join(directory, `${id}-codex-home`);
 mkdirSync(testCodexHome, { recursive: false, mode: 0o700 });
+// Keep native Windows test checkouts outside the operator's home checkout.
+// The test runner changes only child-process temp locations.
+const testTemp = process.platform === "win32" && process.env.PUBLIC
+  ? join(process.env.PUBLIC, "Taskquay-QA", randomUUID().slice(0, 8))
+  : undefined;
+if (testTemp) mkdirSync(testTemp, { recursive: true });
 const logPath = join(directory, `${id}.log`), receiptPath = join(directory, `${id}.json`);
 const fd = openSync(logPath, "wx", 0o600);
 const parser = new TestReceiptSummary();
@@ -58,7 +64,13 @@ const child = spawn(process.execPath, ["--import", "tsx",
   // Unit/integration fixtures must not discover the operator's real Desktop
   // catalog or authenticated Codex home when exercising automatic creation.
   // Real Desktop acceptance uses the separate explicit verification command.
-  cwd: root, env: { ...process.env, NO_COLOR: "1", CODEX_HOME: testCodexHome }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, detached: process.platform !== "win32",
+  // HP can have a Git repository directly in USERPROFILE. Temporary test
+  // workspaces below that directory must not all resolve to the same checkout.
+  cwd: root, env: { ...process.env, NO_COLOR: "1", CODEX_HOME: testCodexHome,
+    ...(testTemp ? { TEMP: testTemp, TMP: testTemp, TMPDIR: testTemp } : {}),
+    ...(process.platform === "win32" && process.env.USERPROFILE
+      ? { GIT_CEILING_DIRECTORIES: process.env.USERPROFILE } : {}) },
+  stdio: ["ignore", "pipe", "pipe"], windowsHide: true, detached: process.platform !== "win32",
 });
 const save = (chunk: Buffer) => {
   const remaining = Math.max(0, 16 * 1024 * 1024 - savedBytes);

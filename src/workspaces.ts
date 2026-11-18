@@ -10,7 +10,7 @@ import type {
 } from "./workspace-store.js";
 import { mkdir, opendir, readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { loadProjectContextFiles } from "@earendil-works/pi-coding-agent";
+import { loadProjectContextFiles } from "./workspace-primitives.js";
 import type { ServerConfig } from "./config.js";
 import {
   createManagedWorktree,

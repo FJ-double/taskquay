@@ -80,7 +80,7 @@ test("tool modes expose the expected host-facing tool surface", async (t) => {
 
       assert.deepEqual(
         tools.tools.map((tool) => tool.name).sort(),
-        expected.sort(),
+        [...expected, "document_tool", "system_processes", "terminal_sessions"].sort(),
       );
     });
   }

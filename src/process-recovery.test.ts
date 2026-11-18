@@ -1,14 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ProcessSessionManager } from "./process-sessions.js";
-const node = `"${process.execPath}"`;
+import { resolveShellCommand } from "./process-platform.js";
+const node = /(?:^|[\\/])pwsh(?:\.exe)?$/i.test(resolveShellCommand("", process.platform, process.env, process.platform === "win32").executable)
+  ? `& "${process.execPath}"` : `"${process.execPath}"`;
+const exitCodePassThrough = node.startsWith("& ") ? "; exit $LASTEXITCODE" : "";
 const base = { workspaceId: "a", cwd: process.cwd(), yieldTimeMs: 2000 };
 
 test("bounded terminal receipts replay lost start/write failures and cancellations, reject writes and foreign workspaces", { timeout: 15_000 }, async (t) => {
   const events: string[] = [];
   const manager = new ProcessSessionManager({ maxBufferCharacters: 512, diagnostics: (event) => events.push(event) });
   t.after(() => manager.shutdown());
-  const result = await manager.start({ ...base, command: `${node} -e "console.log('once');process.exit(7)"` });
+  const result = await manager.start({ ...base, command: `${node} -e "console.log('once');process.exit(7)"${exitCodePassThrough}` });
   assert.equal(result.running, false); assert.equal(result.exitCode, 7);
   for (let i = 0; i < 2; i++) assert.deepEqual(await manager.write({ workspaceId: "a", sessionId: result.sessionId! }), { ...result, terminalReplay: true });
   assert.equal(events.filter((e) => e === "process_started").length, 1);

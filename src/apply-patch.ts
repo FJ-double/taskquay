@@ -422,7 +422,7 @@ async function assertNoStagedAliases(
   staged: Map<string, StagedTextFile>,
   platform: NodeJS.Platform = process.platform,
 ): Promise<void> {
-  const caseInsensitive = platform === "win32" || platform === "darwin";
+  const caseInsensitive = true;
   const seen = new Map<string, { absolute: string; deleted: boolean }>();
   for (const [absolute, file] of staged) {
     const keys = caseInsensitive ? [`name:${absolute.toLowerCase()}`] : [];

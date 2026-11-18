@@ -1,5 +1,13 @@
 # Configuration Reference
 
+## Optional static Bearer tokens
+
+`staticTokens.enabled` defaults to `false`; omitting it preserves OAuth-only behavior.
+Enable explicitly with `devspace config set staticTokens.enabled true`, then restart
+the intended test server. Credentials are created locally, never stored in this
+configuration. See [management and rollback](static-bearer-tokens.en.md) and the
+[minimal configuration example](../examples/static-token-config.jsonc).
+
 ## Codex reasoning ceilings
 
 Provider `effort` and `readOnlyDefaults.effort` are defaults, not limits. Explicit

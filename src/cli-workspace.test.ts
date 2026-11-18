@@ -5,6 +5,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { resolveCliWorkspaceContext } from "./cli-workspace.js";
 
+// A user's home directory may itself be a Git checkout; do not let that
+// unrelated parent repository affect isolated temporary-workspace fixtures.
+const priorGitCeiling = process.env.GIT_CEILING_DIRECTORIES;
+if (process.platform === "win32") process.env.GIT_CEILING_DIRECTORIES = process.env.USERPROFILE;
 const root = mkdtempSync(join(tmpdir(), "devspace-cli-workspace-test-"));
 try {
   const repository = join(root, "repository");
@@ -66,4 +70,6 @@ try {
   );
 } finally {
   rmSync(root, { recursive: true, force: true });
+  if (priorGitCeiling === undefined) delete process.env.GIT_CEILING_DIRECTORIES;
+  else process.env.GIT_CEILING_DIRECTORIES = priorGitCeiling;
 }

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { HeadTailBuffer, ProcessSessionManager } from "./process-sessions.js";
+import { resolveShellCommand } from "./process-platform.js";
 
 const smallBuffer = new HeadTailBuffer(100);
 smallBuffer.append("hello\n");
@@ -33,9 +34,8 @@ const manager = new ProcessSessionManager({
   completedSessionTtlMs: 1_000,
 });
 
-const node = process.platform === "win32"
-  ? `"${process.execPath}"`
-  : JSON.stringify(process.execPath);
+const node = process.platform === "win32" && /(?:^|[\\/])pwsh(?:\.exe)?$/i.test(resolveShellCommand("", process.platform, process.env, true).executable)
+  ? `& "${process.execPath}"` : JSON.stringify(process.execPath);
 
 const foreground = await manager.start({
   workspaceId: "workspace-a",

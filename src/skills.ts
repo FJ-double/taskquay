@@ -15,7 +15,7 @@ import {
   loadSkillsFromDir,
   type Skill,
   type LoadSkillsResult,
-} from "@earendil-works/pi-coding-agent";
+} from "./workspace-primitives.js";
 import type { ServerConfig } from "./config.js";
 import { expandHomePath, isPathInsideRoot } from "./roots.js";
 

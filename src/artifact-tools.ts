@@ -38,7 +38,7 @@ const PARTIAL_PREFIX = ".devspace-download-";
 const PARTIAL_SUFFIX = ".partial";
 const STALE_PARTIAL_AGE_MS = 24 * 60 * 60 * 1_000;
 const MAX_STALE_PARTIAL_CLEANUP = 32;
-const ARTIFACT_DOWNLOAD_PLATFORMS = new Set<NodeJS.Platform>(["linux", "darwin", "win32"]);
+const ARTIFACT_DOWNLOAD_PLATFORMS = new Set<NodeJS.Platform>(["win32"]);
 
 const openAIFileReferenceInputSchema = z.strictObject({
   download_url: z.string(),
@@ -357,19 +357,8 @@ async function prepareArtifactDestinationDirectory(
   workspaceRoot: string,
   parentParts: readonly string[],
 ): Promise<ArtifactDestinationDirectory> {
-  if (process.platform === "win32") {
-    const { prepareWindowsArtifactDestinationDirectory } = await import(
-      "./artifact-destination-windows.js"
-    );
-    return prepareWindowsArtifactDestinationDirectory(workspaceRoot, parentParts);
-  }
-  if (process.platform === "darwin") {
-    const { prepareDarwinArtifactDestinationDirectory } = await import(
-      "./artifact-destination-darwin.js"
-    );
-    return prepareDarwinArtifactDestinationDirectory(workspaceRoot, parentParts);
-  }
-  return prepareLinuxArtifactDestinationDirectory(workspaceRoot, parentParts);
+  const { prepareWindowsArtifactDestinationDirectory } = await import("./artifact-destination-windows.js");
+  return prepareWindowsArtifactDestinationDirectory(workspaceRoot, parentParts);
 }
 
 function normalizeArtifactDestination(value: string): ArtifactDestination {

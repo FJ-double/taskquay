@@ -1,64 +1,46 @@
-name: CI
+name: Windows x64
 
 on:
   push:
-    branches:
-      - main
+    branches: [platform/windows-1.1.0]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
-
 jobs:
-  smoke:
-    name: Smoke (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
-
-    env:
-      DEVSPACE_OAUTH_OWNER_TOKEN: ci-owner-token-that-is-long-enough
-
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 25
     steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-
-      - name: Setup pnpm and Node
-        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          runtime: node@22
-          cache: true
-          install: false
-
+          node-version: '24.20.0'
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Install Pi sandbox dependencies
-        if: matrix.os == 'ubuntu-latest'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ripgrep bubblewrap socat
-          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Test
-        env:
-          DEVSPACE_REQUIRE_PI_SANDBOX: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}
-        run: pnpm test
-
-      - name: Package install smoke test
-        run: pnpm test:package-install
-
-      - name: Doctor
-        run: node dist/cli.js doctor
+          npm install --global pnpm@11.25.0
+          pnpm install --frozen-lockfile
+      - name: Run Windows regression tests
+        run: pnpm test:windows:regression
+      - name: Build and package Windows x64
+        run: |
+          pnpm build
+          pnpm package:windows
+      - name: Install and test the Windows archive
+        run: |
+          $unpacked = Join-Path $env:RUNNER_TEMP 'taskquay-unpacked'
+          $installed = Join-Path $env:RUNNER_TEMP 'taskquay-installed'
+          Expand-Archive -LiteralPath 'releases/taskquay-windows-x64.zip' -DestinationPath $unpacked
+          & "$unpacked/taskquay-windows-x64/install-windows.ps1" -Destination $installed -ConfigDirectory (Join-Path $env:RUNNER_TEMP 'taskquay-config')
+          $env:TASKQUAY_TEST_AGENT_FIXTURE = '1'
+          & "$installed/runtime/node.exe" 'scripts/acceptance-windows.mjs' "$installed/app"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: taskquay-windows-x64
+          path: |
+            releases/taskquay-windows-x64.zip
+            releases/taskquay-windows-x64.zip.sha256
+          if-no-files-found: error

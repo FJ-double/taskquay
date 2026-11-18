@@ -8,8 +8,9 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { WindowsProviderTurnRunner } from "./provider-turn-runner.js";
 
-const onlyWindows = process.platform === "win32" ? {} : { skip: "Windows Job capability required" };
 const fixture = fileURLToPath(new URL("./provider-adapter-probe-child.ts", import.meta.url));
+const onlyWindows = process.platform === "win32" && existsSync(fixture)
+  ? {} : { skip: "Windows CLI edition does not ship legacy SDK probe fixture" };
 for (const provider of ["codex", "claude", "opencode", "pi"] as const) {
   test(`real ${provider} SDK / app-server metadata probe runs inside Windows Job with zero model calls`,
     onlyWindows, async (t) => {

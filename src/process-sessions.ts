@@ -383,8 +383,7 @@ export class ProcessSessionManager {
             kind: "command", label: "受管命令（不记录原始命令或凭据）", status: "running" });
         } finally { ledger.close(); }
       } else if (input.workRunId) throw new Error("Work accounting is unavailable; command was not started.");
-      if (input.tty && process.platform !== "win32") await this.startPty(session, input);
-      else this.startPipe(session, input);
+      this.startPipe(session, input);
     } catch (error) {
       session.failure = diagnosticError(error);
       this.record(session, "process_start_failed", session.failure, "error");
@@ -668,6 +667,14 @@ export class ProcessSessionManager {
     if (session.running) session.process?.kill("SIGTERM");
   }
 
+  listOwnedSessions(workspaceId: string) {
+    return [...this.sessions.values()].filter(session => session.workspaceId === workspaceId).map(session => ({
+      sessionId: session.id, executionId: session.executionId, running: session.running,
+      phase: !session.running ? "closed" : session.rootExitedAt === undefined ? "running" : "root_exited_stdio_open",
+      wallTimeMs: (session.finishedAt ?? Date.now()) - session.startedAt, exitCode: session.exitCode,
+    }));
+  }
+
   shutdown(): void {
     this.shuttingDown = true;
     if (this.recoveryTimer) clearInterval(this.recoveryTimer);
@@ -721,9 +728,12 @@ export class ProcessSessionManager {
   }
 
   private startPipe(session: ProcessSession, input: StartCommandInput): void {
-    const shell = resolveShellCommand(input.command);
+    // A WindowsApps execution alias can launch descendants outside our Job.
+    const shell = resolveShellCommand(input.command, process.platform, process.env, process.platform === "win32");
+    const cmd = process.platform === "win32" && /(?:^|[\\/])cmd(?:\.exe)?$/i.test(shell.executable);
+    const args = cmd ? ["/d", "/s", "/c", `"${input.command}"`] : shell.args;
     const detached = process.platform !== "win32";
-    const child = spawn(input.command, {
+    const child = spawn(shell.executable, args, {
       cwd: input.cwd,
       env: processEnvironment({
         workspaceId: input.workspaceId,
@@ -731,8 +741,9 @@ export class ProcessSessionManager {
       }),
       stdio: "pipe",
       windowsHide: true,
+      windowsVerbatimArguments: cmd,
       detached,
-      shell: shell.executable,
+      shell: false,
     });
     // Job Objects are only verified on win32 x64. Elsewhere (e.g. Windows on
     // ARM64) keep the prior taskkill-based behavior: failing closed there
@@ -863,43 +874,6 @@ export class ProcessSessionManager {
       return;
     }
     terminateProcessTree(child, signal, detached);
-  }
-
-  private async startPty(session: ProcessSession, input: StartCommandInput): Promise<void> {
-    let nodePty: typeof import("node-pty");
-    try {
-      nodePty = await import("node-pty");
-    } catch {
-      throw new Error("PTY support requires the optional node-pty dependency.");
-    }
-
-    const shell = resolveShellCommand(input.command);
-    let pty: import("node-pty").IPty;
-    try {
-      pty = nodePty.spawn(shell.executable, shell.args, {
-        cwd: input.cwd,
-        env: processEnvironment({
-          workspaceId: input.workspaceId,
-          workspaceRoot: input.workspaceRoot,
-        }),
-        name: "xterm-256color",
-        cols: session.columns,
-        rows: session.rows,
-      });
-    } catch (error) {
-      throw error;
-    }
-
-    session.process = {
-      write: (data) => pty.write(data),
-      kill: (signal) => pty.kill(signal),
-      resize: (columns, rows) => pty.resize(columns, rows),
-    };
-    this.record(session, "process_started", { childPid: pty.pid });
-    pty.onData((data) => this.append(session, data));
-    pty.onExit(({ exitCode, signal }) => {
-      this.finish(session, exitCode, signal === 0 ? undefined : String(signal));
-    });
   }
 
   private finish(session: ProcessSession, exitCode?: number, signal?: string): void {

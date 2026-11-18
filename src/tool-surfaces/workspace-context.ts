@@ -65,7 +65,7 @@ export function registerWorkspaceContextTool({ server, config, workspaces, proce
       let bytesRead = 0;
       const files = await Promise.all(input.files.map(async (selection) => {
         const resolved = await workspaces.resolveReadPath(workspace, selection.path);
-        const readRoot = resolved.skillRead?.skill.baseDir ?? workspace.root;
+        const readRoot = await realpath(resolved.skillRead?.skill.baseDir ?? workspace.root);
         const file = readContextFile(readRoot, relative(readRoot, resolved.absolutePath));
         // External skill refs are read evidence, not workspace source refs for delegation.
         if (resolved.skillRead) file.path = resolved.absolutePath;

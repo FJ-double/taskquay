@@ -1,5 +1,4 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { resolveShellCommand } from "./process-platform.js";
 
 /**
  * Child bootstrap: the only permitted operation before GO is IPC handshake.
@@ -13,7 +12,7 @@ type Envelope = {
   sequence: number;
 };
 type ControlMessage = Envelope & (
-  { type: "GO"; command: string; cwd: string; environment: Record<string, string> } |
+  { type: "GO"; executable: string; args: string[]; cwd: string; environment: Record<string, string> } |
   { type: "INPUT"; data: string } |
   { type: "STOP" }
 );
@@ -48,22 +47,21 @@ if (!/^ex_[a-f0-9]{32}$/.test(executionId) || !Number.isSafeInteger(generation) 
         m.sequence <= lastControlSequence) return;
     lastControlSequence = m.sequence;
     if (m.type === "GO") {
-      if (started || typeof m.command !== "string" || typeof m.cwd !== "string" ||
+      if (started || typeof m.executable !== "string" || !Array.isArray(m.args) || typeof m.cwd !== "string" ||
           !m.environment || typeof m.environment !== "object") {
         signalError("Invalid or repeated GO");
         return;
       }
       started = true;
       try {
-        const shell = resolveShellCommand(m.command);
-        // Keep the original exec_command Windows shell quoting semantics:
-        // spawn(command, { shell: cmd.exe }) instead of re-escaping /s /c args.
-        processRoot = spawn(m.command, {
+        processRoot = spawn(m.executable, m.args, {
           cwd: m.cwd,
           env: m.environment,
           stdio: "pipe",
           windowsHide: true,
-          shell: shell.executable,
+          windowsVerbatimArguments: /(?:^|[\\/])cmd(?:\.exe)?$/i.test(m.executable),
+          shell: false,
+          detached: false,
         });
         processRoot.stdout.pipe(process.stdout, { end: false });
         processRoot.stderr.pipe(process.stderr, { end: false });

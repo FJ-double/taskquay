@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -22,6 +23,10 @@ import { AgentStoreError } from "./local-agent-errors.js";
 const windows = process.platform === "win32" ? {} : { skip: "win32 Job required" };
 const fixtureChildPath = fileURLToPath(new URL("./provider-turn-fixture-child.ts", import.meta.url));
 const pause = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+function independentCheckout(root: string): void {
+  mkdirSync(root);
+  execFileSync("git", ["init", "--quiet", root], { windowsHide: true });
+}
 
 const subagents: SubagentsConfig = {
   enabled: true, instructions: "on-demand",
@@ -121,7 +126,7 @@ test("experimental manager admits four isolated Jobs and durably queues a fifth 
       const active: string[] = [];
       for (let i = 0; i < 4; i++) {
         const root = join(workspace, `independent-${i}`);
-        mkdirSync(root);
+        independentCheckout(root);
         const started = await manager.start({
           target: "reviewer", prompt: "control",
           workspaceRoot: root, workspaceId: `independent-${i}`,
@@ -144,7 +149,7 @@ test("experimental manager admits four isolated Jobs and durably queues a fifth 
         "select count(*) n from execution_claims",
       ).get() as { n: number }).n, 4);
       const overflowRoot = join(workspace, "independent-4");
-      mkdirSync(overflowRoot);
+      independentCheckout(overflowRoot);
       const overflow = await manager.start({
         target: "reviewer", prompt: "control",
         workspaceRoot: overflowRoot, workspaceId: "independent-4",
@@ -183,7 +188,7 @@ test("fifth managed Agent queues without Turn or model call, then automatically 
     try {
       for (let i = 0; i < 4; i++) {
         const root = join(workspace, `managed-queue-${i}`);
-        mkdirSync(root);
+        independentCheckout(root);
         const scope = { workspaceRoot: root, workspaceId: `managed-queue-${i}` };
         const started = await manager.start({
           target: "reviewer", prompt: `gated-${i}`, ...scope,
@@ -195,7 +200,7 @@ test("fifth managed Agent queues without Turn or model call, then automatically 
       for (let attempt = 0; attempt < 150 && gates.size !== 4; attempt++) await pause(30);
       assert.equal(gates.size, 4, "Four real Windows Jobs must be durably armed before queueing");
       const scope = { workspaceRoot: join(workspace, "managed-queue-fifth"), workspaceId: "managed-queue-fifth" };
-      mkdirSync(scope.workspaceRoot);
+      independentCheckout(scope.workspaceRoot);
       const taskKey = `fifth-managed-${randomUUID()}`;
       const fifth = await manager.start({ target: "reviewer", prompt: "fifth-auto",
         ...scope, taskKey });
@@ -246,7 +251,7 @@ test("cancelQueued stops a managed waiting Agent without creating Turn, WorkLedg
     try {
       for (let i = 0; i < 4; i++) {
         const scope = { workspaceRoot: join(workspace, `cancel-running-${i}`), workspaceId: `cancel-running-${i}` };
-        mkdirSync(scope.workspaceRoot);
+        independentCheckout(scope.workspaceRoot);
         const started = await manager.start({ target: "reviewer",
           prompt: `cancel-gated-${i}`, ...scope, taskKey: `cancel-running-${i}-${randomUUID()}` });
         assert.equal(started.isOk(), true);
@@ -255,7 +260,7 @@ test("cancelQueued stops a managed waiting Agent without creating Turn, WorkLedg
       for (let attempt = 0; attempt < 150 && gates.size !== 4; attempt++) await pause(30);
       assert.equal(gates.size, 4);
       const scope = { workspaceRoot: join(workspace, "cancel-queued"), workspaceId: "cancel-queued" };
-      mkdirSync(scope.workspaceRoot);
+      independentCheckout(scope.workspaceRoot);
       const queued = await manager.start({ target: "reviewer", prompt: "SHOULD_NOT_DISPATCH",
         ...scope, taskKey: `cancel-me-${randomUUID()}` });
       assert.equal(queued.isOk(), true);

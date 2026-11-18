@@ -1,6 +1,7 @@
 import { fork, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WindowsJobObject } from "./windows-job-object.js";
+import { resolveShellCommand } from "./process-platform.js";
 
 type RunnerSignal = {
   type: string;
@@ -191,7 +192,14 @@ export class WindowsCommandRunner {
       // Failure to durably arm aborts execution. GO has not been sent.
       await input.persistArmed(identity);
       const runner = new WindowsCommandRunner(input, child, job, identity);
-      runner.send("GO", { command: input.command, cwd: input.cwd, environment: input.environment });
+      // Resolve executables in the owner before assigning the bootstrap to the
+      // Job. Doing process probes inside it creates libuv's SILENT_BREAKAWAY Job.
+      const shell = resolveShellCommand(input.command, process.platform, input.environment, true);
+      // CMD's /s /c strips the enclosing quote pair itself. Pass one raw,
+      // wrapped command rather than allowing libuv to backslash-escape quotes.
+      const cmd = /(?:^|[\\/])cmd(?:\.exe)?$/i.test(shell.executable);
+      const args = cmd ? ["/d", "/s", "/c", `"${input.command}"`] : shell.args;
+      runner.send("GO", { executable: shell.executable, args, cwd: input.cwd, environment: input.environment });
       return runner;
     } catch (error) {
       try { job.terminate(); await awaitZero(job, 5_000); }

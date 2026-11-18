@@ -24,6 +24,8 @@ const cliPath = fileURLToPath(new URL("./cli.ts", import.meta.url));
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
   version: string;
 };
+const priorGitCeiling = process.env.GIT_CEILING_DIRECTORIES;
+if (process.platform === "win32") process.env.GIT_CEILING_DIRECTORIES = process.env.USERPROFILE;
 
 for (const flag of ["-v", "--version"]) {
   const output = execFileSync("node", ["--import", "tsx", "src/cli.ts", flag], {
@@ -363,4 +365,6 @@ try {
   assert.equal(loadConfig(cliConfigEnv).subagents.enabled, true);
 } finally {
   rmSync(root, { recursive: true, force: true });
+  if (priorGitCeiling === undefined) delete process.env.GIT_CEILING_DIRECTORIES;
+  else process.env.GIT_CEILING_DIRECTORIES = priorGitCeiling;
 }

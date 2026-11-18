@@ -37,3 +37,10 @@ releases/
 
 # Isolated verification output; never replace the running dist during tests.
 /.local/voice-memory-trace-candidate/
+
+# Local dependency symlinks and generated Windows package metadata.
+/node_modules
+/build-info.json
+
+/.acceptance/
+/windows-acceptance.json

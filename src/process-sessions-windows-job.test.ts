@@ -4,10 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { ProcessSessionManager, type ProcessSnapshot } from "./process-sessions.js";
+import { resolveShellCommand } from "./process-platform.js";
 
 const windows = process.platform === "win32" ? {} : { skip: "win32 Job Object only" };
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-const node = `"${process.execPath}"`;
+const node = /(?:^|[\\/])pwsh(?:\.exe)?$/i.test(resolveShellCommand("", process.platform, process.env, true).executable)
+  ? `& "${process.execPath}"` : `"${process.execPath}"`;
 
 function alive(pid: number): boolean {
   try { process.kill(pid, 0); return true; }
