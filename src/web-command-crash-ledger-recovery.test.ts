@@ -11,6 +11,7 @@ import { WorkLedger } from "./work-ledger.js";
 import { inspectManagedRecovery } from "./windows-recovery-transaction.js";
 import type { RecoveryOsProbe } from "./windows-recovery-observer.js";
 import { ProcessSessionManager } from "./process-sessions.js";
+import { resolveShellCommand } from "./process-platform.js";
 
 const boot = "win-ntboot-v1:abcdef01-2345-6789-abcd-1234567890ab:01db3abcdef01234";
 const job = "Local\\taskquay-job-9f8f6001-a7bc-4cdd-a213-23f7e87be552";
@@ -81,9 +82,9 @@ test("verified dead Windows web command releases Claim and marks exactly its run
     assert.deepEqual(terminal,{phase:"terminal",outcome:"interrupted",resource_state:"released"});
     const after=new WorkLedger(fixture.dir);
     try {
-      const finished=after.finish(fixture.run.id,{status:"completed",acceptance:"not_applicable",
-        summary:"Reconciled interrupted command; not a successful command outcome",evidence:[]});
-      assert.equal(finished.executionStatus,"completed");
+      const finished=after.receipt(fixture.run.id);
+      assert.equal(finished.executionStatus,"failed");
+      assert.equal(finished.acceptanceStatus,"failed");
     }finally{after.close();}
     assert.equal(inspectManagedRecovery(fixture.db,fixture.executionId,{apply:true},absent).status,"not_found");
   }finally{fixture.close();}
@@ -157,7 +158,8 @@ test("real Windows managed web command atomically stores its exact operation lin
   ledger.close();
   const manager=new ProcessSessionManager({stateDir:dir,managedWindowsCommands:true});
   try{
-    const node=`"${process.execPath}"`;
+    const node=/pwsh(?:\.exe)?$/i.test(resolveShellCommand("", process.platform, process.env, true).executable)
+      ? `& "${process.execPath}"` : `"${process.execPath}"`;
     let state=await manager.start({workspaceId:"web-ws",workspaceRoot:root,cwd:root,
       workRunId:run.id,requestKey:"test-real-command-link",
       command:`${node} -e "setTimeout(() => console.log('managed-done'), 1200)"`,

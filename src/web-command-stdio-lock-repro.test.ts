@@ -2,12 +2,7 @@
  * Windows web-MCP command lock reproduction, no Provider/model required.
  *
  * A shell command's ROOT process exits, but a descendant inherits stdout.
- * The legacy pipe path must not declare the command complete or drop its
- * write claim simply because the root process is gone. The client can
- * observe root_exited_stdio_open and poll until a genuine close event.
- *
- * The newer managed Windows Job path is intentionally NOT enabled here:
- * the test documents why production's default path can look "stuck".
+ * The managed pipe path retains the claim until its live Job member finishes.
  */
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -17,6 +12,7 @@ import test from "node:test";
 import Database from "better-sqlite3";
 import { ProcessSessionManager } from "./process-sessions.js";
 import { ExecutionCoordinator, ExecutionConflictError } from "./execution-coordinator.js";
+import { resolveShellCommand } from "./process-platform.js";
 
 const win=process.platform==="win32" ? {} : {skip:"Windows named-pipe descendant lifecycle"};
 
@@ -33,14 +29,17 @@ test("web command root exit with descendant stdout retained leaves a visible blo
     "const {spawn}=require('node:child_process');\n"+
     "const p=spawn(process.execPath,[process.argv[2]],{stdio:['ignore','inherit','inherit'],detached:true,windowsHide:true});\n"+
     "p.unref();process.exit(0);\n");
-  const manager=new ProcessSessionManager({stateDir:state,managedWindowsCommands:false});
-  t.after(()=>{
+  const manager=new ProcessSessionManager({stateDir:state,managedWindowsCommands:true,allowLegacySessionId:true});
+  t.after(async()=>{
     manager.shutdown();
+    await new Promise((resolve) => setTimeout(resolve, 250));
     rmSync(dir,{recursive:true,force:true,maxRetries:20,retryDelay:100});
   });
+  const node = /pwsh(?:\.exe)?$/i.test(resolveShellCommand("", process.platform, process.env, true).executable)
+    ? `& "${process.execPath}"` : `"${process.execPath}"`;
   const first=await manager.start({
     workspaceId:"isolated-web-mcp",workspaceRoot:checkout,cwd:checkout,
-    command:`"${process.execPath}" "${rootScript}" "${grandchild}"`,
+    command:`${node} "${rootScript}" "${grandchild}"`,
     yieldTimeMs:200,
   });
   assert.ok(first.sessionId);
@@ -68,6 +67,7 @@ test("web command root exit with descendant stdout retained leaves a visible blo
     assert.equal(finished.phase,"closed");
     assert.equal(finished.exitCode,0);
     assert.equal(finished.running,false);
+    assert.match(finished.output,/descendant-finished/);
     assert.equal((peer.sharedDatabaseHandle.sqlite.prepare(
       "select count(*) n from execution_claims").get() as {n:number}).n,0,
       "claim is released by the actual process close, never by deleting a database row");

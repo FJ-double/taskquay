@@ -1,11 +1,12 @@
 import koffi from "koffi";
 import type Database from "better-sqlite3";
 import { windowsBootIdentity } from "./windows-boot-identity.js";
-import { windowsProcessIdentityStatus } from "./windows-job-object.js";
+import { windowsProcessCreatedAt, windowsProcessIdentityStatus } from "./windows-job-object.js";
 
 /** Observation is NOT recovery. Never release a claim using heartbeat or PID alone. */
 export interface RecoverySnapshot {
   id: string; owner_id: string; owner_generation: string; owner_pid: number;
+  kind: string; recovery_reason: string | null;
   owner_created_at: string; owner_boot_id: string;
   state_version: number; generation: number;
   phase: string; outcome: string; resource_state: string;
@@ -15,6 +16,8 @@ export interface RecoverySnapshot {
   claim_id: string;
 }
 export type ProcessProbe = "same" | "absent_or_reused" | "unknown";
+export const commandAwaitingArm = "command_awaiting_native_arm";
+export const commandFailedBeforeArm = "command_launch_failed_before_native_arm";
 export type JobProbe = "absent" | "exists_empty" | "exists_active" | "unknown";
 export type RecoveryDecision = "candidate" | "active" | "quarantine";
 export interface RecoveryObservation {
@@ -27,15 +30,16 @@ export interface RecoveryObservation {
   ownerProbe?: ProcessProbe;
   runnerProbe?: ProcessProbe;
   jobProbe?: JobProbe;
-  evidenceKind?: "job_empty_verified" | "prior_boot_verified";
+  evidenceKind?: "job_empty_verified" | "prior_boot_verified" | "never_dispatched_verified";
   observedAt: string;
 }
 export interface RecoveryOsProbe {
   boot(): string;
   process(pid: number, createdAt: string): ProcessProbe;
   job(name: string): JobProbe;
+  legacyOwner?(pid: number): ProcessProbe;
 }
-const nativeName = /^Local\\taskquay-job-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+const nativeName = /^(?:Local|Global)\\taskquay-job-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const nativeBoot = /^win-ntboot-v1:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}:[0-9a-f]{16}$/i;
 
 /** A malformed / forbidden PID is unknown, not a dead process. */
@@ -79,12 +83,22 @@ export const nativeRecoveryProbe: RecoveryOsProbe = {
   boot: windowsBootIdentity,
   process: probeProcess,
   job: probeJob,
+  legacyOwner: (pid) => {
+    try {
+      return probeProcess(pid, windowsProcessCreatedAt(pid));
+    } catch (error) {
+      // A missing PID is distinguishable from access denied. A current
+      // occupant retains the legacy claim, because no creation time is stored.
+      return error instanceof Error && /WINDOWS_JOB_OPEN_PROCESS_FAILED: GetLastError=87(?:\D|$)/.test(error.message)
+        ? "absent_or_reused" : "unknown";
+    }
+  },
 };
 
 /** Requires an EXACT claim link; orphaned/unlinked records never qualify. */
 export function readRecoverySnapshot(sqlite: Database.Database, id: string): RecoverySnapshot | undefined {
   return sqlite.prepare(`select e.id,e.owner_id,e.owner_generation,e.state_version,e.generation,
-    e.phase,e.outcome,e.resource_state,e.runner_pid,e.runner_created_at,
+    e.kind,e.recovery_reason,e.phase,e.outcome,e.resource_state,e.runner_pid,e.runner_created_at,
     e.runner_boot_id,e.job_identity,e.armed_evidence,e.exit_evidence,
     o.pid as owner_pid,o.process_created_at as owner_created_at,
     o.boot_id as owner_boot_id,c.id as claim_id
@@ -106,11 +120,17 @@ export function observeRecovery(snapshot: RecoverySnapshot, probe: RecoveryOsPro
   if (snapshot.resource_state === "released") return result("quarantine", "ALREADY_RELEASED");
   if (snapshot.resource_state !== "held" && snapshot.resource_state !== "cleanup_pending" &&
       snapshot.resource_state !== "quarantined") return result("quarantine", "RESOURCE_STATE_INVALID");
-  if (!["running", "stopping", "terminal"].includes(snapshot.phase) ||
+  // The command bootstrap cannot receive GO before the arm transaction commits.
+  const neverDispatched = snapshot.kind === "command" &&
+    ((snapshot.phase === "starting" && snapshot.recovery_reason === commandAwaitingArm) ||
+      (snapshot.phase === "terminal" && snapshot.recovery_reason === commandFailedBeforeArm)) &&
+    snapshot.runner_pid === null && !snapshot.runner_created_at && !snapshot.runner_boot_id &&
+    !snapshot.job_identity && !snapshot.armed_evidence;
+  if (!nativeBoot.test(snapshot.owner_boot_id) || (!neverDispatched && (
+      !["running", "stopping", "terminal"].includes(snapshot.phase) ||
       snapshot.runner_pid === null || !snapshot.runner_created_at || !snapshot.armed_evidence ||
       !snapshot.job_identity || !nativeName.test(snapshot.job_identity) ||
-      snapshot.runner_boot_id !== snapshot.owner_boot_id ||
-      !nativeBoot.test(snapshot.owner_boot_id)) {
+      snapshot.runner_boot_id !== snapshot.owner_boot_id))) {
     return result("quarantine", "MISSING_VERIFIED_JOB_OR_BOOT");
   }
   let currentBoot: string;
@@ -135,10 +155,12 @@ export function observeRecovery(snapshot: RecoverySnapshot, probe: RecoveryOsPro
   const ownerProbe = probe.process(snapshot.owner_pid, snapshot.owner_created_at);
   if (ownerProbe === "same") return result("active", "OWNER_IDENTITY_STILL_ALIVE", { bootId, ownerProbe });
   if (ownerProbe === "unknown") return result("quarantine", "OWNER_PROCESS_UNVERIFIABLE", { bootId, ownerProbe });
-  const runnerProbe = probe.process(snapshot.runner_pid, snapshot.runner_created_at);
+  if (neverDispatched) return result("candidate", "EXACT_OWNER_GONE_BEFORE_COMMAND_DISPATCH",
+    { bootId, ownerProbe, evidenceKind: "never_dispatched_verified" });
+  const runnerProbe = probe.process(snapshot.runner_pid!, snapshot.runner_created_at!);
   if (runnerProbe === "same") return result("quarantine", "RUNNER_STILL_ALIVE", { bootId, ownerProbe, runnerProbe });
   if (runnerProbe === "unknown") return result("quarantine", "RUNNER_PROCESS_UNVERIFIABLE", { bootId, ownerProbe, runnerProbe });
-  const jobProbe = probe.job(snapshot.job_identity);
+  const jobProbe = probe.job(snapshot.job_identity!);
   if (jobProbe !== "absent") return result("quarantine", "JOB_NOT_PROVEN_ABSENT",
     { bootId, ownerProbe, runnerProbe, jobProbe });
   return result("candidate", "EXACT_OWNER_RUNNER_JOB_GONE",

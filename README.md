@@ -1,6 +1,6 @@
 # Taskquay Windows x64
 
-版本 `1.1.1-windows.2`，基于带 Bearer Token 的 Taskquay 1.1.0（基线提交 `b681a9b`），支持 Windows 10/11 x64。
+版本 `1.1.1-windows.3`，基于带 Bearer Token 的 Taskquay 1.1.0（基线提交 `b681a9b`），支持 Windows 10/11 x64。
 
 ## 安装
 
@@ -40,8 +40,10 @@ taskquay.cmd agents select claude
 ## Windows 工具
 
 - 默认命令使用 PowerShell 7（可运行时）或 CMD；Windows Job 管理路径必须使用真实的可执行文件，若 PowerShell 只有 WindowsApps 启动别名，则回退 CMD，确保子进程处于同一个 Windows Job 中。
-- 当前终端为 `pipe_fallback`，支持命令、会话输出、输入和取消，但**不提供原生 ConPTY 的完整交互语义**。受管 Job 执行路径通过环境变量 `TASKQUAY_EXPERIMENTAL_MANAGED_WINDOWS_COMMANDS=1` 显式启用，默认保持原有行为。
+- 当前终端为 `pipe_fallback`，支持命令、会话输出、输入和取消。默认通过 Windows Job 跟踪命令和实际子进程。收到 `execution_id` 后可在 `write_stdin` 中带上它，核对会话身份。
 - `terminal_sessions` 只管理 Taskquay 自己创建的会话；`system_processes` 只读列出进程 PID 与名称。
+- 命令占用阻塞读写时，可在本地控制台打开「需处理项」并选择「诊断并恢复」。MCP 客户端可用 `recover_tasks` 检查工作区或恢复指定 Claim。使用固定 Bearer Token 时需显式授予 `recover_tasks` 权限。
+- 旧命令记录缺少完整进程证据时，先在控制台查看原因。对于需要重启证据的记录，Windows 完整重启后再次检查。恢复会保留命令和工作运行的历史，也不会重新执行旧命令。
 - `document_tool` 支持 XLSX、DOCX、PDF 检查、搜索和限定修改。写入生成备份，使用幂等 `request_key`。
 - `windows_mcp`、`blender_mcp` 仅在配置启用且后端实际可连接时展示。
 

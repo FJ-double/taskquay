@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { executionContract, type ExecutionContract, resolveShellCommand, terminateProcessTree } from "./process-platform.js";
-import { ExecutionCoordinator, type ExecutionClaim } from "./execution-coordinator.js";
+import { canonicalExecutionRoot, ExecutionCoordinator, type ExecutionClaim } from "./execution-coordinator.js";
 import { WorkLedger } from "./work-ledger.js";
-import { randomUUID, randomBytes, createHash, type Hash } from "node:crypto";
+import { randomUUID, randomBytes, randomInt, createHash, type Hash } from "node:crypto";
 import { diagnosticError } from "./server-diagnostics.js";
 import { WindowsCommandRunner, type JobExitEvidence } from "./execution-runner.js";
 import { ExecutionStateStore, type ExecutionOwnerIdentity } from "./execution-state-store.js";
@@ -11,6 +11,8 @@ import { windowsJobObjectsSupported, windowsProcessCreatedAt, WindowsJobObject }
 import { windowsBootIdentity } from "./windows-boot-identity.js";
 import { ManagedOwnerLease } from "./managed-owner-lease.js";
 import { sweepManagedRecovery } from "./windows-recovery-sweep.js";
+import { recoverCommandClaims } from "./command-claim-recovery.js";
+import { commandAwaitingArm, commandFailedBeforeArm } from "./windows-recovery-observer.js";
 
 const DEFAULT_EXEC_YIELD_MS = 10_000;
 const DEFAULT_INTERACTIVE_YIELD_MS = 250;
@@ -40,7 +42,7 @@ export interface StartCommandInput {
 export interface WriteStdinInput {
   workspaceId: string;
   sessionId: number;
-  /** Mandatory for Job-managed sessions. The session ID alone can be reused on restart. */
+  /** Exact managed execution identity when supplied by the client. */
   executionId?: string;
   chars?: string;
   columns?: number;
@@ -78,6 +80,7 @@ interface ProcessSession {
   rootExitedAt?: number;
   finishedAt?: number;
   terminalReceipt?: ProcessSnapshot;
+  outputDrainTimedOut?: boolean;
   id: number;
   executionId?: string;
   managedJob?: WindowsCommandRunner;
@@ -115,8 +118,8 @@ interface ProcessSessionManagerOptions {
   completedSessionTtlMs?: number;
   maxCompletedSessions?: number;
   stateDir?: string;
-  /** Staged rollout only: production remains on legacy path until release gate. */
   managedWindowsCommands?: boolean;
+  allowLegacySessionId?: boolean;
 }
 
 function boundedInteger(value: number | undefined, fallback: number, maximum: number): number {
@@ -271,12 +274,14 @@ export class ProcessSessionManager {
   private recoveryTimer?: NodeJS.Timeout;
   private initialRecoveryTimer?: NodeJS.Timeout;
   private recoveryCursor?: string;
+  private legacyRecoveryCursor?: string;
   private readonly claims = new Set<ExecutionClaim>();
   private shuttingDown = false;
 
   constructor(private readonly options: ProcessSessionManagerOptions = {}) {
     if (options.maxCompletedSessions !== undefined && (!Number.isInteger(options.maxCompletedSessions) || options.maxCompletedSessions < 1)) throw new Error("Terminal receipt cap must be a positive integer.");
     this.workStateDir = options.stateDir;
+    if (options.allowLegacySessionId) this.nextSessionId = randomInt(1, 2 ** 47);
     this.maxBufferCharacters = options.maxBufferCharacters ?? DEFAULT_BUFFER_CHARACTERS;
     this.completedSessionTtlMs = options.completedSessionTtlMs ?? COMPLETED_SESSION_TTL_MS;
     if (options.stateDir) {
@@ -287,8 +292,6 @@ export class ProcessSessionManager {
           id: this.executionCoordinator.managedOwnerId,
           kind: "mcp", pid: process.pid,
           processCreatedAt: windowsProcessCreatedAt(process.pid),
-          // Not an OS reboot proof. Stage 3 must replace this before
-          // automatic post-restart recovery is permitted.
           bootId: windowsBootIdentity(),
           generation: runtimeIdentity,
         };
@@ -296,17 +299,16 @@ export class ProcessSessionManager {
         this.managedLease = new ManagedOwnerLease(
           this.executionCoordinator.sharedDatabaseHandle.sqlite, this.managedOwner);
         this.managedLease.start();
-        // Only enabled within the separately gated Windows managed runner.
         // Heartbeat silence triggers an inspection, never a TTL unlock.
         this.recoveryTimer = setInterval(() => this.recoverStaleManagedClaims(), 30_000);
         this.recoveryTimer.unref();
-        this.initialRecoveryTimer = setTimeout(() => this.recoverStaleManagedClaims(), 2_000);
+        this.initialRecoveryTimer = setTimeout(() => this.recoverStaleManagedClaims(true), 2_000);
         this.initialRecoveryTimer.unref();
       }
     }
   }
 
-  private recoverStaleManagedClaims(): void {
+  private recoverStaleManagedClaims(startup = false): void {
     if (this.shuttingDown || !this.managedLease || !this.executionCoordinator) return;
     try {
       this.managedLease.assertCanAdmit();
@@ -321,10 +323,22 @@ export class ProcessSessionManager {
           }, entry.status === "released" ? "info" : "warn");
         }
       }
+      const legacy = recoverCommandClaims(this.executionCoordinator.sharedDatabaseHandle.sqlite,
+        { action: "recover", legacyOnly: !startup, afterClaimId: this.legacyRecoveryCursor });
+      if (!startup) this.legacyRecoveryCursor = legacy.nextCursor;
+      for (const item of legacy.items) {
+        if (item.status === "released") this.options.diagnostics?.("command_claim_recovered", { ...item }, "info");
+      }
     } catch (error) {
       this.options.diagnostics?.("managed_claim_recovery_error",
         diagnosticError(error), "warn");
     }
+  }
+
+  recoverTasks(workspaceRoot: string, action: "inspect" | "recover", claimId?: string) {
+    if (!this.executionCoordinator || this.shuttingDown) throw new Error("Execution recovery is unavailable.");
+    return recoverCommandClaims(this.executionCoordinator.sharedDatabaseHandle.sqlite,
+      { action, root: canonicalExecutionRoot(workspaceRoot), claimId });
   }
 
   async mutate<T>(workspaceRoot: string, operation: () => Promise<T>): Promise<T> {
@@ -488,6 +502,8 @@ export class ProcessSessionManager {
       if (!result.created) {
         throw new Error(`RECORDED_EXECUTION: ${result.execution.id}; previous command was not replayed.`);
       }
+      sqlite.prepare("update managed_executions set recovery_reason=? where id=?")
+        .run(commandAwaitingArm, result.execution.id);
       // The command ledger operation is created by onCreate, inside the same
       // outer admission transaction. Persist its exact identity before GO:
       // without this link a crash recovery can free the native Job claim but
@@ -537,6 +553,7 @@ export class ProcessSessionManager {
         }),
         onStdout: (data) => this.append(session, stdoutDecoder.write(data)),
         onStderr: (data) => this.append(session, stderrDecoder.write(data)),
+        onRootExit: () => { session.rootExitedAt = Date.now(); },
       });
       session.managedJob = runner;
       session.process = {
@@ -558,7 +575,8 @@ export class ProcessSessionManager {
           if (row && row.phase !== "terminal") store.transition({
             executionId: row.id, expectedVersion: row.state_version,
             expectedGeneration: row.generation, phase: "terminal", outcome: "unknown",
-            resourceState: "quarantined", recoveryReason: "managed_runner_start_failed",
+            resourceState: "quarantined", recoveryReason: row.runner_pid === null
+              ? commandFailedBeforeArm : "managed_runner_start_failed",
           });
         });
       } catch (stateError) {
@@ -610,6 +628,7 @@ export class ProcessSessionManager {
       });
       session.managedReleased = true;
       session.workFinalized = true;
+      session.outputDrainTimedOut = proof.outputDrainTimedOut;
       this.finish(session, proof.rootExitCode, proof.rootSignal);
     } catch (error) {
       this.failManagedSession(session, error);
@@ -628,7 +647,8 @@ export class ProcessSessionManager {
 
   async write(input: WriteStdinInput): Promise<ProcessSnapshot> {
     const session = this.getOwnedSession(input.workspaceId, input.sessionId);
-    if (session.executionId && input.executionId !== session.executionId) {
+    if (session.executionId && input.executionId !== session.executionId &&
+        (input.executionId !== undefined || !this.options.allowLegacySessionId)) {
       throw new Error("EXECUTION_ID_MISMATCH: provide the execution_id returned by exec_command; session_id alone is not sufficient.");
     }
     const chars = input.chars ?? "";
@@ -951,7 +971,7 @@ export class ProcessSessionManager {
     const maxCharacters = Math.max(256, limit * 4);
     const buffered = session.buffer.drain(maxCharacters);
     this.record(session, "process_output_consumed", { running: session.running,
-      returnedOutputBytes: Buffer.byteLength(buffered.output), outputTruncated: buffered.truncated });
+      returnedOutputBytes: Buffer.byteLength(buffered.output), outputTruncated: buffered.truncated || session.outputDrainTimedOut === true });
 
     const snapshot: ProcessSnapshot = {
       execution: { ...session.execution },
@@ -964,7 +984,7 @@ export class ProcessSessionManager {
       sessionId: session.id,
       executionId: session.executionId,
       output: buffered.output,
-      outputTruncated: buffered.truncated,
+      outputTruncated: buffered.truncated || session.outputDrainTimedOut === true,
       running: session.running,
       exitCode: session.exitCode,
       signal: session.signal,

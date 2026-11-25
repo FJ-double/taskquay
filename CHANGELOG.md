@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1-windows.3 — 2026-11-26
+
+- 默认使用 Windows Job 跟踪命令。真实子任务仍在执行时保留占用，任务结束后最多等待 3 秒排空残留输出。
+- 增加启动与定期恢复检查，以及 MCP 的 recover_tasks 和控制台「诊断并恢复」入口。经系统证据核实的孤儿命令会释放占用，并同步结算关联操作和工作运行。
+- Recover verified orphaned Windows command claims without replaying commands. Legacy claims without sufficient process evidence remain held for diagnosis.
+
 ## 1.1.0 — Unreleased
 
 - Add optional owner-issued static Bearer credentials alongside existing OAuth; disabled by default.

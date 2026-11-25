@@ -47,8 +47,32 @@ const countKeys = ["inputTokens", "cachedInputTokens", "cacheWriteInputTokens", 
 const zero = (): TokenCounts => ({ inputTokens: 0, outputTokens: 0, totalTokens: 0 });
 const active = (status: string) => ["starting", "queued", "running"].includes(status);
 
+/** Called inside the same immediate transaction that releases the exact command claim. */
+export function failInterruptedCommand(sqlite: DatabaseHandle["sqlite"], operationId: string, runId: string,
+  timestamp: string, recovery: Record<string, unknown>): void {
+  const evidence = JSON.stringify([{
+    label: "Interrupted command recovered; verify side effects before retrying",
+    reference: JSON.stringify({ ...recovery, operationId, replay: "forbidden_without_explicit_reconciliation" }), outcome: "failed",
+  }]);
+  const ended = sqlite.prepare(`update console_operations set status='failed',evidence=?,finished_at=?
+    where id=? and run_id=? and kind='command' and status in ('starting','queued','running')
+    and exists (select 1 from console_work_runs where id=? and status='running')`)
+    .run(evidence, timestamp, operationId, runId, runId);
+  if (ended.changes !== 1) throw new Error("RECOVERY_COMMAND_OPERATION_IDENTITY_CONFLICT");
+
+  const closed = sqlite.prepare(`update console_work_runs set status='failed',acceptance='failed',
+    summary=case when summary='' then 'A managed command was interrupted.' else summary end,
+    evidence=case when evidence='[]' then ? else json_insert(evidence,'$[#]',json_extract(?,'$[0]')) end,
+    finished_at=?,revision=revision+1 where id=? and status='running'
+    and not exists (select 1 from console_operations where run_id=? and status in ('starting','queued','running'))
+    and not exists (select 1 from console_executions where run_id=?
+      and status in ('starting','queued','running','reconciliation_required'))`)
+    .run(evidence, evidence, timestamp, runId, runId, runId);
+  if (closed.changes === 0) sqlite.prepare("update console_work_runs set revision=revision+1 where id=?").run(runId);
+}
+
 export class WorkFinishBlockedError extends Error {
-  readonly nextAction = "Observe this run's children until terminal, then retry finish. For unresolved claims/waiters, ask their owner to reconcile and release them; never steal a lock.";
+  readonly nextAction = "Observe active children, then retry finish. Use recover_tasks for an interrupted command claim. Ask the owner to reconcile other claims or waiters.";
   constructor(readonly blocking: "active_execution" | "active_operation" | "same_run_claim" | "unproven_claim", message: string) {
     super(message);
   }

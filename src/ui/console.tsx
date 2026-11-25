@@ -143,6 +143,17 @@ function ConsoleApp() {
     });
   };
 
+  const recoverCommand = (claimId: string) => act(async () => {
+    const result = await api(`projects/${encodeURIComponent(projectId)}/recover-command`, { claimId });
+    const item = result.items[0];
+    if (item?.status === "released") setMessage("已释放中断命令的占用。请核对该命令的实际结果后再决定是否重试。");
+    else if (item?.status === "active") setError("命令仍在运行，占用已保留。");
+    else if (item?.reason === "LEGACY_REQUIRES_VERIFIED_REBOOT") setError("这条旧记录缺少进程归属证据。下次 Windows 完整重启后可以再次检查。");
+    else if (item?.status === "not_found") setMessage("该占用已不存在，正在刷新列表。");
+    else setError("当前无法确认任务已结束，占用已保留。可稍后再次诊断。");
+    await refresh();
+  });
+
   if (boot) return <main className="boot" aria-busy="true">正在连接 DevSpace…</main>;
   if (!csrf) return <main className="login-page"><section className="login-card">
     <div className="brand-mark">D<span>›</span></div><p className="eyebrow">DEVSPACE / PROJECT CONSOLE</p><h1>项目任务台</h1>
@@ -199,7 +210,14 @@ function ConsoleApp() {
         <section className="history-panel"><h2>归档与恢复批次</h2>{!history.length ? <p className="subtle">尚无批次。预览和确认会留存独立记录。</p> : history.map((entry) => <button className="history-row" key={entry.id} onClick={() => void act(async () => { setExternalIdle(false); setBatch(await api(`projects/${projectId}/archive/${entry.id}`)); })}><span>{entry.mode === "archive" ? "归档" : "恢复"} · {date(entry.created_at)}</span><Badge value={entry.status} /><span>查看回执 →</span></button>)}</section>
       </>}
       {tab === "attention" && <section className="table-panel"><div className="panel-title"><h2>执行占用与等待</h2><span>只展示证据，不自动杀进程</span></div><div className="attention-content"><p>进程存在、模型线程空闲、任务完成是不同状态。中断遗留占用需要核对，不能通过归档聊天来“清理”。</p>
-        {!attention.claims.length && !attention.waiters.length ? <div className="empty"><h3>当前没有登记的占用或等待</h3><p>这不等于已扫描并确认所有外部 Codex 客户端都已停止。</p></div> : [...attention.claims, ...attention.waiters].map((entry) => <div className="claim" key={entry.id}><strong>{entry.kind ?? "queued"}</strong><code>{entry.agent_id ?? entry.id}</code><span>{entry.access_mode} · {entry.owner_pid ? `PID ${entry.owner_pid}` : "尚未调用模型"}</span></div>)}</div></section>}
+        {!attention.claims.length && !attention.waiters.length ? <div className="empty"><h3>当前没有登记的占用或等待</h3></div> : <>
+          {attention.claims.map((entry) => <div className="claim" key={entry.id}>
+            <strong>{entry.kind}</strong><code>{entry.agent_id ?? entry.id}</code>
+            <span>{entry.access_mode} · PID {entry.owner_pid}</span>
+            {entry.kind === "command" && <button disabled={busy} onClick={() => void recoverCommand(entry.id)}>诊断并恢复</button>}
+          </div>)}
+          {attention.waiters.map((entry) => <div className="claim" key={entry.id}><strong>等待中</strong><code>{entry.agent_id ?? entry.id}</code><span>{entry.access_mode} · 尚未调用模型</span></div>)}
+        </>}</div></section>}
       </>}
       <footer className="page-footer"><span>DevSpace · 执行与证据层</span><span>页面刷新、统计和归档控制均不启动模型推理</span></footer>
     </main>

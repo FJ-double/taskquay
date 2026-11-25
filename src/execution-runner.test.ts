@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
+import { fork, spawn } from "node:child_process";
+import { once } from "node:events";
+import { fileURLToPath } from "node:url";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,6 +25,48 @@ const env = () => Object.fromEntries(
   Object.entries(process.env).filter((part): part is [string, string] => typeof part[1] === "string"),
 );
 const pause = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
+
+test("the bootstrap closes inherited pipes after a proven drain boundary and leaves the independent holder alive",
+  { ...windowsOnly, timeout: 12_000 }, async () => {
+    const dir = mkdtempSync(join(tmpdir(), "taskquay-external-pipe-"));
+    const root = join(dir, "root.cjs");
+    writeFileSync(root, [
+      "const { spawn } = require('node:child_process');",
+      "const holder = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'],",
+      "  { stdio: ['ignore', 'inherit', 'inherit'], detached: true, windowsHide: true });",
+      "console.log('HOLDER:' + holder.pid); holder.unref();",
+    ].join("\n"));
+    const executionId = id();
+    const bootstrap = fork(fileURLToPath(new URL("./execution-runner-child.ts", import.meta.url)), [], {
+      cwd: dir, execArgv: ["--import", import.meta.resolve("tsx")],
+      env: { ...process.env, TASKQUAY_EXECUTION_ID: executionId, TASKQUAY_EXECUTION_GENERATION: "1" },
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
+    });
+    let output = "";
+    let holderPid = 0;
+    let drainTimedOut = false;
+    bootstrap.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+    bootstrap.stderr?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+    bootstrap.on("message", (message: { type?: string }) => {
+      if (message.type === "READY") bootstrap.send({ type: "GO", executionId, generation: 1, sequence: 1,
+        executable: process.execPath, args: [root], cwd: dir, environment: env() });
+      // Here the bootstrap is exercised by itself. The previous integration
+      // tests cover the owner's real Job-membership decision before DRAIN.
+      if (message.type === "ROOT_EXIT") bootstrap.send({ type: "DRAIN", executionId, generation: 1, sequence: 2, drainMs: 150 });
+      if (message.type === "DRAIN_TIMEOUT") drainTimedOut = true;
+    });
+    try {
+      const [code] = await once(bootstrap, "close");
+      holderPid = Number(/HOLDER:(\d+)/.exec(output)?.[1]);
+      assert.equal(code, 0, output);
+      assert.equal(drainTimedOut, true, output);
+      assert.ok(holderPid && active(holderPid), output);
+    } finally {
+      if (bootstrap.exitCode === null && bootstrap.signalCode === null) bootstrap.kill();
+      if (holderPid && active(holderPid)) process.kill(holderPid);
+      await cleanupTestDirectory(dir);
+    }
+  });
 async function cleanupTestDirectory(dir: string): Promise<void> {
   // Windows may retain file/directory handles briefly after the Job empties.
   await pause(500);

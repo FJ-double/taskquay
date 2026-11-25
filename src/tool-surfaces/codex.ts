@@ -317,7 +317,7 @@ function registerCodexProcessTools(context: ToolRegistrationContext): void {
         session_id: z
           .number()
           .describe("Process session identifier returned by exec_command."),
-        execution_id: z.string().optional().describe("Execution identity from exec_command; mandatory for Windows Job-managed sessions to prevent stale session IDs controlling another task."),
+        execution_id: z.string().optional().describe("Execution identity from exec_command. Include it when available to verify the exact managed execution."),
         chars: z
           .string()
           .optional()

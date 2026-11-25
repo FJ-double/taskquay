@@ -34,6 +34,7 @@ export interface WindowsCommandInput {
   persistArmed: (proof: RunnerArmedIdentity) => Promise<void> | void;
   onStdout?: (chunk: Buffer) => void;
   onStderr?: (chunk: Buffer) => void;
+  onRootExit?: () => void;
   graceMs?: number;
 }
 
@@ -46,6 +47,7 @@ export interface JobExitEvidence {
   runnerPid: number;
   rootExitCode?: number;
   rootSignal?: string;
+  outputDrainTimedOut?: boolean;
   stopReason: "root_exit" | "cancelled" | "runner_lost";
 }
 
@@ -89,14 +91,15 @@ export class WindowsCommandRunner {
   private resolveFinished!: (value: JobExitEvidence) => void;
   private rejectFinished!: (reason: Error) => void;
   readonly finished: Promise<JobExitEvidence>;
-  private readonly graceMs: number;
+  private rootExit?: { code?: number; signal?: string };
+  private outputDrainTimedOut = false;
+  private cancelling = false;
   private jobClosed = false;
 
   private constructor(input: WindowsCommandInput, child: ChildProcess, job: WindowsJobObject, identity: RunnerArmedIdentity) {
     this.job = job;
     this.child = child;
     this.identity = identity;
-    this.graceMs = input.graceMs ?? 200;
     this.finished = new Promise<JobExitEvidence>((resolve, reject) => {
       this.resolveFinished = resolve;
       this.rejectFinished = reject;
@@ -110,13 +113,23 @@ export class WindowsCommandRunner {
       if (m?.executionId !== input.executionId || m.generation !== input.generation ||
           !Number.isSafeInteger(m.sequence) || (m.sequence ?? 0) <= this.incoming) return;
       this.incoming = m.sequence!;
-      if (m.type === "ROOT_EXIT") {
-        void this.settle("root_exit", m.code ?? undefined, m.signal ?? undefined);
+      if (m.type === "ROOT_EXIT" && !this.rootExit) {
+        this.rootExit = { code: m.code ?? undefined, signal: m.signal ?? undefined };
+        input.onRootExit?.();
+        void this.drainWhenWorkEnds(input.graceMs ?? 3_000).catch((error: unknown) =>
+          this.rejectFinished(error instanceof Error ? error : new Error("Windows Job observation failed", { cause: error })));
+      } else if (m.type === "DRAIN_TIMEOUT") {
+        this.outputDrainTimedOut = true;
       } else if (m.type === "RUNNER_ERROR") {
         void this.settle("runner_lost");
       }
     });
-    child.once("exit", () => { void this.settle("runner_lost"); });
+    child.once("close", (code) => {
+      const root = this.rootExit;
+      if (this.cancelling) void this.settle("cancelled");
+      else if (root && code === 0) void this.settle("root_exit", root.code, root.signal);
+      else void this.settle("runner_lost");
+    });
     child.once("error", () => { void this.settle("runner_lost"); });
   }
 
@@ -130,7 +143,7 @@ export class WindowsCommandRunner {
       import.meta.url.endsWith(".ts") ? "./execution-runner-child.ts" : "./execution-runner-child.js",
       import.meta.url,
     ));
-    const job = new WindowsJobObject();
+    const job = new WindowsJobObject("Global");
     let child: ChildProcess;
     try {
       child = fork(modulePath, [], {
@@ -226,6 +239,7 @@ export class WindowsCommandRunner {
 
   async cancel(graceMs = 10_000): Promise<JobExitEvidence> {
     if (this.settled) return this.settled;
+    this.cancelling = true;
     try { this.send("STOP"); } catch {}
     // Allow a provider/command to stop normally before escalation.
     await Promise.race([this.finished.catch(() => undefined), delay(graceMs)]);
@@ -233,12 +247,22 @@ export class WindowsCommandRunner {
     return this.settle("cancelled");
   }
 
+  private async drainWhenWorkEnds(drainMs: number): Promise<void> {
+    while (!this.settled && !this.cancelling && this.child.connected) {
+      // The idle bootstrap is the final member. Output handles alone cannot
+      // prove that work is finished, and an active descendant keeps its claim.
+      if (this.job.activeProcesses() === 1) {
+        this.send("DRAIN", { drainMs });
+        return;
+      }
+      await delay(100);
+    }
+  }
+
   private settle(reason: JobExitEvidence["stopReason"], code?: number, signal?: string): Promise<JobExitEvidence> {
     if (this.settled) return this.settled;
     this.settled = (async () => {
-      if (reason === "root_exit") await delay(this.graceMs);
-      // Do not treat root exit, IPC close or stdio close as Job-empty proof.
-      if (this.job.activeProcesses() !== 0) this.job.terminate();
+      if (reason !== "root_exit" && this.job.activeProcesses() !== 0) this.job.terminate();
       await awaitZero(this.job, 5_000);
       const proof: JobExitEvidence = {
         executionId: this.identity.executionId,
@@ -248,6 +272,7 @@ export class WindowsCommandRunner {
         activeProcesses: 0,
         runnerPid: this.identity.runnerPid,
         stopReason: reason,
+        ...(this.outputDrainTimedOut ? { outputDrainTimedOut: true } : {}),
         ...(code === undefined ? {} : { rootExitCode: code }),
         ...(signal === undefined ? {} : { rootSignal: signal }),
       };

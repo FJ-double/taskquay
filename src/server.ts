@@ -48,6 +48,9 @@ import {
   type McpRegistrationTarget,
 } from "./mcp-modern-server.js";
 import { ProcessSessionManager } from "./process-sessions.js";
+import { canonicalExecutionRoot } from "./execution-coordinator.js";
+import { assertAllowedPath } from "./roots.js";
+import { commandClaimIdPattern } from "./command-claim-recovery.js";
 import { registerWorkspaceContextTool } from "./tool-surfaces/workspace-context.js";
 import { registerWorkTaskTool, trackedWork } from "./tool-surfaces/work-task.js";
 import { createProjectConsoleRouter } from "./project-console-router.js";
@@ -873,6 +876,19 @@ function registerMcpSurface(
 
   registerWorkspaceContextTool({ server: registrationTarget, config, workspaces, processSessions });
   registerWorkTaskTool({ server: registrationTarget, config, workspaces, processSessions });
+  registrationTarget.registerTool("recover_tasks", {
+    description: "Inspect command claims in this workspace, or recover one claim after Windows verifies interruption. Works while read and exec_command are blocked. Requires the owning workspace and its exact claim ID to recover.",
+    inputSchema: { workspace_id: z.string(), action: z.enum(["inspect", "recover"]),
+      claim_id: z.string().regex(commandClaimIdPattern).optional() },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  }, async ({ workspace_id, action, claim_id }) => {
+    const workspace = await workspaces.getWorkspace(workspace_id);
+    const root = canonicalExecutionRoot(workspace.root);
+    assertAllowedPath(root, config.allowedRoots);
+    if (action === "recover" && !claim_id) throw new Error("claim_id required for recover.");
+    const result = processSessions.recoverTasks(root, action, claim_id);
+    return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+  });
 
   toolSurface.register({
     server: registrationTarget,
@@ -1004,11 +1020,11 @@ export function createServer(
   const workspaceStore = createWorkspaceStore(config.stateDir);
   const workspaces = new WorkspaceRegistry(config, workspaceStore);
   const reviewCheckpoints = createReviewCheckpointManager();
+  const managedWindowsCommands = process.platform === "win32" && process.arch === "x64" &&
+    process.env.TASKQUAY_EXPERIMENTAL_MANAGED_WINDOWS_COMMANDS !== "0";
   const processSessions = new ProcessSessionManager({ stateDir: config.stateDir,
-    // Off by default until the migration, recovery and Provider phases pass
-    // acceptance. Never enable during a normal restart/upgrade.
-    managedWindowsCommands: process.platform === "win32" &&
-      process.env.TASKQUAY_EXPERIMENTAL_MANAGED_WINDOWS_COMMANDS === "1",
+    managedWindowsCommands,
+    allowLegacySessionId: managedWindowsCommands,
     diagnostics: (event, fields, level) => options.diagnostics
       ? options.diagnostics.record(event, fields, level) : logEvent(config.logging, level, event, fields) });
   const toolActivities = new ToolActivityTracker();

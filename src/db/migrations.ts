@@ -408,6 +408,14 @@ migrations.push({ version: 21, name: "managed-service-health-journal", up(sqlite
   `);
 } });
 
+migrations.push({ version: 23, name: "legacy-command-claim-recovery-receipts", up(sqlite) {
+  sqlite.exec(`create table command_claim_recoveries (
+    claim_id text primary key, checkout_root text not null,
+    operation_id text references console_operations(id),
+    evidence text not null, recovered_at text not null
+  )`);
+}});
+
 function migrateWorkspaceState(sqlite: Database.Database): void {
   sqlite.exec(`
     create table if not exists workspace_sessions (

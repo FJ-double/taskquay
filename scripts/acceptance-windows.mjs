@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { mkdir, symlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -18,6 +19,7 @@ let running, http, store;
 try {
   assert.equal(process.platform, 'win32'); assert.equal(process.arch, 'x64');
   await mkdir(project, { recursive: true }); await writeFile(join(project, 'fixture.txt'), 'Windows acceptance fixture\n');
+  execFileSync('git', ['init', '--quiet', project], { windowsHide: true });
   const { defaultDevspaceConfig } = await moduleFrom('config-schema');
   const { writeDevspaceConfig, writeDevspaceAuth } = await moduleFrom('user-config');
   const { loadConfig } = await moduleFrom('config');
@@ -26,6 +28,9 @@ try {
   const { discoverHostAgents, HostAgentBridge } = await moduleFrom('host-agents');
   const { resolveShellCommand } = await moduleFrom('process-platform');
   const { windowsJobObjectsSupported } = await moduleFrom('windows-job-object');
+  const { windowsBootIdentity } = await moduleFrom('windows-boot-identity');
+  const { canonicalExecutionRoot } = await moduleFrom('execution-coordinator');
+  const { WorkLedger } = await moduleFrom('work-ledger');
   const configDir = join(root, 'config'); const stateDir = join(root, 'state');
   const owner = randomBytes(32).toString('hex');
   const env = { DEVSPACE_CONFIG_DIR: configDir, DEVSPACE_OAUTH_OWNER_TOKEN: owner };
@@ -54,7 +59,7 @@ try {
   const base = `http://127.0.0.1:${http.address().port}`;
   assert.equal((await fetch(base + '/healthz')).status, 200); record('Candidate /healthz = 200');
   store = new StaticTokenStore(stateDir);
-  const grant = ['open_workspace','read','workspace_context','work_task','exec_command','write_stdin','terminal_sessions','system_processes','document_tool','agent_task','apply_patch','show_changes','agent_mcp','windows_mcp','blender_mcp'];
+  const grant = ['open_workspace','read','workspace_context','work_task','exec_command','write_stdin','terminal_sessions','system_processes','recover_tasks','document_tool','agent_task','apply_patch','show_changes','agent_mcp','windows_mcp','blender_mcp'];
   const full = store.create({ name: 'acceptance-full', allowedTools: grant });
   const restricted = store.create({ name: 'acceptance-read', allowedTools: ['read','windows_mcp','blender_mcp','download_artifact'] });
   const rpc = async (token, method, params = {}) => {
@@ -75,7 +80,7 @@ try {
   const tools = await rpc(full.token, 'tools/list'); assert.equal(tools.status, 200);
   report.tools = tools.body.result.tools.map(tool => tool.name);
   assert(!report.tools.includes('windows_mcp') && !report.tools.includes('blender_mcp') && !report.tools.includes('download_artifact'));
-  for (const name of ['document_tool','terminal_sessions','system_processes','exec_command','write_stdin','read']) assert(report.tools.includes(name));
+  for (const name of ['document_tool','terminal_sessions','system_processes','recover_tasks','exec_command','write_stdin','read']) assert(report.tools.includes(name));
   record('Bearer tools/list intersects available capabilities and grants');
   const limited = await rpc(restricted.token, 'tools/list'); assert.deepEqual(limited.body.result.tools.map(tool => tool.name), ['read']);
   const denied = await rpc(restricted.token, 'tools/call', { name: 'system_processes', arguments: {} });
@@ -124,11 +129,60 @@ try {
   const longCommand = powerShell ? 'Start-Sleep -Seconds 45' : 'ping -n 46 127.0.0.1 >NUL';
   const long = data(await call('exec_command', { workspace_id: workspaceId, work_run_id: runId, request_key: 'long-once', cmd: longCommand, yield_time_ms: 50 }));
   assert(long.running && long.session_id);
+  const liveClaim = data(await call('recover_tasks', { workspace_id: workspaceId, action: 'inspect' })).items[0];
+  assert.equal(liveClaim.status, 'active');
+  assert.equal(data(await call('recover_tasks', { workspace_id: workspaceId, action: 'recover', claim_id: liveClaim.claimId })).items[0].status, 'active');
+  record('Recovery leaves a live Job and its command claim held');
   const sessions = data(await call('terminal_sessions', { workspace_id: workspaceId, action: 'list' }));
   assert(JSON.stringify(sessions).includes(String(long.session_id)));
   await call('terminal_sessions', { workspace_id: workspaceId, action: 'terminate', session_id: long.session_id });
   const ended = data(await call('write_stdin', { workspace_id: workspaceId, session_id: long.session_id, execution_id: long.execution_id, yield_time_ms: 1000 }));
   assert.equal(ended.running, false); record('Owned terminal session list, Job tree termination and terminal receipt');
+  const legacyRun = data(await call('work_task', { workspace_id: workspaceId, action: 'begin', work_item_id: 'legacy-recovery', run_key: 'previous-boot', title: 'Isolated legacy lock' }));
+  const claimId = 'claim_' + randomBytes(16).toString('hex');
+  const bootTicks = BigInt('0x' + windowsBootIdentity().split(':').at(-1));
+  const acquired = Number((bootTicks - 116444736000000000n) / 10000n) - 60_000;
+  const ledger = new WorkLedger(stateDir);
+  const checkoutRoot = canonicalExecutionRoot(project);
+  const projectId = ledger.project(checkoutRoot).id;
+  let operationId;
+  try {
+    operationId = ledger.operation({ runId: legacyRun.workRunId, requestKey: 'command:legacy-no-replay', kind: 'command', label: 'Isolated legacy command', status: 'running' });
+    ledger.db.prepare(`insert into execution_claims(id,owner_id,owner_pid,kind,checkout_root,resources,acquired_at,access_mode)
+      values (?, 'isolated-fixture', 2147483000, 'command', ?, '[]', ?, 'write')`)
+      .run(claimId, checkoutRoot, new Date().toISOString());
+  } finally { ledger.close(); }
+  const blockedRead = await rpc(full.token, 'tools/call', { name: 'read', arguments: { workspace_id: workspaceId, path: 'fixture.txt' } });
+  assert(blockedRead.body.result?.isError || blockedRead.body.error);
+  const recoveryArgs = { workspace_id: workspaceId, action: 'recover', claim_id: claimId };
+  const recoveryDenied = await rpc(restricted.token, 'tools/call', { name: 'recover_tasks', arguments: recoveryArgs });
+  assert(recoveryDenied.status === 403 || recoveryDenied.body.error || recoveryDenied.body.result?.isError);
+  const past = new WorkLedger(stateDir);
+  try {
+    past.db.transaction(() => {
+      past.db.prepare('update console_operations set created_at=? where id=?').run(new Date(acquired + 2).toISOString(), operationId);
+      past.db.prepare('update execution_claims set acquired_at=? where id=?').run(new Date(acquired).toISOString(), claimId);
+    }).immediate();
+  } finally { past.close(); }
+  assert.equal(data(await call('recover_tasks', { ...recoveryArgs, action: 'inspect' })).items[0].status, 'candidate');
+  assert.equal(data(await call('recover_tasks', recoveryArgs)).items[0].status, 'released');
+  const recoveredRun = data(await call('work_task', { workspace_id: workspaceId, action: 'get', work_run_id: legacyRun.workRunId }));
+  assert(JSON.stringify(recoveredRun).includes(operationId));
+  assert.equal(recoveredRun.executionStatus, 'failed');
+  const consoleLogin = await fetch(base + '/console/api/login', { method: 'POST',
+    headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify({ password: owner }) });
+  assert.equal(consoleLogin.status, 200);
+  const cookie = consoleLogin.headers.get('set-cookie').split(';')[0];
+  const { csrf } = await consoleLogin.json();
+  const consoleRecovery = (csrfToken = '') => fetch(base + `/console/api/projects/${projectId}/recover-command`, { method: 'POST',
+    headers: { cookie, origin: base, 'x-devspace-csrf': csrfToken, 'content-type': 'application/json' }, body: JSON.stringify({ claimId }) });
+  assert.equal((await consoleRecovery()).status, 403);
+  assert.equal((await (await consoleRecovery(csrf)).json()).items[0].status, 'released');
+  record('Local project console recovery requires authenticated CSRF and is idempotent');
+  const afterRecovery = data(await call('exec_command', { workspace_id: workspaceId, work_run_id: runId, request_key: 'after-recovery', cmd: command }));
+  assert.equal(afterRecovery.exit_code, 0);
+  assert.equal(data(await call('recover_tasks', { workspace_id: workspaceId, action: 'inspect' })).items.length, 0);
+  record('Legacy lock blocks read, scoped recovery settles the interrupted run, and a new real MCP command exits 0');
   const processes = data(await call('system_processes', { filter: 'node', limit: 20 }));
   assert(JSON.stringify(processes).toLowerCase().includes('node')); record('tasklist.exe process names and PIDs');
   const ExcelJS = requireApp('exceljs'); const PizZip = requireApp('pizzip'); const { PDFDocument } = requireApp('pdf-lib');

@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { RecoverySnapshot, RecoveryOsProbe } from "./windows-recovery-observer.js";
-import { observeRecovery } from "./windows-recovery-observer.js";
+import { commandAwaitingArm, observeRecovery } from "./windows-recovery-observer.js";
 
 const boot = "win-ntboot-v1:abcdef01-2345-6789-abcd-1234567890ab:01db3abcdef01234";
 const before = "win-ntboot-v1:abcdef02-2345-6789-abcd-1234567890ab:01db3abcdef01200";
 const name = "Local\\taskquay-job-9f8f6001-a7bc-4cdd-a213-23f7e87be552";
 const record: RecoverySnapshot = {
+  kind: "command", recovery_reason: null,
   id: "ex_" + "1".repeat(32), owner_id: "owner", owner_generation: "generation",
   owner_pid: 125, owner_created_at: "2026-10-14T00:00:00.000Z", owner_boot_id: boot,
   state_version: 4, generation: 1, phase: "running", outcome: "pending",
@@ -21,6 +22,14 @@ const probe: RecoveryOsProbe = {
 };
 const observe = (update: Partial<RecoverySnapshot> = {},
   os: Partial<RecoveryOsProbe> = {}) => observeRecovery({ ...record, ...update }, { ...probe, ...os });
+
+test("a durably gated command can be recovered before dispatch only after exact owner loss", () => {
+  const preArm: Partial<RecoverySnapshot> = { phase: "starting", recovery_reason: commandAwaitingArm,
+    runner_pid: null, runner_created_at: null, runner_boot_id: null, job_identity: null, armed_evidence: null };
+  assert.equal(observe(preArm).evidenceKind, "never_dispatched_verified");
+  assert.equal(observe(preArm, { process: () => "same" }).decision, "active");
+  assert.equal(observe({ ...preArm, recovery_reason: null }).decision, "quarantine");
+});
 
 test("exact owner+runner disappearance and named Job absence make only a recovery candidate", () => {
   const result = observe();

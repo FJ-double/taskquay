@@ -5,6 +5,7 @@ import * as z from "zod/v4";
 import type { ServerConfig } from "./config.js";
 import { assertAllowedPath } from "./roots.js";
 import { WorkLedger } from "./work-ledger.js";
+import { commandClaimIdPattern, recoverCommandClaims } from "./command-claim-recovery.js";
 import { ProjectArchive } from "./project-archive.js";
 import { CodexThreadControl, type ThreadControl } from "./codex-thread-control.js";
 import { createLocalAgentClient, type LocalAgentClient } from "./local-agent-client.js";
@@ -178,6 +179,11 @@ export function createProjectConsoleRouter(config: ServerConfig, options: {
     return { claims: ledger.db.prepare("select id,kind,owner_pid,agent_id,access_mode,acquired_at from execution_claims where checkout_root=?").all(root),
       waiters: ledger.db.prepare("select id,agent_id,access_mode,expires_at_ms from execution_waiters where checkout_root=?").all(root),
       note: "A PID or claim is not proof of a healthy task. Interrupted work requires reconciliation; archive never cancels a process." };
+  }));
+  router.post("/api/projects/:projectId/recover-command", withLedger((req, ledger) => {
+    const { claimId } = z.object({ claimId: z.string().regex(commandClaimIdPattern) }).strict().parse(req.body);
+    const root = ledger.getProject(stringParam(req.params.projectId)).root;
+    return recoverCommandClaims(ledger.db, { action: "recover", root, claimId });
   }));
   const archive = (fn: (req: Request, service: ProjectArchive) => Promise<unknown> | unknown) => withLedger(async (req, ledger) => {
     const service = new ProjectArchive(ledger, options.providerFactory?.() ?? new CodexThreadControl());

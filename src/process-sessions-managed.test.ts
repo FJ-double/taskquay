@@ -7,6 +7,7 @@ import test from "node:test";
 import Database from "better-sqlite3";
 import { ProcessSessionManager, type ProcessSnapshot } from "./process-sessions.js";
 import { WorkLedger } from "./work-ledger.js";
+import { resolveShellCommand } from "./process-platform.js";
 
 const options = process.platform === "win32" ? {} : { skip: "Windows Job integration only" };
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -76,7 +77,8 @@ test("managed write_stdin requires matching execution_id; input, cancel and unre
   const workspace1 = join(dir, "workspace1"), workspace2 = join(dir, "workspace2");
   mkdirSync(workspace1); mkdirSync(workspace2);
   const manager = new ProcessSessionManager({ stateDir, managedWindowsCommands: true });
-  const node = `"${process.execPath}"`;
+  const node = /pwsh(?:\.exe)?$/i.test(resolveShellCommand("", process.platform, process.env, true).executable)
+    ? `& "${process.execPath}"` : `"${process.execPath}"`;
   try {
     const interactive = await manager.start({
       workspaceId: "test-ws", workspaceRoot: workspace1, cwd: workspace1,

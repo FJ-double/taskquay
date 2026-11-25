@@ -102,8 +102,8 @@ export class WindowsJobObject {
   /** Actual Windows kernel object name, not a synthetic diagnostic label. */
   readonly name: string;
 
-  constructor() {
-    this.name = `Local\\taskquay-job-${randomUUID()}`;
+  constructor(scope: "Local" | "Global" = "Local") {
+    this.name = `${scope}\\taskquay-job-${randomUUID()}`;
     this.handle = this.api.create(null, this.name) as Pointer;
     if (!this.handle) fail("CREATE", this.api.error);
     const creationError = this.api.error();

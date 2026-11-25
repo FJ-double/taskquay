@@ -41,7 +41,7 @@ export function sweepManagedRecovery(sqlite: Database.Database,
     }
     // Reboot proof has not passed the separate field rollout gate. Keep
     // unattended recovery limited to same-boot, exact absent owner/runner/Job.
-    if (entry.observation.evidenceKind !== "job_empty_verified") {
+    if (entry.observation.evidenceKind === "prior_boot_verified") {
       entries.push({ executionId: entry.executionId, status: "quarantined",
         reason: "RECOVERY_PRIOR_BOOT_REQUIRES_FIELD_VALIDATION" });
       continue;

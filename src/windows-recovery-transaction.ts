@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { ExecutionStateStore } from "./execution-state-store.js";
+import { failInterruptedCommand } from "./work-ledger.js";
 import {
   nativeRecoveryProbe, observeRecovery, readRecoverySnapshot,
   type RecoveryObservation, type RecoveryOsProbe,
@@ -22,6 +23,7 @@ export function inspectManagedRecovery(
   sqlite: Database.Database, executionId: string,
   options: {
     apply?: boolean; expectedVersion?: number;
+    expectedCommandClaimId?: string;
     /** Mandatory for unattended recovery: stale heartbeat is only a scan trigger. */
     requireOwnerSilenceMs?: number;
   } = {},
@@ -29,6 +31,9 @@ export function inspectManagedRecovery(
 ): RecoveryApplyResult {
   const before = readRecoverySnapshot(sqlite, executionId);
   if (!before) return { status: "not_found" };
+  if (options.expectedCommandClaimId && (before.kind !== "command" || before.claim_id !== options.expectedCommandClaimId)) {
+    return { status: "quarantined" };
+  }
   if (options.requireOwnerSilenceMs !== undefined &&
       (!Number.isSafeInteger(options.requireOwnerSilenceMs) ||
        options.requireOwnerSilenceMs < 60_000)) {
@@ -139,33 +144,9 @@ export function inspectManagedRecovery(
       if (!reference.command_operation_id) {
         throw new Error("RECOVERY_COMMAND_OPERATION_LINK_MISSING");
       }
-      const operation = sqlite.prepare(`select run_id,kind,status
-        from console_operations where id=?`).get(reference.command_operation_id) as
-        { run_id: string; kind: string; status: string } | undefined;
-      const workRun = sqlite.prepare(`select status from console_work_runs where id=?`)
-        .get(reference.work_run_id) as {status:string} | undefined;
-      if (!operation || operation.run_id !== reference.work_run_id ||
-          operation.kind !== "command" || !["running","queued","starting"].includes(operation.status) ||
-          workRun?.status !== "running") {
-        throw new Error("RECOVERY_COMMAND_OPERATION_IDENTITY_CONFLICT");
-      }
-      const evidence = [{
-        label: "Verified command owner lost; execution result requires reconciliation",
-        reference: JSON.stringify({
-          executionId, kind: "command", outcome: "interrupted",
-          recoveryReason: observation.reason, verifiedAt: observation.observedAt,
-          replay: "forbidden_without_explicit_reconciliation",
-        }),
-        outcome: "failed" as const,
-      }];
-      const ended = sqlite.prepare(`update console_operations set status='failed',
-        evidence=?, finished_at=? where id=? and run_id=? and status in ('running','queued','starting')`)
-        .run(JSON.stringify(evidence), observation.observedAt,
-          reference.command_operation_id, reference.work_run_id);
-      if (ended.changes !== 1) throw new Error("RECOVERY_COMMAND_OPERATION_CAS_CONFLICT");
-      const touched = sqlite.prepare(`update console_work_runs set revision=revision+1
-        where id=? and status='running'`).run(reference.work_run_id);
-      if (touched.changes !== 1) throw new Error("RECOVERY_COMMAND_WORK_RUN_CAS_CONFLICT");
+      failInterruptedCommand(sqlite, reference.command_operation_id, reference.work_run_id, observation.observedAt, {
+        executionId, claimId: before.claim_id, outcome: "interrupted", recoveryReason: observation.reason,
+      });
     }
     if (reference.kind === "agent" && reference.agent_execution_id) {
       const receipt = sqlite.prepare("select agent_id,status from console_executions where id=?")
